@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import time
+from collections.abc import Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -81,6 +82,70 @@ def _scan_path_key(value: str | Path) -> str:
         return os.fspath(value)
 
 
+def _walk_media_candidates(
+    media_dirs: Iterable[Path],
+    allowed_suffixes: frozenset[str],
+    *,
+    skip_thumbnails: bool,
+) -> Iterator[Path]:
+    def on_walk_error(err: OSError) -> None:
+        logger.warning(
+            "Scan walk error in %s: %s", err.filename or "unknown", err
+        )
+
+    for media_dir in media_dirs:
+        for root, dirs, files in os.walk(
+            media_dir,
+            topdown=True,
+            followlinks=False,
+            onerror=on_walk_error,
+        ):
+            root_path = Path(root)
+            safe_dirs: list[str] = []
+            for dirname in dirs:
+                if dirname == ".omoide":
+                    continue
+                try:
+                    if (root_path / dirname).is_symlink():
+                        logger.debug(
+                            "Skipping symlinked media directory: %s",
+                            root_path / dirname,
+                        )
+                        continue
+                except OSError as exc:
+                    logger.warning(
+                        "Skipping unreadable media directory %s: %s",
+                        root_path / dirname,
+                        exc,
+                    )
+                    continue
+                safe_dirs.append(dirname)
+            dirs[:] = safe_dirs
+
+            for fname in files:
+                suffix = os.path.splitext(fname)[1].lower()
+                if suffix not in allowed_suffixes:
+                    continue
+                try:
+                    candidate = root_path / fname
+                    if candidate.is_symlink():
+                        logger.debug(
+                            "Skipping symlinked media file: %s", candidate
+                        )
+                        continue
+                except (OSError, ValueError) as exc:
+                    logger.warning(
+                        "Skipping %s in %s due to path error: %s",
+                        fname,
+                        root,
+                        exc,
+                    )
+                    continue
+                if skip_thumbnails and _looks_like_thumbnail(candidate):
+                    continue
+                yield candidate
+
+
 def run_scan(task_id: str) -> None:
     discovery_update_batch = 200
     discovery_update_interval = 2.0
@@ -99,42 +164,6 @@ def run_scan(task_id: str) -> None:
         task.started_at = datetime.now(timezone.utc)
         safe_commit(sess)
         set_task_progress(task_id, current_step="indexing", current_item=None)
-
-    def walk_candidates():
-        def on_walk_error(err: OSError) -> None:
-            logger.warning(
-                "Scan walk error in %s: %s", err.filename or "unknown", err
-            )
-
-        for media_dir in media_dirs:
-            for root, dirs, files in os.walk(
-                media_dir,
-                topdown=True,
-                followlinks=True,
-                onerror=on_walk_error,
-            ):
-                if ".omoide" in dirs:
-                    dirs.remove(".omoide")
-                for fname in files:
-                    suffix = os.path.splitext(fname)[1].lower()
-                    if suffix not in allowed_suffixes:
-                        continue
-                    try:
-                        candidate = Path(root) / fname
-                    except Exception as exc:
-                        logger.warning(
-                            "Skipping %s in %s due to path error: %s",
-                            fname,
-                            root,
-                            exc,
-                        )
-                        continue
-                    if (
-                        settings.scan.skip_thumbnails_on_scan
-                        and _looks_like_thumbnail(candidate)
-                    ):
-                        continue
-                    yield candidate
 
     new_files: list[Path] = []
     existing_paths: set[str] = set()
@@ -172,7 +201,11 @@ def run_scan(task_id: str) -> None:
         since_update = 0
         next_total_update = time.monotonic() + discovery_update_interval
         recovered_ids: set[int] = set()
-        for path in walk_candidates():
+        for path in _walk_media_candidates(
+            media_dirs,
+            allowed_suffixes,
+            skip_thumbnails=settings.scan.skip_thumbnails_on_scan,
+        ):
             spath = os.fspath(path)
             path_key = _scan_path_key(spath)
             candidate_id = missing_candidates.pop(path_key, None)

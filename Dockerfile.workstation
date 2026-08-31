@@ -1,5 +1,27 @@
 ARG OMOIDE_BASE_IMAGE=einaeffchen/omoide:0.7.0@sha256:b4d4cb096808dc14c99b381c35b35300196c92929309fbe10c7a29a23b23dae7
+ARG NODE_BUILD_IMAGE=node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
+
+FROM ${NODE_BUILD_IMAGE} AS workstation-frontend-builder
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
 FROM ${OMOIDE_BASE_IMAGE}
 
+ENV OMOIDE_WORKSTATION_BROWSER_HARDENING=true
+
+USER root
+RUN rm -rf /app/static && \
+    mkdir -p /app/static /app/media/T7 /app/media/T7XFER && \
+    chown -R appuser:appgroup /app/static /app/media
+
 COPY --chown=appuser:appgroup app/config.py /app/app/config.py
+COPY --chown=appuser:appgroup app/main.py /app/app/main.py
 COPY --chown=appuser:appgroup app/api/duplicates.py /app/app/api/duplicates.py
+COPY --chown=appuser:appgroup app/api/media.py /app/app/api/media.py
+COPY --chown=appuser:appgroup app/tasks/scan.py /app/app/tasks/scan.py
+COPY --from=workstation-frontend-builder --chown=appuser:appgroup /app/frontend/dist/ /app/static/
+
+USER appuser

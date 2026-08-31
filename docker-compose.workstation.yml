@@ -18,14 +18,43 @@ services:
       - path: "${ENV_FILE:?ENV_FILE must be set}"
         required: true
     environment:
+      HOME: /app/data/.home
       OMOIDE_DUPLICATES__DUPLICATE_AUTO_HANDLING: keep
       OMOIDE_GENERAL__DOCKER_MEDIA_READ_ONLY: "true"
+      OMOIDE_GENERAL__UPDATE_CHECK_REPO: "null"
       OMOIDE_SCAN__AUTO_CLEAN_ON_SCAN: "false"
       OMOIDE_SCAN__AUTO_CLEANUP_WITHOUT_REVIEW: "false"
+      OMOIDE_WORKSTATION_BROWSER_HARDENING: "true"
+      PYTHONDONTWRITEBYTECODE: "1"
+      TMPDIR: /tmp
+      XDG_CACHE_HOME: /app/data/.cache
+      XDG_CONFIG_HOME: /app/data/.config
+    user: "1000:1000"
+    privileged: false
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 2048
+    stop_grace_period: 2m
+    ulimits:
+      core:
+        soft: 0
+        hard: 0
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=1g,mode=1777
     volumes:
       - type: bind
-        source: "${HOST_MEDIA_DIR:?HOST_MEDIA_DIR must be set}"
-        target: /app/media
+        source: "${HOST_MEDIA_DIR_T7:?HOST_MEDIA_DIR_T7 must be set}"
+        target: /app/media/T7
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${HOST_MEDIA_DIR_T7XFER:?HOST_MEDIA_DIR_T7XFER must be set}"
+        target: /app/media/T7XFER
         read_only: true
         bind:
           create_host_path: false
@@ -49,4 +78,10 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+        compress: "true"
     restart: unless-stopped

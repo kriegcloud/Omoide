@@ -6,9 +6,11 @@ import os
 import sys
 import threading
 import time
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from app.version import get_app_version
 
@@ -67,9 +69,9 @@ import uvicorn
 import webview
 from anyio import to_thread
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
 from sqlalchemy import and_, or_
@@ -118,6 +120,184 @@ APP_VERSION = get_app_version()
 server: uvicorn.Server | None = None
 _migrations_lock = threading.Lock()
 _migrations_applied = False
+
+_UNSAFE_BROWSER_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_DEFAULT_HTTP_PORTS: dict[str, int] = {"http": 80, "https": 443}
+_WORKSTATION_BROWSER_HARDENING_ENV = (
+    "OMOIDE_WORKSTATION_BROWSER_HARDENING"
+)
+_ALLOWED_WORKSTATION_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+_INVALID_HOST_ERROR: dict[str, dict[str, str]] = {
+    "detail": {
+        "code": "invalid_host",
+        "message": "The request Host must be a loopback address.",
+    }
+}
+_SAME_ORIGIN_ERROR: dict[str, dict[str, str]] = {
+    "detail": {
+        "code": "same_origin_required",
+        "message": "Unsafe browser requests must use the application's origin.",
+    }
+}
+
+
+def _with_workstation_security_headers(response: Response) -> Response:
+    response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+    response.headers["X-Frame-Options"] = "DENY"
+    return response
+
+
+def _workstation_browser_hardening_enabled() -> bool:
+    return _env_truthy(os.environ.get(_WORKSTATION_BROWSER_HARDENING_ENV))
+
+
+def _is_allowed_workstation_host(value: str) -> bool:
+    if not value or value != value.strip():
+        return False
+    if any(ord(character) < 0x20 or character == "\\" for character in value):
+        return False
+    if value.endswith(":"):
+        return False
+
+    try:
+        parsed = urlsplit(f"http://{value}")
+        hostname = parsed.hostname
+        port = parsed.port
+    except (TypeError, ValueError):
+        return False
+
+    if parsed.netloc != value:
+        return False
+    if not hostname or parsed.username is not None or parsed.password is not None:
+        return False
+    if port is not None and port == 0:
+        return False
+
+    return hostname.lower().rstrip(".") in _ALLOWED_WORKSTATION_HOSTS
+
+
+def _normalize_http_origin(
+    value: str,
+    *,
+    allow_resource_path: bool,
+) -> tuple[str, str, int] | None:
+    """Return a comparable HTTP origin, or ``None`` for malformed input."""
+    if not value or value != value.strip():
+        return None
+    if any(ord(character) < 0x20 or character == "\\" for character in value):
+        return None
+
+    try:
+        parsed = urlsplit(value)
+        scheme = parsed.scheme.lower()
+        hostname = parsed.hostname
+        port = parsed.port
+    except (TypeError, ValueError):
+        return None
+
+    if scheme not in _DEFAULT_HTTP_PORTS or not hostname:
+        return None
+    if parsed.username is not None or parsed.password is not None:
+        return None
+    if not allow_resource_path and (
+        parsed.path or parsed.query or parsed.fragment
+    ):
+        return None
+    if allow_resource_path and parsed.fragment:
+        return None
+
+    normalized_host = hostname.lower().rstrip(".")
+    if not normalized_host or any(
+        character.isspace() or character in {",", "%"}
+        for character in normalized_host
+    ):
+        return None
+
+    return (
+        scheme,
+        normalized_host,
+        port if port is not None else _DEFAULT_HTTP_PORTS[scheme],
+    )
+
+
+def _request_origin(request: Request) -> tuple[str, str, int] | None:
+    # Uvicorn/ASGI owns any configured trusted-proxy normalization. Reading
+    # Forwarded or X-Forwarded-* here would let an untrusted client spoof the
+    # comparison origin, so use only the request URL exposed by the server.
+    return _normalize_http_origin(
+        str(request.url),
+        allow_resource_path=True,
+    )
+
+
+def _same_origin_for_all(
+    values: list[str],
+    expected: tuple[str, str, int] | None,
+    *,
+    allow_resource_path: bool,
+) -> bool:
+    if expected is None:
+        return False
+    return all(
+        _normalize_http_origin(
+            value,
+            allow_resource_path=allow_resource_path,
+        )
+        == expected
+        for value in values
+    )
+
+
+async def enforce_same_origin_browser_requests(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    """Reject cross-origin browser mutations while retaining CLI API access."""
+    host_values = request.headers.getlist("host")
+    if len(host_values) != 1 or not _is_allowed_workstation_host(
+        host_values[0]
+    ):
+        return _with_workstation_security_headers(
+            JSONResponse(status_code=400, content=_INVALID_HOST_ERROR)
+        )
+
+    if request.method.upper() not in _UNSAFE_BROWSER_METHODS:
+        return _with_workstation_security_headers(await call_next(request))
+
+    fetch_sites = request.headers.getlist("sec-fetch-site")
+    if any(
+        site.strip().lower() == "cross-site"
+        for value in fetch_sites
+        for site in value.split(",")
+    ):
+        return _with_workstation_security_headers(
+            JSONResponse(status_code=403, content=_SAME_ORIGIN_ERROR)
+        )
+
+    origin_values = request.headers.getlist("origin")
+    referer_values = request.headers.getlist("referer")
+    expected = _request_origin(request)
+
+    if origin_values and not _same_origin_for_all(
+        origin_values,
+        expected,
+        allow_resource_path=False,
+    ):
+        return _with_workstation_security_headers(
+            JSONResponse(status_code=403, content=_SAME_ORIGIN_ERROR)
+        )
+
+    if referer_values and not _same_origin_for_all(
+        referer_values,
+        expected,
+        allow_resource_path=True,
+    ):
+        return _with_workstation_security_headers(
+            JSONResponse(status_code=403, content=_SAME_ORIGIN_ERROR)
+        )
+
+    return _with_workstation_security_headers(await call_next(request))
 
 
 def _preferred_webview_gui() -> str | None:
@@ -340,6 +520,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+if _workstation_browser_hardening_enabled():
+    app.middleware("http")(enforce_same_origin_browser_requests)
 
 
 # @app.middleware("http")

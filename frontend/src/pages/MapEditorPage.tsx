@@ -297,7 +297,12 @@ export default function MapEditorPage() {
         </Box>
       </Paper>
 
-      <Box sx={{ flex: 1, height: "100%", width: "100%" }}>
+      <Box
+        className={
+          theme.palette.mode === "dark" ? "leaflet-map--dark" : undefined
+        }
+        sx={{ flex: 1, height: "100%", width: "100%" }}
+      >
         <MapContainer
           center={[20, 0]}
           zoom={2}
@@ -308,12 +313,8 @@ export default function MapEditorPage() {
           }}
         >
           <TileLayer
-            url={
-              theme.palette.mode === "dark"
-                ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            }
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+            url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           />
           <MapClickHandler
             selected={selectedMedia}

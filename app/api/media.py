@@ -78,6 +78,53 @@ def _split_relative_path(path_value: str) -> list[str]:
     return [segment for segment in normalized.split("/") if segment]
 
 
+def _normalized_media_roots() -> tuple[str, ...]:
+    roots: dict[str, str] = {}
+    for base, _ in settings.general.resolved_media_dirs():
+        normalized = os.fspath(base).replace("\\", "/").rstrip("/")
+        if not normalized:
+            normalized = "/"
+        key = normalized.casefold() if os.name == "nt" else normalized
+        roots.setdefault(key, normalized)
+    return tuple(sorted(roots.values(), key=len, reverse=True))
+
+
+def _relative_media_path_expr():
+    """Return a SQL expression for a media path relative to its media root."""
+    normalized_path = func.replace(Media.path, "\\", "/")
+    comparison_path = (
+        func.lower(normalized_path) if os.name == "nt" else normalized_path
+    )
+    root_cases = []
+    for root in _normalized_media_roots():
+        prefix = "/" if root == "/" else f"{root}/"
+        comparison_prefix = prefix.casefold() if os.name == "nt" else prefix
+        root_cases.append(
+            (
+                func.substr(comparison_path, 1, len(prefix))
+                == comparison_prefix,
+                func.substr(normalized_path, len(prefix) + 1),
+            )
+        )
+
+    # Preserve legacy relative database paths, but do not expose stale absolute
+    # paths that no longer belong to any configured media root.
+    is_relative = and_(
+        func.substr(normalized_path, 1, 1) != "/",
+        func.substr(normalized_path, 2, 2) != ":/",
+    )
+    return case(
+        *root_cases,
+        (is_relative, func.ltrim(normalized_path, "/")),
+        else_=None,
+    )
+
+
+def _folder_prefix_clause(path_expr, folder: str):
+    prefix = f"{folder}/"
+    return func.substr(path_expr, 1, len(prefix)) == prefix
+
+
 def _build_breadcrumbs(parts: list[str]) -> list[MediaFolderBreadcrumb]:
     breadcrumbs: list[MediaFolderBreadcrumb] = []
     for index, name in enumerate(parts):
@@ -341,14 +388,25 @@ def list_media(
     normalized_folder = ""
     if folder is not None:
         normalized_folder = _normalize_relative_path(folder)
-        normalized_path_expr = func.replace(Media.path, "\\", "/")
+        normalized_path_expr = _relative_media_path_expr()
         if normalized_folder:
             prefix = f"{normalized_folder}/"
-            q = q.where(normalized_path_expr.like(f"{prefix}%"))
+            q = q.where(
+                _folder_prefix_clause(
+                    normalized_path_expr,
+                    normalized_folder,
+                )
+            )
             if not recursive:
-                q = q.where(~normalized_path_expr.like(f"{prefix}%/%"))
+                q = q.where(
+                    func.instr(
+                        func.substr(normalized_path_expr, len(prefix) + 1),
+                        "/",
+                    )
+                    == 0
+                )
         elif not recursive:
-            q = q.where(~normalized_path_expr.like("%/%"))
+            q = q.where(func.instr(normalized_path_expr, "/") == 0)
 
     if sort == "newest":
         sort_col = Media.created_at
@@ -416,12 +474,12 @@ def list_media_folders(
     normalized_parent = _normalize_relative_path(parent)
     parent_parts = _split_relative_path(normalized_parent)
 
-    normalized_path_expr = func.replace(Media.path, "\\", "/")
+    normalized_path_expr = _relative_media_path_expr()
 
     where_clauses = []
     if normalized_parent:
         where_clauses.append(
-            normalized_path_expr.like(f"{normalized_parent}/%")
+            _folder_prefix_clause(normalized_path_expr, normalized_parent)
         )
         rel_expr = func.substr(
             normalized_path_expr, len(normalized_parent) + 2

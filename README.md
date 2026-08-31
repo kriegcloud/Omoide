@@ -113,19 +113,37 @@ non-commercial use under the PolyForm Noncommercial License. It does not change
 the stock `docker-compose.yml` deployment.
 
 The profile builds a small local image from the exact Omoide v0.7.0 image. The
-local image overlays only the patched backend modules used by this profile. It
-leaves the upstream image unchanged.
+local image overlays the patched backend modules and rebuilds the frontend used
+by this profile. It leaves the upstream image unchanged.
 
-The profile binds the source library read-only and tells the patched backend to
-treat `/app/media` as read-only. It also disables automatic cleanup and keeps
-every duplicate. Omoide can index the library, but it cannot delete or modify
-the source media through this profile. If a manual duplicate-file deletion is
-blocked by the read-only guard, the unresolved group remains available for
-review.
+The profile binds two source libraries under `/app/media` read-only and tells
+the patched backend to treat the entire media root as read-only. It also
+disables automatic cleanup and keeps every duplicate. Omoide can index the
+libraries, but it cannot delete or modify source media through this profile. If
+a manual duplicate-file deletion is blocked by the read-only guard, the
+unresolved group remains available for review.
 
-Create both host directories before starting the container. The profile refuses
-to create missing bind-mount paths, which catches path typos before Docker can
-create an empty directory in their place.
+The runtime also uses a read-only container filesystem, a non-root user, no
+Linux capabilities, `no-new-privileges`, a PID ceiling, bounded local logs, no
+core dumps, and a private scratch tmpfs. Only `/app/data` is persistently
+writable. The HTTP port is published on `127.0.0.1` only; Omoide does not provide
+authentication and must not be exposed directly to a LAN or the internet.
+The workstation image also rejects non-loopback Host headers, cross-origin
+browser mutations, and framing. Those controls prevent ordinary CSRF, DNS
+rebinding, and clickjacking from a hostile website; they are not authentication
+against another process already running on the workstation.
+
+Mount both media roots and create a private data directory before starting the
+container:
+
+```bash
+install -d -m 0700 /absolute/path/to/omoide-data
+```
+
+The profile refuses to create missing bind-mount paths, which catches path
+typos before Docker can create an empty directory in their place. The data
+directory contains the catalog, face crops, thumbnails, logs, and configuration
+and must not be world-readable.
 
 Copy the identity-first application environment file:
 
@@ -150,7 +168,8 @@ Create `.env` beside the Compose file and set absolute host paths:
 
 ```dotenv
 PORT=8123
-HOST_MEDIA_DIR=/absolute/path/to/media
+HOST_MEDIA_DIR_T7=/absolute/path/to/first-media-root
+HOST_MEDIA_DIR_T7XFER=/absolute/path/to/second-media-root
 HOST_DATA_DIR=/absolute/path/to/omoide-data
 ENV_FILE=omoide.env
 
@@ -158,6 +177,25 @@ ENV_FILE=omoide.env
 # OMOIDE_IMAGE=registry.example/omoide:tag@sha256:digest
 # OMOIDE_WORKSTATION_IMAGE=omoide-workstation:local
 ```
+
+Keep both environment files private after creating them:
+
+```bash
+chmod 0600 .env omoide.env
+```
+
+Both media roots must already be mounted before starting the service. They are
+exposed independently as `/app/media/T7` and `/app/media/T7XFER`, which keeps
+their identities distinct in Omoide while presenting one combined catalog.
+Automatic scanning is disabled: mounting a drive starts no media traversal.
+Use **Tasks & Processing → Scan for New Files** when you are ready. Stop the
+service before unmounting or physically disconnecting either drive.
+
+The map uses the public OpenStreetMap raster-tile service without an API key,
+and place searches use the public Nominatim service. No media bytes are sent to
+either service, but those requests disclose your public IP and the viewed map
+area or typed place query. Avoid the map pages, or self-host those services, if
+that network metadata is sensitive.
 
 Validate the resolved configuration before starting it:
 
@@ -178,11 +216,26 @@ docker compose --env-file .env -f docker-compose.workstation.yml logs --follow
 docker compose --env-file .env -f docker-compose.workstation.yml down
 ```
 
+Back up the SQLite catalog with a consistent online snapshot (including data
+still present in the WAL):
+
+```bash
+python3 scripts/backup_workstation_database.py \
+  --data-dir /absolute/path/to/omoide-data \
+  --keep 14
+```
+
+The command verifies each snapshot before atomically publishing it under the
+private `backups/` directory. Catalog backups preserve curation and identity
+assignments; they do not duplicate source media. Store an additional encrypted
+copy on a different device if you need protection from failure of the data
+disk itself.
+
 ---
 
 ## 🖥️ Quick Start (Desktop Development)
 
-Requirements: Python 3.12+, FFmpeg, Node 18+.
+Requirements: Python 3.12+, FFmpeg, Node 20+.
 For Windows: .NET Framework [Download .NET](https://dotnet.microsoft.com/en-us/download/dotnet-framework)
 
 ```bash
