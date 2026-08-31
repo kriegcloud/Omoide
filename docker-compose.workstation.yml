@@ -1,0 +1,52 @@
+name: omoide-workstation
+
+services:
+  omoide:
+    image: "${OMOIDE_WORKSTATION_IMAGE:-omoide-workstation:0.7.0-local}"
+    build:
+      context: .
+      dockerfile: Dockerfile.workstation
+      args:
+        OMOIDE_BASE_IMAGE: "${OMOIDE_IMAGE:-einaeffchen/omoide:0.7.0@sha256:b4d4cb096808dc14c99b381c35b35300196c92929309fbe10c7a29a23b23dae7}"
+    container_name: omoide
+    ports:
+      - target: 8123
+        published: "${PORT:-8123}"
+        host_ip: 127.0.0.1
+        protocol: tcp
+    env_file:
+      - path: "${ENV_FILE:?ENV_FILE must be set}"
+        required: true
+    environment:
+      OMOIDE_DUPLICATES__DUPLICATE_AUTO_HANDLING: keep
+      OMOIDE_GENERAL__DOCKER_MEDIA_READ_ONLY: "true"
+      OMOIDE_SCAN__AUTO_CLEAN_ON_SCAN: "false"
+      OMOIDE_SCAN__AUTO_CLEANUP_WITHOUT_REVIEW: "false"
+    volumes:
+      - type: bind
+        source: "${HOST_MEDIA_DIR:?HOST_MEDIA_DIR must be set}"
+        target: /app/media
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${HOST_DATA_DIR:?HOST_DATA_DIR must be set}"
+        target: /app/data
+        bind:
+          create_host_path: false
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import json, urllib.request;
+          response = urllib.request.urlopen(
+          'http://127.0.0.1:8123/api/version', timeout=5);
+          payload = json.load(response); response.close();
+          raise SystemExit(0 if payload.get('version') else 1)
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped

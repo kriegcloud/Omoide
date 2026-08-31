@@ -1,0 +1,5 @@
+ARG OMOIDE_BASE_IMAGE=einaeffchen/omoide:0.7.0@sha256:b4d4cb096808dc14c99b381c35b35300196c92929309fbe10c7a29a23b23dae7
+FROM ${OMOIDE_BASE_IMAGE}
+
+COPY --chown=appuser:appgroup app/config.py /app/app/config.py
+COPY --chown=appuser:appgroup app/api/duplicates.py /app/app/api/duplicates.py

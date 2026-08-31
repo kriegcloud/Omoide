@@ -106,6 +106,80 @@ Perfect for NAS or always-on servers.
 
 ---
 
+## 🖥️ Personal workstation profile
+
+`docker-compose.workstation.yml` is a separate profile for personal,
+non-commercial use under the PolyForm Noncommercial License. It does not change
+the stock `docker-compose.yml` deployment.
+
+The profile builds a small local image from the exact Omoide v0.7.0 image. The
+local image overlays only the patched backend modules used by this profile. It
+leaves the upstream image unchanged.
+
+The profile binds the source library read-only and tells the patched backend to
+treat `/app/media` as read-only. It also disables automatic cleanup and keeps
+every duplicate. Omoide can index the library, but it cannot delete or modify
+the source media through this profile. If a manual duplicate-file deletion is
+blocked by the read-only guard, the unresolved group remains available for
+review.
+
+Create both host directories before starting the container. The profile refuses
+to create missing bind-mount paths, which catches path typos before Docker can
+create an empty directory in their place.
+
+Copy the identity-first application environment file:
+
+```bash
+cp omoide.workstation.env.example omoide.env
+```
+
+This workstation example keeps face detection and person clustering available,
+but leaves scans, cleanup, and clustering operator-initiated. It also keeps all
+duplicate files. `PRESENTATION_MODE=false` is intentional because scanning and
+processing tasks must remain callable; source-media immutability comes from the
+read-only bind mount and the backend's matching media-directory setting.
+
+The pinned upstream image is the CPU build, so the example sets
+`PREFER_GPU=false`. It also disables image embeddings and automatic tagging to
+avoid downloading and running the separate semantic-search and tagging
+workloads during an identity-first pass. Re-enable those two settings later if
+you want semantic search or automatic labels; doing so adds model downloads,
+storage, and processing time but is not required for face clustering.
+
+Create `.env` beside the Compose file and set absolute host paths:
+
+```dotenv
+PORT=8123
+HOST_MEDIA_DIR=/absolute/path/to/media
+HOST_DATA_DIR=/absolute/path/to/omoide-data
+ENV_FILE=omoide.env
+
+# Optional: use a compatible base image or choose a different local image tag.
+# OMOIDE_IMAGE=registry.example/omoide:tag@sha256:digest
+# OMOIDE_WORKSTATION_IMAGE=omoide-workstation:local
+```
+
+Validate the resolved configuration before starting it:
+
+```bash
+docker compose --env-file .env -f docker-compose.workstation.yml config --quiet
+```
+
+Start Omoide and wait for its `/api/version` health check:
+
+```bash
+docker compose --env-file .env -f docker-compose.workstation.yml up --build --detach --wait
+```
+
+Open `http://127.0.0.1:8123`. Follow the service logs or stop the profile with:
+
+```bash
+docker compose --env-file .env -f docker-compose.workstation.yml logs --follow
+docker compose --env-file .env -f docker-compose.workstation.yml down
+```
+
+---
+
 ## 🖥️ Quick Start (Desktop Development)
 
 Requirements: Python 3.12+, FFmpeg, Node 18+.

@@ -23,3 +23,8 @@ npm-debug.log
 # IDE / OS specific
 .vscode/
 .idea/
+
+# Local workstation state and environment files
+.data/
+.env
+omoide.env

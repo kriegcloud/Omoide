@@ -298,6 +298,9 @@ class GeneralSettings(BaseModel):
     port: int = 8123
     # Run system in presentation_mode mode or not
     presentation_mode: bool = False
+    # Runtime-only declaration that the Docker media bind mount is read-only.
+    # Excluded from persisted config so deployment metadata remains authoritative.
+    docker_media_read_only: bool = Field(default=False, exclude=True)
     # Enable face recognition and other person related features
     enable_people: bool = True
     meme_mode: bool = False
@@ -428,7 +431,12 @@ class GeneralSettings(BaseModel):
                     "Could not migrate legacy models directory: %s", e
                 )
         if IS_DOCKER:
-            self.media_dirs = [MediaDirectory(path=Path("/app/media"))]
+            self.media_dirs = [
+                MediaDirectory(
+                    path=Path("/app/media"),
+                    read_only=self.docker_media_read_only,
+                )
+            ]
 
     def resolved_media_dirs(self) -> list[tuple[Path, bool]]:
         """Return unique, resolved media directories paired with read-only flag."""
@@ -503,6 +511,7 @@ class ScanSettings(BaseModel):
         ".bmp",
         ".heic",
         ".heif",
+        ".webp",
     ]
 
 
@@ -854,6 +863,29 @@ def _coerce_env_value(value: str, current_value: Any = None) -> Any:
     return trimmed
 
 
+def _matching_config_key(target: dict, segment: str) -> str:
+    """Preserve an existing config key's casing when applying an env path."""
+    segment_folded = segment.casefold()
+    for existing_key in target:
+        if (
+            isinstance(existing_key, str)
+            and existing_key.casefold() == segment_folded
+        ):
+            return existing_key
+    return segment.lower()
+
+
+def _overlay_config(target: dict, overrides: dict) -> None:
+    """Recursively overlay persisted values onto a default config tree."""
+    for key, value in overrides.items():
+        config_key = _matching_config_key(target, key)
+        current = target.get(config_key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            _overlay_config(current, value)
+        else:
+            target[config_key] = value
+
+
 def _apply_env_overrides(config_data: dict) -> None:
     for key, raw_value in os.environ.items():
         if not key.startswith(ENV_PREFIX):
@@ -863,13 +895,13 @@ def _apply_env_overrides(config_data: dict) -> None:
             continue
         target = config_data
         for segment in path_segments[:-1]:
-            segment_lower = segment.lower()
-            current = target.get(segment_lower)
+            config_key = _matching_config_key(target, segment)
+            current = target.get(config_key)
             if not isinstance(current, dict):
                 current = {}
-                target[segment_lower] = current
+                target[config_key] = current
             target = current
-        final_key = path_segments[-1].lower()
+        final_key = _matching_config_key(target, path_segments[-1])
         current_value = target.get(final_key)
         target[final_key] = _coerce_env_value(raw_value, current_value)
 
@@ -881,16 +913,18 @@ def load_settings() -> AppSettings:
     2. User's config.yaml file (for desktop app)
     3. Pydantic model defaults (hardcoded fallback)
     """
-    # Start with an empty dict
-    config_data = {}
+    # Build from lowest to highest priority. Seed every schema field so
+    # environment paths preserve canonical key casing even when config.yaml is
+    # empty or only contains part of a section.
+    config_data = AppSettings().model_dump(mode="json")
 
-    # 1. Load from user's config.yaml file
+    # Overlay the user's persisted settings without replacing whole sections.
     file_config = load_config_from_file()
     if file_config:
-        config_data.update(file_config)
+        _overlay_config(config_data, file_config)
 
+    # Runtime environment overrides have the highest priority.
     _apply_env_overrides(config_data)
-    # 3. Load into Pydantic model. This applies defaults for any missing values.
     settings_model = AppSettings.model_validate(config_data)
     # Runtime-only flags should not be overridden by persisted config.
     settings_model.general.is_binary = bool(getattr(sys, "frozen", False))

@@ -399,22 +399,34 @@ def resolve_duplicate_group(
                     detail=f"Unsupported action {request.action}",
                 )
 
-    # 3. Delete the original DuplicateMedia entries and the group itself
-    session.exec(
-        delete(DuplicateMedia).where(
-            DuplicateMedia.group_id == request.group_id
+    # 3. Delete the original DuplicateMedia entries and the group itself.
+    # Successful file deletions already remove their media links through
+    # delete_record(). If a read-only item was skipped, keep the remaining
+    # links and group so the unresolved duplicates remain visible for review.
+    if not skipped_read_only:
+        session.exec(
+            delete(DuplicateMedia).where(
+                DuplicateMedia.group_id == request.group_id
+            )
         )
-    )
-    session.exec(
-        delete(DuplicateGroup).where(DuplicateGroup.id == request.group_id)
-    )
+        session.exec(
+            delete(DuplicateGroup).where(
+                DuplicateGroup.id == request.group_id
+            )
+        )
 
     session.commit()
 
-    message = f"Group {request.group_id} resolved successfully."
     if skipped_read_only:
-        message += (
-            f" {skipped_read_only} file(s) were kept because they live on a"
-            " read-only media directory."
+        message = (
+            f"Group {request.group_id} remains unresolved: "
+            f"{skipped_read_only} file(s) were kept because they live on a "
+            "read-only media directory. The remaining duplicate group was "
+            "retained for review."
         )
-    return {"message": message, "skipped_read_only": skipped_read_only}
+        raise HTTPException(status_code=409, detail=message)
+
+    return {
+        "message": f"Group {request.group_id} resolved successfully.",
+        "skipped_read_only": 0,
+    }
