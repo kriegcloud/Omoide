@@ -301,6 +301,9 @@ class GeneralSettings(BaseModel):
     # Runtime-only declaration that the Docker media bind mount is read-only.
     # Excluded from persisted config so deployment metadata remains authoritative.
     docker_media_read_only: bool = Field(default=False, exclude=True)
+    # Optional host-side roots used only by the local path-export API.
+    media_export_host_root_t7: Path | None = Field(default=None, exclude=True)
+    media_export_host_root_t7xfer: Path | None = Field(default=None, exclude=True)
     # Enable face recognition and other person related features
     enable_people: bool = True
     meme_mode: bool = False
@@ -558,6 +561,13 @@ class FaceClusteringPreset(str, Enum):
     CUSTOM = "custom"
 
 
+class FaceEmbeddingBackend(str, Enum):
+    """Face embedding implementation used for one coherent vector space."""
+
+    BUFFALO_L = "buffalo_l"
+    ADAFACE_KPRPE = "adaface_kprpe"
+
+
 FACE_RECOGNITION_PRESETS: dict[
     FaceClusteringPreset, dict[str, float | int | str | bool]
 ] = {
@@ -640,6 +650,9 @@ FACE_RECOGNITION_PRESETS: dict[
 
 
 class FaceRecognitionSettings(BaseModel):
+    embedding_backend: FaceEmbeddingBackend = FaceEmbeddingBackend.BUFFALO_L
+    inference_socket_path: Path = Path("/app/data/run/omoide-ml.sock")
+    inference_timeout_seconds: float = Field(default=180.0, gt=0.0, le=600.0)
     preset: FaceClusteringPreset = FaceClusteringPreset.LOOSE
     # minimum confidence needed to extract a face
     face_recognition_min_confidence: float = 0.5

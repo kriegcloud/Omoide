@@ -71,6 +71,15 @@ Special Compliance Notes
 
 - Model Weights:
   - Some libraries (e.g., `insightface`, `open-clip-torch`, `transformers`) may download or reference model weights with separate licenses/terms. Document the model sources and licenses you distribute, and allow users to replace models as needed.
+  - The workstation profile can use the CVLFace AdaFace ViT-Base KP-RPE
+    WebFace12M checkpoint and DFA aligner. The fixed inference graph is adapted
+    from CVLFace under the MIT license included at
+    `vendor/photo-face/beep_photo_face/backends/UPSTREAM-CVLFACE-LICENSE.txt`.
+    Checkpoint use remains subject to the pinned upstream model-card and
+    training-dataset terms recorded beside the artifact hashes.
+  - The AdaFace service uses InsightFace's `det_10g.onnx` detector. InsightFace
+    pretrained model weights have separate terms documented by the upstream
+    InsightFace project.
 
 How to Regenerate a Full License Inventory
 - Python: generate a third‑party license report for the exact environment
@@ -81,4 +90,3 @@ How to Regenerate a Full License Inventory
   - `license-checker --production --summary --json > THIRD_PARTY_LICENSES_JS.json`
 
 Include these generated reports in release artifacts if you want a precise, versioned accounting of third‑party licenses.
-

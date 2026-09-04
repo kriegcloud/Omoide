@@ -85,6 +85,7 @@ from app.api import (
     config,
     duplicates,
     events,
+    exports,
     face,
     lowresolution,
     media,
@@ -563,6 +564,7 @@ app.include_router(stats, prefix="/api/stats", tags=["stats"])
 app.include_router(albums, prefix="/api/albums", tags=["albums"])
 app.include_router(events, prefix="/api/events", tags=["events"])
 app.include_router(places, prefix="/api/places", tags=["places"])
+app.include_router(exports.router, prefix="/api/export", tags=["export"])
 
 
 @app.get("/thumbnails/{file_path:path}", include_in_schema=False)

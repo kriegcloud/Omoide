@@ -21,7 +21,11 @@ COPY --chown=appuser:appgroup app/config.py /app/app/config.py
 COPY --chown=appuser:appgroup app/main.py /app/app/main.py
 COPY --chown=appuser:appgroup app/api/duplicates.py /app/app/api/duplicates.py
 COPY --chown=appuser:appgroup app/api/media.py /app/app/api/media.py
+COPY --chown=appuser:appgroup app/api/exports.py /app/app/api/exports.py
 COPY --chown=appuser:appgroup app/tasks/scan.py /app/app/tasks/scan.py
+COPY --chown=appuser:appgroup app/processors/faces.py /app/app/processors/faces.py
+COPY --chown=appuser:appgroup app/services/face_inference.py /app/app/services/face_inference.py
+COPY --chown=appuser:appgroup scripts/migrate_face_embeddings.py /app/scripts/migrate_face_embeddings.py
 COPY --from=workstation-frontend-builder --chown=appuser:appgroup /app/frontend/dist/ /app/static/
 
 USER appuser

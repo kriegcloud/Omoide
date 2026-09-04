@@ -51,7 +51,9 @@ class FaceProcessor(MediaProcessor):
         union = area_a + area_b - inter
         return inter / union if union > 0 else 0.0
 
-    def _merge_faces(self, base: list, extra: list, iou_threshold: float = 0.45) -> list:
+    def _merge_faces(
+        self, base: list, extra: list, iou_threshold: float = 0.45
+    ) -> list:
         """Add faces from extra that don't substantially overlap any face already in base."""
         merged = list(base)
         for fb in extra:
@@ -79,7 +81,13 @@ class FaceProcessor(MediaProcessor):
         pad_x = int(w * self.PADDED_RETRY_PAD_PCT)
         pad_y = int(h * self.PADDED_RETRY_PAD_PCT)
         padded = cv2.copyMakeBorder(
-            scene_det, pad_y, pad_y, pad_x, pad_x, cv2.BORDER_CONSTANT, value=(114, 114, 114)
+            scene_det,
+            pad_y,
+            pad_y,
+            pad_x,
+            pad_x,
+            cv2.BORDER_CONSTANT,
+            value=(114, 114, 114),
         )
         try:
             retried = self.model.get(padded)
@@ -158,6 +166,13 @@ class FaceProcessor(MediaProcessor):
             settings.face_recognition.face_recognition_min_confidence
         )
         for i, f in enumerate(faces):
+            raw_embedding = getattr(f, "embedding", None)
+            if raw_embedding is None:
+                logger.debug(
+                    "Skipping face without an embedding (%s)",
+                    getattr(f, "embedding_reason", "unknown"),
+                )
+                continue
             det_score = getattr(f, "det_score", None)
             if det_score is not None:
                 det_score = float(det_score)
@@ -173,7 +188,10 @@ class FaceProcessor(MediaProcessor):
 
             if settings.face_recognition.face_sharpness_filter_enabled:
                 gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
-                if cv2.Laplacian(gray, cv2.CV_64F).var() < settings.face_recognition.face_sharpness_min_variance:
+                if (
+                    cv2.Laplacian(gray, cv2.CV_64F).var()
+                    < settings.face_recognition.face_sharpness_min_variance
+                ):
                     continue
 
             ts = int(time.time() * 1000)
@@ -189,7 +207,7 @@ class FaceProcessor(MediaProcessor):
                 optimize=True,
                 progressive=True,
             )
-            vec = np.array(f.embedding, dtype=np.float32)
+            vec = np.array(raw_embedding, dtype=np.float32)
             norm = np.linalg.norm(vec)
             if norm > 0:
                 vec /= norm
@@ -232,9 +250,7 @@ class FaceProcessor(MediaProcessor):
             if parsed is not None
         ]
         max_video_frames = int(
-            getattr(
-                settings.face_recognition, "face_detection_max_video_frames", 0
-            )
+            getattr(settings.face_recognition, "face_detection_max_video_frames", 0)
             or 0
         )
         if (
@@ -249,13 +265,7 @@ class FaceProcessor(MediaProcessor):
             else:
                 indices = sorted(
                     {
-                        int(
-                            round(
-                                i
-                                * (len(scenes) - 1)
-                                / (max_video_frames - 1)
-                            )
-                        )
+                        int(round(i * (len(scenes) - 1) / (max_video_frames - 1)))
                         for i in range(max_video_frames)
                     }
                 )
@@ -276,7 +286,9 @@ class FaceProcessor(MediaProcessor):
                     try:
                         raw_ts = scene_obj.start_time
                         get_secs = getattr(raw_ts, "get_seconds", None)
-                        scene_timestamp = float(get_secs()) if get_secs is not None else float(raw_ts)
+                        scene_timestamp = (
+                            float(get_secs()) if get_secs is not None else float(raw_ts)
+                        )
                     except (TypeError, AttributeError, ValueError):
                         scene_timestamp = None
                     scene = scene[1]
@@ -348,7 +360,9 @@ class FaceProcessor(MediaProcessor):
                         )
                     faces = merged_faces
 
-            face_entries = self._parse_faces(faces, scene_det, media, timestamp=scene_timestamp)
+            face_entries = self._parse_faces(
+                faces, scene_det, media, timestamp=scene_timestamp
+            )
             if existing_bboxes and face_entries:
                 filtered_face_entries: list[tuple[Face, np.ndarray]] = []
                 for face_obj, embedding_vec in face_entries:
@@ -356,8 +370,7 @@ class FaceProcessor(MediaProcessor):
                     if candidate_bbox is None:
                         continue
                     if any(
-                        self._iou(existing_bbox, candidate_bbox)
-                        > dedupe_iou_threshold
+                        self._iou(existing_bbox, candidate_bbox) > dedupe_iou_threshold
                         for existing_bbox in existing_bboxes
                     ):
                         continue
@@ -398,6 +411,50 @@ class FaceProcessor(MediaProcessor):
             self.active = True
         if getattr(self, "model", None) is not None:
             return
+        if settings.face_recognition.embedding_backend.value == "adaface_kprpe":
+            from app.services.face_inference import (
+                FACE_MODEL_FINGERPRINT,
+                AdaFaceSocketAnalysis,
+            )
+
+            from app.database import engine
+
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    """
+                    CREATE TABLE IF NOT EXISTS model_fingerprints (
+                        component TEXT PRIMARY KEY,
+                        fingerprint TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+                state = connection.exec_driver_sql(
+                    """
+                    SELECT fingerprint, status
+                    FROM model_fingerprints
+                    WHERE component = 'face_embeddings'
+                    """
+                ).first()
+            if state is None or tuple(state) != (FACE_MODEL_FINGERPRINT, "ready"):
+                raise RuntimeError(
+                    "AdaFace cannot process media until the existing face "
+                    "embeddings have completed the pinned model migration."
+                )
+
+            self._ctx_id = -1
+            self.model = AdaFaceSocketAnalysis(
+                settings.face_recognition.inference_socket_path,
+                settings.face_recognition.inference_timeout_seconds,
+            )
+            health = self.model.health()
+            logger.info(
+                "Using isolated face inference service: %s (%s)",
+                health.get("model"),
+                health.get("runtime", {}).get("actualCompute"),
+            )
+            return
         # Reduce ORT's long-lived CPU memory arenas so memory is released faster
         os.environ.setdefault("ORT_DISABLE_MEMORY_ARENA", "1")
         # Import InsightFace lazily to speed up application startup
@@ -416,9 +473,7 @@ class FaceProcessor(MediaProcessor):
         self.model.prepare(
             ctx_id=self._ctx_id,
             det_size=(640, 640),
-            det_thresh=float(
-                settings.face_recognition.face_recognition_min_confidence
-            ),
+            det_thresh=float(settings.face_recognition.face_recognition_min_confidence),
         )
 
     def unload(self):

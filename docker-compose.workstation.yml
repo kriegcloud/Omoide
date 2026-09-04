@@ -20,7 +20,11 @@ services:
     environment:
       HOME: /app/data/.home
       OMOIDE_DUPLICATES__DUPLICATE_AUTO_HANDLING: keep
-      OMOIDE_GENERAL__DOCKER_MEDIA_READ_ONLY: "true"
+      OMOIDE_GENERAL__DOCKER_MEDIA_READ_ONLY: "false"
+      OMOIDE_GENERAL__MEDIA_EXPORT_HOST_ROOT_T7: "${HOST_MEDIA_DIR_T7}"
+      OMOIDE_GENERAL__MEDIA_EXPORT_HOST_ROOT_T7XFER: "${HOST_MEDIA_DIR_T7XFER}"
+      OMOIDE_FACE_RECOGNITION__EMBEDDING_BACKEND: "${OMOIDE_FACE_BACKEND:-buffalo_l}"
+      OMOIDE_FACE_RECOGNITION__INFERENCE_SOCKET_PATH: /app/data/run/omoide-ml.sock
       OMOIDE_GENERAL__UPDATE_CHECK_REPO: "null"
       OMOIDE_SCAN__AUTO_CLEAN_ON_SCAN: "false"
       OMOIDE_SCAN__AUTO_CLEANUP_WITHOUT_REVIEW: "false"
@@ -49,13 +53,13 @@ services:
       - type: bind
         source: "${HOST_MEDIA_DIR_T7:?HOST_MEDIA_DIR_T7 must be set}"
         target: /app/media/T7
-        read_only: true
+        read_only: false
         bind:
           create_host_path: false
       - type: bind
         source: "${HOST_MEDIA_DIR_T7XFER:?HOST_MEDIA_DIR_T7XFER must be set}"
         target: /app/media/T7XFER
-        read_only: true
+        read_only: false
         bind:
           create_host_path: false
       - type: bind
