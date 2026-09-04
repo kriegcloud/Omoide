@@ -651,10 +651,18 @@ export const usePersonDetailPage = () => {
         ? await unhidePerson(Number(id))
         : await hidePerson(Number(id));
       setPerson(updated);
-      removeItems(
-        isHidden ? "people-grid-hidden" : "people-grid",
-        [updated.id],
-      );
+      // The person grids cache one list per filter (people-grid-all,
+      // people-grid-female, people-grid-hidden, ...); drop the person from
+      // every cached variant of the list they are leaving.
+      const leavingPrefix = isHidden ? "people-grid-hidden" : "people-grid";
+      for (const key of Object.keys(useListStore.getState().lists)) {
+        if (
+          key.startsWith(leavingPrefix) &&
+          (isHidden || !key.startsWith("people-grid-hidden"))
+        ) {
+          removeItems(key, [updated.id]);
+        }
+      }
       showMessage(isHidden ? "Person unhidden" : "Person hidden");
     } catch (err) {
       console.error("Failed to update person visibility:", err);
@@ -717,6 +725,24 @@ export const usePersonDetailPage = () => {
     } catch (err) {
       console.error(err);
       showMessage("Save failed", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleGenderChange(gender: "female" | "male" | null) {
+    if (!id) return;
+    setSaving(true);
+    try {
+      await updatePerson(Number(id), { gender });
+      await loadDetail();
+      showMessage(
+        gender ? `Gender set to ${gender}` : "Gender override cleared",
+        "success",
+      );
+    } catch (err) {
+      console.error(err);
+      showMessage("Failed to update gender", "error");
     } finally {
       setSaving(false);
     }
@@ -798,6 +824,7 @@ export const usePersonDetailPage = () => {
     handleDeletePerson,
     handleTagAddedToPerson,
     onSave,
+    handleGenderChange,
     handleConfirmMerge,
     isAutoSelectingProfile,
     isLoadingSuggestedFaces,

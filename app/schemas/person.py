@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict
 from app.schemas.face import FaceRead
 from sqlmodel import SQLModel
@@ -25,11 +27,16 @@ class PersonDetail(BaseModel):
     tags: list[TagSimple]
     appearance_count: int
     hidden_at: datetime | None = None
+    gender: str | None = None
+    gender_confidence: float | None = None
+    gender_manual: bool = False
+    age: int | None = None
 
 
 class PersonUpdate(BaseModel):
     name: str | None = None
     profile_face_id: int | None = None
+    gender: Literal["female", "male"] | None = None
 
 
 class PersonMedia(SQLModel):
@@ -53,6 +60,10 @@ class PersonRead(SQLModel):
     profile_face: FaceRead | None
     appearance_count: int | None
     hidden_at: datetime | None = None
+    gender: str | None = None
+    gender_confidence: float | None = None
+    gender_manual: bool = False
+    age: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -62,6 +73,10 @@ class PersonReadSimple(SQLModel):
     name: str | None
     profile_face: FaceRead | None
     hidden_at: datetime | None = None
+    gender: str | None = None
+    gender_confidence: float | None = None
+    gender_manual: bool = False
+    age: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

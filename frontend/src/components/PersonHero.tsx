@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   Box,
   Typography,
@@ -9,6 +9,8 @@ import {
   useTheme,
   CircularProgress,
   Chip,
+  Menu,
+  MenuItem,
 } from "@mui/material";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 import { alpha } from "@mui/material/styles";
@@ -21,6 +23,7 @@ import { encodeFilePath } from "../urlUtils";
 interface PersonHeroProps {
   person: Person;
   onSave: (formData: { name: string }) => Promise<void>;
+  onGenderChange: (gender: "female" | "male" | null) => Promise<void>;
   onMerge: () => void;
   onDelete: () => void;
   onRefreshSimilar: () => void;
@@ -33,6 +36,7 @@ interface PersonHeroProps {
 export function PersonHero({
   person,
   onSave,
+  onGenderChange,
   onMerge,
   onDelete,
   onRefreshSimilar,
@@ -42,6 +46,7 @@ export function PersonHero({
   autoSelectingProfile,
 }: PersonHeroProps) {
   const theme = useTheme();
+  const [genderAnchor, setGenderAnchor] = useState<HTMLElement | null>(null);
   const thumbUrl = person.profile_face?.thumbnail_path
     ? `${API}/thumbnails/${encodeFilePath(
         person.profile_face.thumbnail_path
@@ -73,7 +78,63 @@ export function PersonHero({
               {person.name || "Unnamed Person"}
             </Typography>
             {person.hidden_at && <Chip label="Hidden" color="warning" />}
+            {(person.gender || !config.PRESENTATION_MODE) && (
+              <Chip
+                label={
+                  !person.gender
+                    ? "Set gender"
+                    : person.gender_manual
+                    ? `${person.gender === "female" ? "Female" : "Male"} (manual)`
+                    : `${person.gender === "female" ? "Female" : "Male"}${
+                        person.gender_confidence != null
+                          ? ` · ${Math.round(person.gender_confidence * 100)}%`
+                          : ""
+                      }`
+                }
+                onClick={
+                  config.PRESENTATION_MODE
+                    ? undefined
+                    : (event) => setGenderAnchor(event.currentTarget)
+                }
+                clickable={!config.PRESENTATION_MODE}
+              />
+            )}
           </Stack>
+          {person.age != null && (
+            <Typography variant="caption" color="text.secondary" display="block">
+              ≈ {person.age}
+            </Typography>
+          )}
+          <Menu
+            anchorEl={genderAnchor}
+            open={Boolean(genderAnchor)}
+            onClose={() => setGenderAnchor(null)}
+          >
+            <MenuItem
+              onClick={() => {
+                setGenderAnchor(null);
+                void onGenderChange("female");
+              }}
+            >
+              Female
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                setGenderAnchor(null);
+                void onGenderChange("male");
+              }}
+            >
+              Male
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                setGenderAnchor(null);
+                void onGenderChange(null);
+              }}
+            >
+              Clear override
+            </MenuItem>
+          </Menu>
           <Typography variant="body1" color="text.secondary" gutterBottom>
             {person.appearance_count
               ? `${person.appearance_count} appearances found`

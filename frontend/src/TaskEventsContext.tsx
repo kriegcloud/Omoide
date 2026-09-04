@@ -23,6 +23,7 @@ const INITIAL_COUNTERS: Record<TaskType, number> = {
   auto_tag_custom: 0,
   backfill_face_timestamps: 0,
   backfill_face_quality: 0,
+  backfill_demographics: 0,
   generate_hashes: 0,
   build_events: 0,
   geocode_places: 0,

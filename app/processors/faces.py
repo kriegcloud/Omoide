@@ -40,6 +40,45 @@ class FaceProcessor(MediaProcessor):
     PADDED_RETRY_AREA_FRACTION = 0.3
 
     @staticmethod
+    def _demographics(face) -> tuple[str | None, int | None, float | None]:
+        raw_sex = getattr(face, "sex", None)
+        raw_gender = getattr(face, "gender", None)
+        if raw_sex in ("F", "M"):
+            sex = raw_sex
+        elif raw_gender in (0, "0", "F", "female"):
+            sex = "F"
+        elif raw_gender in (1, "1", "M", "male"):
+            sex = "M"
+        else:
+            sex = None
+        raw_age = getattr(face, "age", None)
+        age = int(raw_age) if raw_age is not None else None
+        # insightface.model_zoo.attribute.Attribute.get discards the two
+        # gender logits after argmax, so this version exposes no honest score.
+        return sex, age, None
+
+    def _apply_cpu_demographics(self, image: np.ndarray, faces: list) -> None:
+        """Attach CPU InsightFace gender/age results to AdaFace detections."""
+        model = getattr(self, "demographics_model", None)
+        if model is None or not faces:
+            return
+        try:
+            demographic_faces = model.get(image)
+        except Exception as exc:
+            logger.debug("CPU gender/age inference failed: %s", exc)
+            return
+        for face in faces:
+            match = max(
+                demographic_faces,
+                key=lambda candidate: self._iou(face.bbox, candidate.bbox),
+                default=None,
+            )
+            if match is None or self._iou(face.bbox, match.bbox) < 0.3:
+                continue
+            face.gender = getattr(match, "gender", None)
+            face.age = getattr(match, "age", None)
+
+    @staticmethod
     def _iou(a: list, b: list) -> float:
         ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
         ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
@@ -211,6 +250,7 @@ class FaceProcessor(MediaProcessor):
             norm = np.linalg.norm(vec)
             if norm > 0:
                 vec /= norm
+            sex, age, sex_score = self._demographics(f)
             face = Face(
                 media=media,
                 thumbnail_path=to_posix_str(
@@ -220,6 +260,9 @@ class FaceProcessor(MediaProcessor):
                 timestamp=timestamp,
                 det_score=det_score,
                 frontality=self._estimate_frontality(getattr(f, "kps", None)),
+                sex=sex,
+                age=age,
+                sex_score=sex_score,
             )
             face_entries.append((face, vec))
         return face_entries
@@ -360,6 +403,8 @@ class FaceProcessor(MediaProcessor):
                         )
                     faces = merged_faces
 
+            self._apply_cpu_demographics(scene_det, faces)
+
             face_entries = self._parse_faces(
                 faces, scene_det, media, timestamp=scene_timestamp
             )
@@ -454,6 +499,23 @@ class FaceProcessor(MediaProcessor):
                 health.get("model"),
                 health.get("runtime", {}).get("actualCompute"),
             )
+            # AdaFace replaces embeddings only. Keep InsightFace's CPU detector
+            # and genderage attribute model available for demographic fields.
+            from insightface.app import FaceAnalysis
+
+            self.demographics_model = FaceAnalysis(
+                "buffalo_l",
+                root=str(settings.general.models_dir),
+                allowed_modules=["detection", "genderage"],
+                providers=["CPUExecutionProvider"],
+            )
+            self.demographics_model.prepare(
+                ctx_id=-1,
+                det_size=(640, 640),
+                det_thresh=float(
+                    settings.face_recognition.face_recognition_min_confidence
+                ),
+            )
             return
         # Reduce ORT's long-lived CPU memory arenas so memory is released faster
         os.environ.setdefault("ORT_DISABLE_MEMORY_ARENA", "1")
@@ -467,7 +529,12 @@ class FaceProcessor(MediaProcessor):
             "buffalo_l",
             root=str(settings.general.models_dir),
             # Avoid 3D landmark module which can error on some frames.
-            allowed_modules=["detection", "landmark_2d_106", "recognition"],
+            allowed_modules=[
+                "detection",
+                "landmark_2d_106",
+                "recognition",
+                "genderage",
+            ],
             providers=providers,
         )
         self.model.prepare(

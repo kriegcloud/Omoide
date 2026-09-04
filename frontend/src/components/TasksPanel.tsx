@@ -55,6 +55,7 @@ const STEP_LABELS: Record<string, string> = {
   merging_similar_persons: "Merging similar people",
   matching_known_persons: "Matching faces to known people",
   backfilling_face_quality: "Rating face quality",
+  backfilling_demographics: "Predicting gender and age",
 };
 
 type TaskLabels = Partial<Record<TaskType, string>>;
@@ -70,6 +71,7 @@ const TASK_LABELS: TaskLabels = {
   auto_tag_custom: "Apply New Custom Tags",
   backfill_face_timestamps: "Backfill Face Timestamps",
   backfill_face_quality: "Rate Face Quality",
+  backfill_demographics: "Backfill Gender/Age",
   build_events: "Cluster Events",
   geocode_places: "Geocode Places",
 };
@@ -533,6 +535,23 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                 <ListItemText primary="Remove Missing Records" />
               </ListItemButton>
             </ListItem>
+            {config.ENABLE_PEOPLE && (
+              <ListItem disablePadding>
+                <ListItemButton
+                  onClick={() => startTask("backfill_demographics")}
+                  disabled={isTaskRunning("backfill_demographics")}
+                >
+                  <ListItemIcon>
+                    <FaceIcon />
+                  </ListItemIcon>
+                  <ListItemText
+                    primary="Backfill Gender/Age"
+                    secondary="Predict gender and age for existing faces"
+                    secondaryTypographyProps={{ variant: "caption" }}
+                  />
+                </ListItemButton>
+              </ListItem>
+            )}
             {config.ENABLE_PEOPLE && (
               <ListItem disablePadding>
                 <ListItemButton

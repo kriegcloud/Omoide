@@ -58,6 +58,10 @@ export interface PersonReadSimple {
   profile_face: ProfileFace;
   appearance_count?: number;
   hidden_at?: string | null;
+  gender?: "female" | "male" | null;
+  gender_confidence?: number | null;
+  gender_manual: boolean;
+  age?: number | null;
 }
 
 export interface CombinedMediaSearchResult {
@@ -81,6 +85,10 @@ export interface Person {
   profile_face_id?: number;
   profile_face?: Face;
   hidden_at?: string | null;
+  gender?: "female" | "male" | null;
+  gender_confidence?: number | null;
+  gender_manual: boolean;
+  age?: number | null;
 }
 
 export interface PersonIndex {
@@ -95,6 +103,9 @@ export interface Face {
   similarity?: number;
   person?: Person;
   timestamp?: number;
+  sex?: "F" | "M" | null;
+  sex_score?: number | null;
+  age?: number | null;
 }
 export interface PersonRelationshipNode {
   id: number;
@@ -152,6 +163,7 @@ export type TaskType =
   | "auto_tag_custom"
   | "backfill_face_timestamps"
   | "backfill_face_quality"
+  | "backfill_demographics"
   | "build_events"
   | "geocode_places";
 export type TaskStatus =

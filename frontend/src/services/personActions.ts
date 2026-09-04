@@ -35,7 +35,11 @@ export interface PersonMediaBulkResult {
 
 export const updatePerson = async (
   personId: number,
-  data: { name?: string; profile_face_id?: number }
+  data: {
+    name?: string;
+    profile_face_id?: number;
+    gender?: "female" | "male" | null;
+  }
 ): Promise<Person> => {
   const res = await fetch(`${API}/api/person/${personId}`, {
     method: "PATCH",

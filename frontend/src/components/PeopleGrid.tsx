@@ -10,6 +10,8 @@ import {
   Snackbar,
   Stack,
   Typography,
+  ToggleButton,
+  ToggleButtonGroup,
 } from "@mui/material";
 import Grid from "@mui/material/Grid";
 import { useInView } from "react-intersection-observer";
@@ -39,6 +41,8 @@ interface PeopleGridProps {
   title: string;
   listKey: string;
   hidden?: boolean;
+  gender?: "female" | "male";
+  onGenderChange?: (gender?: "female" | "male") => void;
 }
 
 type SnackbarState = {
@@ -51,11 +55,13 @@ export default function PeopleGrid({
   title,
   listKey,
   hidden = false,
+  gender,
+  onGenderChange,
 }: PeopleGridProps) {
   const { ref: loaderRef, inView } = useInView({ rootMargin: "200px" });
   const fetchPeople = useCallback(
-    (cursor?: string | null) => getPeople(cursor ?? undefined, hidden),
-    [hidden],
+    (cursor?: string | null) => getPeople(cursor ?? undefined, hidden, gender),
+    [gender, hidden],
   );
   const { items: people, hasMore, isLoading, error } = useListStore(
     (state) =>
@@ -311,6 +317,21 @@ export default function PeopleGrid({
           {title}
         </Typography>
         <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
+          {onGenderChange && (
+            <ToggleButtonGroup
+              exclusive
+              size="small"
+              value={gender ?? "all"}
+              onChange={(_, value: "all" | "female" | "male" | null) => {
+                if (value) onGenderChange(value === "all" ? undefined : value);
+              }}
+              aria-label="Filter people by gender"
+            >
+              <ToggleButton value="all">All</ToggleButton>
+              <ToggleButton value="female">Female</ToggleButton>
+              <ToggleButton value="male">Male</ToggleButton>
+            </ToggleButtonGroup>
+          )}
           {hasNewItems && (
             <Chip
               color="primary"

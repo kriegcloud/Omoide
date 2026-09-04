@@ -61,6 +61,7 @@ def create_and_run_task(
         "run_processor_for_media",
         "backfill_face_quality",
         "backfill_face_timestamps",
+        "backfill_demographics",
         "build_events",
         "geocode_places",
     ],

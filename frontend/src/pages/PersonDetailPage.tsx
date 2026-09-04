@@ -79,6 +79,7 @@ export default function PersonDetailPage() {
     handleDeletePerson,
     handleTagAddedToPerson,
     onSave,
+    handleGenderChange,
     handleConfirmMerge,
     isAutoSelectingProfile,
     isLoadingSuggestedFaces,
@@ -109,6 +110,7 @@ export default function PersonDetailPage() {
       <PersonHero
         person={person}
         onSave={onSave}
+        onGenderChange={handleGenderChange}
         saving={saving}
         onMerge={() => setMergeOpen(true)}
         onDelete={() => setConfirmDelete(true)}

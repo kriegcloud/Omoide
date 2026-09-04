@@ -98,6 +98,9 @@ class Face(SQLModel, table=True):
     det_score: float | None = Field(default=None, nullable=True)
     # 1.0 = frontal, 0.0 = extreme profile (estimated from the 5-point keypoints)
     frontality: float | None = Field(default=None, nullable=True)
+    sex: str | None = Field(default=None, nullable=True)
+    sex_score: float | None = Field(default=None, nullable=True)
+    age: int | None = Field(default=None, nullable=True)
 
     media: "Media" = Relationship(back_populates="faces")
     person: Optional["Person"] = Relationship(
@@ -178,6 +181,8 @@ class Person(SQLModel, table=True):
     name: str | None = None
     age: int | None = None
     gender: str | None = None
+    gender_confidence: float | None = Field(default=None, nullable=True)
+    gender_manual: bool = Field(default=False, nullable=False)
     hidden_at: datetime | None = Field(default=None, index=True)
     views: int = Field(default=0, index=True)
     faces: list["Face"] = Relationship(

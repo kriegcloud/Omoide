@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from statistics import median
 from typing import Any, Literal
 from urllib.parse import quote
 
@@ -51,6 +52,7 @@ from app.models import (
     PersonTagLink,
     ProcessingTask,
     Scene,
+    Tag,
     TimelineEvent,
 )
 from app.subprocess_helpers import run_silent
@@ -139,6 +141,76 @@ def recalculate_person_appearance_counts(
         if person is None:
             continue
         person.appearance_count = counts.get(pid, 0)
+        session.add(person)
+    update_person_demographics(session, ids)
+
+
+def update_person_demographics(
+    session: Session, person_ids: Iterable[int]
+) -> None:
+    """Aggregate face demographics and mirror the result to system tags."""
+    ids = {pid for pid in person_ids if pid is not None}
+    if not ids:
+        return
+
+    session.flush()
+    tag_ids: dict[str, int] = {}
+    for name in ("Female", "Male"):
+        tag_id = session.exec(select(Tag.id).where(Tag.name == name)).first()
+        if tag_id is None:
+            tag = Tag(name=name)
+            session.add(tag)
+            session.flush()
+            tag_id = tag.id
+        tag_ids[name] = tag_id
+
+    gender_tag_ids = [tag_ids["Female"], tag_ids["Male"]]
+    for person_id in ids:
+        person = session.get(Person, person_id)
+        if person is None:
+            continue
+
+        faces = session.exec(
+            select(Face).where(Face.person_id == person_id)
+        ).all()
+        weights = {"F": 0.0, "M": 0.0}
+        ages: list[int] = []
+        for face in faces:
+            if face.sex in weights:
+                weights[face.sex] += (
+                    float(face.det_score)
+                    if face.det_score is not None
+                    else 1.0
+                )
+            if face.age is not None:
+                ages.append(face.age)
+
+        person.age = int(round(median(ages))) if ages else None
+        if not person.gender_manual:
+            total_weight = weights["F"] + weights["M"]
+            if total_weight > 0:
+                winning_sex = max(weights, key=weights.get)
+                person.gender = "female" if winning_sex == "F" else "male"
+                person.gender_confidence = weights[winning_sex] / total_weight
+            else:
+                person.gender = None
+                person.gender_confidence = None
+
+        session.exec(
+            delete(PersonTagLink).where(
+                PersonTagLink.person_id == person_id,
+                PersonTagLink.tag_id.in_(gender_tag_ids),
+            )
+        )
+        should_mirror = person.gender_manual or (
+            person.gender_confidence is not None
+            and person.gender_confidence >= 0.65
+        )
+        if should_mirror and person.gender in ("female", "male"):
+            tag_name = "Female" if person.gender == "female" else "Male"
+            session.add(
+                PersonTagLink(person_id=person_id, tag_id=tag_ids[tag_name])
+            )
         session.add(person)
 
 

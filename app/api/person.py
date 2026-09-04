@@ -72,6 +72,7 @@ from app.utils import (
     get_person_embedding,
     recalculate_person_appearance_counts,
     remove_person,
+    update_person_demographics,
     update_person_embedding,
 )
 
@@ -279,6 +280,7 @@ def list_persons(
     ),
     limit: int = 50,
     hidden: bool = Query(False),
+    gender: str | None = Query(None),
     session: Session = Depends(get_session),
 ):
     before_count = None
@@ -297,6 +299,10 @@ def list_persons(
 
     if name:
         q = q.where(Person.name.ilike(f"%{name}%"))
+    if isinstance(gender, str):
+        if gender not in ("female", "male"):
+            raise HTTPException(400, "gender must be 'female' or 'male'")
+        q = q.where(Person.gender == gender)
 
     if cursor and before_id is not None and before_count is not None:
         q = q.where(
@@ -864,6 +870,10 @@ def get_person(person_id: int, session: Session = Depends(get_session)):
         tags=person.tags,
         appearance_count=int(media_count or 0),
         hidden_at=person.hidden_at,
+        gender=person.gender,
+        gender_confidence=person.gender_confidence,
+        gender_manual=person.gender_manual,
+        age=person.age,
     )
 
 
@@ -886,6 +896,15 @@ def update_person(
     if not person:
         raise HTTPException(404, "Person not found")
     updates = data.model_dump(exclude_unset=True)
+    if "gender" in updates:
+        requested_gender = updates.pop("gender")
+        if requested_gender is None:
+            person.gender_manual = False
+            update_person_demographics(session, [person_id])
+        else:
+            person.gender = requested_gender
+            person.gender_manual = True
+            update_person_demographics(session, [person_id])
     for key, val in updates.items():
         setattr(person, key, val)
     session.add(person)

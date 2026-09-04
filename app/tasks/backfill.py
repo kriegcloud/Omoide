@@ -7,6 +7,7 @@ from pathlib import Path
 import cv2
 import ffmpeg
 import numpy as np
+from PIL import Image, ImageOps
 from sqlmodel import Session, col, func, select
 
 import app.database as db
@@ -17,8 +18,152 @@ from app.logger import logger
 from app.models import Face, Media, ProcessingTask, Scene, Status
 from app.processor_registry import load_processors, processors
 from app.tasks.state import clear_task_progress, set_task_progress
+from app.utils import update_person_demographics
 
-__all__ = ["run_backfill_face_quality", "run_backfill_face_timestamps"]
+__all__ = [
+    "run_backfill_demographics",
+    "run_backfill_face_quality",
+    "run_backfill_face_timestamps",
+]
+
+
+def _load_face_source(media: Media, face: Face) -> np.ndarray | None:
+    path = Path(media.path)
+    if not path.exists():
+        return None
+    if media.duration is not None:
+        if face.timestamp is None or face.timestamp < 0:
+            return None
+        image = _extract_frame_rgb(media.path, face.timestamp)
+    else:
+        try:
+            with Image.open(path) as opened:
+                image = np.array(
+                    ImageOps.exif_transpose(opened).convert("RGB")
+                )
+        except OSError:
+            return None
+    if image is None or image.size == 0:
+        return None
+    height, width = image.shape[:2]
+    if max(height, width) > 1280:
+        scale = 1280 / max(height, width)
+        image = cv2.resize(
+            image,
+            (int(width * scale), int(height * scale)),
+            interpolation=cv2.INTER_AREA,
+        )
+    x, y, width, height = map(int, face.bbox[:4])
+    x1, y1 = max(0, x), max(0, y)
+    x2 = min(image.shape[1], x + width)
+    y2 = min(image.shape[0], y + height)
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return image[y1:y2, x1:x2]
+
+
+def run_backfill_demographics(task_id: str) -> None:
+    """Backfill gender/age from stored originals for faces without sex."""
+    if settings.general.presentation_mode:
+        logger.warning("Demographics backfill refused in presentation mode.")
+        return
+    if not processors:
+        load_processors()
+    face_proc = next((p for p in processors if p.name == "faces"), None)
+    if face_proc is None:
+        logger.error("FaceProcessor not found; cannot backfill demographics.")
+        return
+    face_proc.load_model()
+    analysis = getattr(face_proc, "demographics_model", face_proc.model)
+    attribute_model = getattr(analysis, "models", {}).get("genderage")
+    if attribute_model is None:
+        logger.error("InsightFace genderage model is unavailable.")
+        return
+
+    with Session(db.engine) as session:
+        task = session.get(ProcessingTask, task_id)
+        if not task:
+            logger.error("Task %s not found.", task_id)
+            return
+        task.status = Status.RUNNING
+        task.started_at = datetime.now(UTC)
+        task.total = int(
+            session.exec(
+                select(func.count(Face.id)).where(Face.sex.is_(None))
+            ).one()
+        )
+        session.add(task)
+        safe_commit(session)
+
+    set_task_progress(task_id, current_step="backfilling_demographics")
+    processed = 0
+    last_id = 0
+    affected_person_ids: set[int] = set()
+    while True:
+        with Session(db.engine) as session:
+            task = session.get(ProcessingTask, task_id)
+            if not task or task.status == Status.CANCELLED:
+                break
+            faces = session.exec(
+                select(Face)
+                .where(Face.sex.is_(None), Face.id > last_id)
+                .order_by(Face.id)
+                .limit(100)
+            ).all()
+            if not faces:
+                break
+            last_id = faces[-1].id
+            for face in faces:
+                media = session.get(Media, face.media_id)
+                crop = _load_face_source(media, face) if media else None
+                if crop is not None:
+                    from insightface.app.common import Face as InsightFace
+
+                    sample = InsightFace(
+                        bbox=np.array(
+                            [0, 0, crop.shape[1], crop.shape[0]],
+                            dtype=np.float32,
+                        )
+                    )
+                    try:
+                        attribute_model.get(crop, sample)
+                    except Exception as exc:
+                        logger.debug(
+                            "Demographics inference failed for face %s: %s",
+                            face.id,
+                            exc,
+                        )
+                    else:
+                        sex, age, score = face_proc._demographics(sample)
+                        face.sex = sex
+                        face.age = age
+                        face.sex_score = score
+                        session.add(face)
+                        if face.person_id is not None:
+                            affected_person_ids.add(face.person_id)
+                processed += 1
+            task.processed = processed
+            session.add(task)
+            safe_commit(session)
+            set_task_progress(
+                task_id,
+                current_step="backfilling_demographics",
+                current_item=f"{processed} faces checked",
+            )
+
+    with Session(db.engine) as session:
+        update_person_demographics(session, affected_person_ids)
+        task = session.get(ProcessingTask, task_id)
+        if task:
+            task.status = (
+                Status.CANCELLED
+                if task.status == Status.CANCELLED
+                else Status.COMPLETED
+            )
+            task.finished_at = datetime.now(UTC)
+            session.add(task)
+        safe_commit(session)
+    clear_task_progress(task_id)
 
 
 def run_backfill_face_quality(task_id: str) -> None:
