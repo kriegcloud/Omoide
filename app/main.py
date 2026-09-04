@@ -731,6 +731,7 @@ async def spa_catch_all(full_path: str):
             bool(settings.general.enable_people)
         ),
         "VITE_API_MEME_MODE": _bool_to_js(bool(settings.general.meme_mode)),
+        "VITE_API_IS_DOCKER": _bool_to_js(bool(settings.general.is_docker)),
         "VITE_API_EVENTS_ENABLED": _bool_to_js(
             bool(settings.events.events_enabled)
         ),

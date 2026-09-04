@@ -8,7 +8,6 @@ import {
   Box,
   Checkbox,
   Typography,
-  useTheme,
 } from "@mui/material";
 import { MediaPreview } from "../types";
 import appConfig, { API } from "../config";
@@ -16,10 +15,8 @@ import { encodeFilePath } from "../urlUtils";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import PlayCircleOutlineIcon from "@mui/icons-material/PlayCircleOutline";
 import FavoriteIcon from "@mui/icons-material/Favorite";
-import FavoriteBorderIcon from "@mui/icons-material/FavoriteBorder";
 import { useSelection } from "../context/SelectionContext";
-import { setMediaFavorite } from "../services/mediaActions";
-import IconButton from "@mui/material/IconButton";
+import MediaCardMenu, { MediaPersonContext } from "./MediaCardMenu";
 
 function formatDuration(d?: number): string {
   if (d == null) return "";
@@ -76,14 +73,15 @@ interface MediaCardProps {
   media: MediaPreview;
   mediaListKey?: string;
   navigationContext?: MediaNavigationContext;
+  personContext?: MediaPersonContext;
 }
 
 export default function MediaCard({
   media,
   mediaListKey,
   navigationContext,
+  personContext,
 }: MediaCardProps) {
-  const theme = useTheme();
   const { isSelecting, selectedIds, toggle } = useSelection();
   // This state now explicitly controls when the video player is active.
   const [isPlayerActive, setIsPlayerActive] = useState(false);
@@ -146,17 +144,6 @@ export default function MediaCard({
   useEffect(() => {
     setIsFavorite(!!media?.is_favorite);
   }, [mediaId, media?.is_favorite]);
-
-  const handleToggleFavorite = (event: React.MouseEvent) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (mediaId == null) return;
-    const next = !isFavorite;
-    setIsFavorite(next);
-    setMediaFavorite(mediaId, next).catch(() => {
-      setIsFavorite(!next);
-    });
-  };
 
   const handleMouseEnter = () => {
     hoverTimeoutRef.current = window.setTimeout(() => {
@@ -405,26 +392,37 @@ export default function MediaCard({
       </Link>
 
       {media && !isSelecting && (
-        <IconButton
-          onClick={handleToggleFavorite}
-          size="small"
+        <Box
           sx={{
             position: "absolute",
             top: 4,
             right: 4,
             zIndex: 20,
-            p: 0.5,
-            color: isFavorite ? "error.main" : "white",
-            bgcolor: "rgba(0,0,0,0.45)",
-            "&:hover": { bgcolor: "rgba(0,0,0,0.6)" },
           }}
         >
-          {isFavorite ? (
-            <FavoriteIcon fontSize="small" />
-          ) : (
-            <FavoriteBorderIcon fontSize="small" />
-          )}
-        </IconButton>
+          <MediaCardMenu
+            media={media}
+            mediaListKey={mediaListKey}
+            personContext={personContext}
+            onMediaChange={(updated) => setIsFavorite(updated.is_favorite)}
+          />
+        </Box>
+      )}
+
+      {media && isFavorite && !isSelecting && (
+        <FavoriteIcon
+          aria-label="Favorite"
+          fontSize="small"
+          sx={{
+            position: "absolute",
+            top: 10,
+            left: 10,
+            zIndex: 19,
+            color: "error.main",
+            filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.65))",
+            pointerEvents: "none",
+          }}
+        />
       )}
 
       {isSelecting && (

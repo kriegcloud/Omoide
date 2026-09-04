@@ -82,6 +82,39 @@ class FavoriteUpdate(SQLModel):
     is_favorite: bool
 
 
+class MediaMoveRequest(BaseModel):
+    destination_dir: str
+
+
+class MediaRenameRequest(BaseModel):
+    filename: str
+
+
+class MediaBulkMoveRequest(BaseModel):
+    media_ids: list[int]
+    destination_dir: str
+
+
+class MediaBulkMoveSkipped(BaseModel):
+    id: int
+    reason: str
+
+
+class MediaBulkMoveResponse(BaseModel):
+    moved_ids: list[int]
+    skipped: list[MediaBulkMoveSkipped]
+
+
+class MediaFolderCreateRequest(BaseModel):
+    parent_path: str
+    name: str
+
+
+class MediaFolderCreateResponse(BaseModel):
+    path: str
+    name: str
+
+
 class CursorPage(BaseModel):
     items: list[MediaPreview]
     next_cursor: str | None

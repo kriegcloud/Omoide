@@ -39,6 +39,8 @@ from app.schemas.media import (
     GeoUpdate,
     MediaDetail,
     MediaFolderBreadcrumb,
+    MediaFolderCreateRequest,
+    MediaFolderCreateResponse,
     MediaFolderEntry,
     MediaFolderListing,
     MediaFolderPreview,
@@ -46,9 +48,23 @@ from app.schemas.media import (
     MediaNeighbors,
     MediaPreview,
     MediaRead,
+    MediaBulkMoveRequest,
+    MediaBulkMoveResponse,
+    MediaBulkMoveSkipped,
+    MediaMoveRequest,
+    MediaRenameRequest,
 )
 from app.schemas.person import PersonRead
 from app.schemas.scene import PersonInScene, SceneCreate, SceneRead
+from app.services.media_files import (
+    InvalidMediaPathError,
+    MediaFileCollisionError,
+    MediaFileMissingError,
+    ReadOnlyMediaRootError,
+    create_media_folder,
+    move_media_file,
+    rename_media_file,
+)
 from app.utils import (
     delete_file,
     delete_record,
@@ -57,6 +73,38 @@ from app.utils import (
 )
 
 router = APIRouter()
+
+
+def _require_media_mutations_allowed() -> None:
+    if settings.general.presentation_mode:
+        raise HTTPException(
+            status_code=403,
+            detail="Not allowed in settings.general.presentation_mode mode.",
+        )
+
+
+def _media_file_conflict(exc: Exception) -> HTTPException:
+    return HTTPException(status_code=409, detail=str(exc))
+
+
+def _move_media(media: Media, destination_dir: str) -> Path:
+    if media.missing_since is not None:
+        raise MediaFileMissingError("Media file is missing")
+    return move_media_file(
+        media.path,
+        destination_dir,
+        settings.general.resolved_media_dirs(),
+    )
+
+
+def _rename_media(media: Media, filename: str) -> Path:
+    if media.missing_since is not None:
+        raise MediaFileMissingError("Media file is missing")
+    return rename_media_file(
+        media.path,
+        filename,
+        settings.general.resolved_media_dirs(),
+    )
 
 
 def _normalize_relative_path(value: str | None) -> str:
@@ -469,6 +517,7 @@ def list_media_folders(
         le=12,
         description="Maximum number of media previews to include per folder.",
     ),
+    include_empty: bool = Query(False),
     session: Session = Depends(get_session),
 ):
     normalized_parent = _normalize_relative_path(parent)
@@ -577,6 +626,45 @@ def list_media_folders(
         for folder_name, media_count, subfolder_count in folder_rows
     ]
 
+    if include_empty:
+        folders_by_name = {entry.name: entry for entry in folders}
+        for media_root, read_only in settings.general.resolved_media_dirs():
+            if read_only:
+                continue
+            root = Path(media_root).resolve()
+            current = (root / normalized_parent).resolve(strict=False)
+            if not _is_within(current, root) or not current.is_dir():
+                continue
+            try:
+                children = list(current.iterdir())
+            except OSError:
+                continue
+            for child in children:
+                try:
+                    resolved_child = child.resolve()
+                    if not child.is_dir() or not _is_within(resolved_child, root):
+                        continue
+                    subfolder_count = sum(
+                        1
+                        for nested in child.iterdir()
+                        if nested.is_dir()
+                        and _is_within(nested.resolve(), root)
+                    )
+                except OSError:
+                    continue
+                if child.name not in folders_by_name:
+                    entry = MediaFolderEntry(
+                        path="/".join([*parent_parts, child.name]),
+                        name=child.name,
+                        parent_path=folder_parent_path,
+                        depth=len(parent_parts) + 1,
+                        media_count=0,
+                        subfolder_count=subfolder_count,
+                        previews=[],
+                    )
+                    folders.append(entry)
+                    folders_by_name[child.name] = entry
+
     folders.sort(key=lambda entry: entry.name.lower())
 
     breadcrumbs = _build_breadcrumbs(parent_parts)
@@ -593,6 +681,121 @@ def list_media_folders(
         folders=folders,
         breadcrumbs=breadcrumbs,
     )
+
+
+@router.post("/folders", response_model=MediaFolderCreateResponse)
+def create_folder(
+    body: MediaFolderCreateRequest,
+):
+    _require_media_mutations_allowed()
+    if (
+        not body.name.strip()
+        or body.name.strip() in {".", ".."}
+        or "/" in body.name
+        or "\\" in body.name
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Folder name must not contain separators or '..'",
+        )
+    try:
+        target = create_media_folder(
+            _normalize_relative_path(body.parent_path),
+            body.name,
+            settings.general.resolved_media_dirs(),
+        )
+    except InvalidMediaPathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except (MediaFileCollisionError, ReadOnlyMediaRootError) as exc:
+        raise _media_file_conflict(exc)
+    relative_path = "/".join(
+        part for part in [body.parent_path.strip("/\\"), target.name] if part
+    )
+    return MediaFolderCreateResponse(path=relative_path, name=target.name)
+
+
+@router.post("/bulk-move", response_model=MediaBulkMoveResponse)
+def bulk_move_media(
+    body: MediaBulkMoveRequest,
+    session: Session = Depends(get_session),
+):
+    _require_media_mutations_allowed()
+    moved_ids: list[int] = []
+    skipped: list[MediaBulkMoveSkipped] = []
+    for media_id in dict.fromkeys(body.media_ids):
+        media = session.get(Media, media_id)
+        if media is None:
+            skipped.append(MediaBulkMoveSkipped(id=media_id, reason="Media not found"))
+            continue
+        try:
+            target = _move_media(media, body.destination_dir)
+        except (
+            InvalidMediaPathError,
+            MediaFileCollisionError,
+            MediaFileMissingError,
+            ReadOnlyMediaRootError,
+        ) as exc:
+            skipped.append(MediaBulkMoveSkipped(id=media_id, reason=str(exc)))
+            continue
+        media.path = os.fspath(target)
+        session.add(media)
+        moved_ids.append(media_id)
+    safe_commit(session)
+    return MediaBulkMoveResponse(moved_ids=moved_ids, skipped=skipped)
+
+
+@router.post("/{media_id}/move", response_model=MediaPreview)
+def move_media(
+    media_id: int,
+    body: MediaMoveRequest,
+    session: Session = Depends(get_session),
+):
+    _require_media_mutations_allowed()
+    media = session.get(Media, media_id)
+    if media is None:
+        raise HTTPException(status_code=404, detail="Media not found")
+    try:
+        target = _move_media(media, body.destination_dir)
+    except (
+        InvalidMediaPathError,
+        MediaFileCollisionError,
+        MediaFileMissingError,
+        ReadOnlyMediaRootError,
+    ) as exc:
+        raise _media_file_conflict(exc)
+    media.path = os.fspath(target)
+    session.add(media)
+    safe_commit(session)
+    session.refresh(media)
+    return media
+
+
+@router.post("/{media_id}/rename", response_model=MediaPreview)
+def rename_media(
+    media_id: int,
+    body: MediaRenameRequest,
+    session: Session = Depends(get_session),
+):
+    _require_media_mutations_allowed()
+    media = session.get(Media, media_id)
+    if media is None:
+        raise HTTPException(status_code=404, detail="Media not found")
+    try:
+        target = _rename_media(media, body.filename)
+    except InvalidMediaPathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except (
+        MediaFileCollisionError,
+        MediaFileMissingError,
+        ReadOnlyMediaRootError,
+    ) as exc:
+        raise _media_file_conflict(exc)
+    media.path = os.fspath(target)
+    media.filename = target.name
+    session.add(media)
+    safe_commit(session)
+    session.refresh(media)
+    return media
 
 
 @router.get("/locations", response_model=list[MediaLocation])

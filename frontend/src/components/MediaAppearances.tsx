@@ -162,7 +162,11 @@ export default function MediaAppearances({
         {items &&
           items.map((media) => (
             <div key={media.id}>
-              <MediaCard media={media} mediaListKey={mediaListKey} />
+              <MediaCard
+                media={media}
+                mediaListKey={mediaListKey}
+                personContext={{ personId: person.id }}
+              />
             </div>
           ))}
       </Masonry>

@@ -9,6 +9,7 @@ import { Media } from "../types";
 import config from "../config";
 import { BinaryNavigationControls } from "./BinaryNavigationControls";
 import { setMediaFavorite } from "../services/mediaActions";
+import MediaCardMenu from "./MediaCardMenu";
 const ERROR_COLOR = "error.main";
 
 interface MediaHeaderProps {
@@ -18,6 +19,8 @@ interface MediaHeaderProps {
   onOpenFolder?: (mediaId: number) => void;
   onOpenFile?: (mediaId: number) => void;
   onFavoriteChange?: (media: Media) => void;
+  mediaListKey?: string;
+  onDeleted?: () => void;
 }
 
 export function MediaHeader({
@@ -27,6 +30,8 @@ export function MediaHeader({
   onOpenFolder,
   onOpenFile,
   onFavoriteChange,
+  mediaListKey,
+  onDeleted,
 }: MediaHeaderProps) {
   const filename = media ? media.filename : "File not found!";
   const isVideo = typeof media?.duration === "number";
@@ -81,6 +86,14 @@ export function MediaHeader({
         }}
       >
         <BinaryNavigationControls variant="overlay" />
+        {!config.PRESENTATION_MODE && media && (
+          <MediaCardMenu
+            media={media}
+            mediaListKey={mediaListKey}
+            onMediaChange={(updated) => onFavoriteChange?.({ ...media, ...updated })}
+            onDeleted={onDeleted}
+          />
+        )}
         {!config.PRESENTATION_MODE && media && (
           <Tooltip title={media.is_favorite ? "Remove favorite" : "Mark as favorite"}>
             <IconButton

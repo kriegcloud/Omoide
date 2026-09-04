@@ -1,5 +1,15 @@
 import { API } from "../config";
-import { Media, Task } from "../types";
+import { Media, MediaPreview, Task } from "../types";
+
+export interface BulkMoveResult {
+  moved_ids: number[];
+  skipped: { id: number; reason: string }[];
+}
+
+const responseError = async (res: Response, fallback: string) => {
+  const data = await res.json().catch(() => null);
+  return new Error(data?.detail || fallback);
+};
 
 export const convertMedia = async (mediaId: number): Promise<Task> => {
   const res = await fetch(`${API}/api/media/${mediaId}/converter`, {
@@ -53,5 +63,57 @@ export const setMediaFavorite = async (
     body: JSON.stringify({ is_favorite: isFavorite }),
   });
   if (!res.ok) throw new Error("Failed to update favorite");
+  return res.json();
+};
+
+export const moveMedia = async (
+  mediaId: number,
+  destinationDir: string
+): Promise<MediaPreview> => {
+  const res = await fetch(`${API}/api/media/${mediaId}/move`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ destination_dir: destinationDir }),
+  });
+  if (!res.ok) throw await responseError(res, "Failed to move media");
+  return res.json();
+};
+
+export const renameMedia = async (
+  mediaId: number,
+  filename: string
+): Promise<MediaPreview> => {
+  const res = await fetch(`${API}/api/media/${mediaId}/rename`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename }),
+  });
+  if (!res.ok) throw await responseError(res, "Failed to rename media");
+  return res.json();
+};
+
+export const bulkMoveMedia = async (
+  mediaIds: number[],
+  destinationDir: string
+): Promise<BulkMoveResult> => {
+  const res = await fetch(`${API}/api/media/bulk-move`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ media_ids: mediaIds, destination_dir: destinationDir }),
+  });
+  if (!res.ok) throw await responseError(res, "Failed to move selected media");
+  return res.json();
+};
+
+export const createMediaFolder = async (
+  parentPath: string,
+  name: string
+): Promise<{ path: string; name: string }> => {
+  const res = await fetch(`${API}/api/media/folders`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ parent_path: parentPath, name }),
+  });
+  if (!res.ok) throw await responseError(res, "Failed to create folder");
   return res.json();
 };

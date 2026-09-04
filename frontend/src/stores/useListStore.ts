@@ -30,7 +30,7 @@ interface ListStoreState {
   clearList: (listKey: string) => void;
   clearListsByPrefix: (prefix: string) => void;
   addItem: <T>(listKey: string, item: T, position?: "start" | "end") => void;
-  updateItem: <T extends { id: any }>(listKey: string, item: T) => void;
+  updateItem: <T extends { id: unknown }>(listKey: string, item: T) => void;
 }
 
 // The default state for any new list
@@ -236,9 +236,17 @@ export const useListStore = create<ListStoreState>((set, get) => ({
     set((state) => {
       const currentList = state.lists[listKey];
       if (!currentList) return state;
-      const updatedItems = currentList.items.map((item: any) =>
-        item.data.id === updatedItem.id ? { ...item, data: updatedItem } : item
-      );
+      const updatedItems = currentList.items.map((item: unknown) => {
+        if (!item || typeof item !== "object") return item;
+        const candidate = item as {
+          id?: unknown;
+          data?: { id?: unknown };
+        };
+        if (candidate.data?.id === updatedItem.id) {
+          return { ...candidate, data: updatedItem };
+        }
+        return candidate.id === updatedItem.id ? updatedItem : item;
+      });
       return {
         lists: {
           ...state.lists,

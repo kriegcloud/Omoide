@@ -14,7 +14,6 @@ import {
   IconButton,
   useTheme,
   useMediaQuery,
-  Fade,
 } from "@mui/material";
 import { ArrowBackIosNew, ArrowForwardIos } from "@mui/icons-material";
 import CloseIcon from "@mui/icons-material/Close";
@@ -506,6 +505,8 @@ export default function MediaDetailPage() {
                   <MediaHeader
                     media={detail.media}
                     onOpenDialog={setDialogType}
+                    mediaListKey={mediaListKey}
+                    onDeleted={navigateAfterDelete}
                     isBinary={isBinary}
                     onFavoriteChange={handleMediaUpdate}
                     onOpenFolder={async (mediaId) => {

@@ -110,7 +110,8 @@ export const getMediaList = async (
 
 export const getMediaFolders = async (
   parent?: string | null,
-  previewLimit = 4
+  previewLimit = 4,
+  includeEmpty = false
 ): Promise<MediaFolderListing> => {
   const params = new URLSearchParams();
   if (parent !== undefined && parent !== null) {
@@ -118,6 +119,9 @@ export const getMediaFolders = async (
   }
   if (previewLimit !== 4) {
     params.append("preview_limit", String(previewLimit));
+  }
+  if (includeEmpty) {
+    params.append("include_empty", "true");
   }
   const response = await fetch(
     `${API}/api/media/folders?${params.toString()}`

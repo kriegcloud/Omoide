@@ -47,6 +47,11 @@ from app.schemas.person import (
     PersonBulkHideResponse,
     PersonBulkUnhideResponse,
     PersonDetail,
+    PersonMediaBulkAttachResponse,
+    PersonMediaBulkDetachResponse,
+    PersonMediaBulkRequest,
+    PersonMediaReassignRequest,
+    PersonMediaReassignResponse,
     PersonRead,
     PersonReadSimple,
     PersonUpdate,
@@ -412,6 +417,187 @@ def detach_media_from_person(
         update_person_embedding(session, person_id)
     safe_commit(session)
     return {"message": "Media detached from person"}
+
+
+@router.post(
+    "/{person_id}/media/bulk",
+    response_model=PersonMediaBulkAttachResponse,
+)
+def attach_media_to_person_bulk(
+    person_id: int,
+    body: PersonMediaBulkRequest,
+    session: Session = Depends(get_session),
+):
+    if settings.general.presentation_mode:
+        raise HTTPException(status_code=403, detail="Not allowed in presentation mode.")
+    if session.get(Person, person_id) is None:
+        raise HTTPException(status_code=404, detail="Person not found")
+
+    added_ids: list[int] = []
+    skipped_ids: list[int] = []
+    for media_id in dict.fromkeys(body.media_ids):
+        if session.get(Media, media_id) is None:
+            skipped_ids.append(media_id)
+            continue
+        has_face = session.exec(
+            select(Face.id).where(
+                Face.person_id == person_id,
+                Face.media_id == media_id,
+            )
+        ).first()
+        existing_link = session.exec(
+            select(PersonMediaLink).where(
+                PersonMediaLink.person_id == person_id,
+                PersonMediaLink.media_id == media_id,
+            )
+        ).first()
+        if has_face:
+            if existing_link:
+                session.delete(existing_link)
+            skipped_ids.append(media_id)
+            continue
+        if existing_link:
+            skipped_ids.append(media_id)
+            continue
+        session.add(PersonMediaLink(person_id=person_id, media_id=media_id))
+        added_ids.append(media_id)
+
+    recalculate_person_appearance_counts(session, [person_id])
+    safe_commit(session)
+    return PersonMediaBulkAttachResponse(
+        added_ids=added_ids,
+        skipped_ids=skipped_ids,
+    )
+
+
+@router.post(
+    "/{person_id}/media/bulk-detach",
+    response_model=PersonMediaBulkDetachResponse,
+)
+def detach_media_from_person_bulk(
+    person_id: int,
+    body: PersonMediaBulkRequest,
+    session: Session = Depends(get_session),
+):
+    if settings.general.presentation_mode:
+        raise HTTPException(status_code=403, detail="Not allowed in presentation mode.")
+    if session.get(Person, person_id) is None:
+        raise HTTPException(status_code=404, detail="Person not found")
+
+    from app.api.face import update_face_embedding
+
+    detached_ids: list[int] = []
+    skipped_ids: list[int] = []
+    for media_id in dict.fromkeys(body.media_ids):
+        if session.get(Media, media_id) is None:
+            skipped_ids.append(media_id)
+            continue
+        faces = session.exec(
+            select(Face).where(
+                Face.person_id == person_id,
+                Face.media_id == media_id,
+            )
+        ).all()
+        link = session.exec(
+            select(PersonMediaLink).where(
+                PersonMediaLink.person_id == person_id,
+                PersonMediaLink.media_id == media_id,
+            )
+        ).first()
+        if not faces and link is None:
+            skipped_ids.append(media_id)
+            continue
+        for face in faces:
+            face.person_id = None
+            session.add(face)
+            update_face_embedding(session, face.id, -1)
+        if link:
+            session.delete(link)
+        detached_ids.append(media_id)
+
+    recalculate_person_appearance_counts(session, [person_id])
+    if session.get(Person, person_id):
+        update_person_embedding(session, person_id)
+    safe_commit(session)
+    return PersonMediaBulkDetachResponse(
+        detached_ids=detached_ids,
+        skipped_ids=skipped_ids,
+    )
+
+
+@router.post(
+    "/{person_id}/media/{media_id}/reassign",
+    response_model=PersonMediaReassignResponse,
+)
+def reassign_media_to_person(
+    person_id: int,
+    media_id: int,
+    body: PersonMediaReassignRequest,
+    session: Session = Depends(get_session),
+):
+    if settings.general.presentation_mode:
+        raise HTTPException(status_code=403, detail="Not allowed in presentation mode.")
+    if body.target_person_id == person_id:
+        raise HTTPException(status_code=400, detail="Target must differ from source")
+    if session.get(Person, person_id) is None:
+        raise HTTPException(status_code=404, detail="Person not found")
+    target = session.get(Person, body.target_person_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Target person not found")
+
+    from app.api.face import old_person_can_be_deleted, update_face_embedding
+
+    faces = session.exec(
+        select(Face).where(
+            Face.person_id == person_id,
+            Face.media_id == media_id,
+        )
+    ).all()
+    source_link = session.exec(
+        select(PersonMediaLink).where(
+            PersonMediaLink.person_id == person_id,
+            PersonMediaLink.media_id == media_id,
+        )
+    ).first()
+    reassigned = False
+    if faces:
+        for face in faces:
+            face.person_id = body.target_person_id
+            session.add(face)
+            update_face_embedding(session, face.id, body.target_person_id)
+        if source_link:
+            session.delete(source_link)
+        reassigned = True
+    elif source_link:
+        target_link = session.exec(
+            select(PersonMediaLink).where(
+                PersonMediaLink.person_id == body.target_person_id,
+                PersonMediaLink.media_id == media_id,
+            )
+        ).first()
+        if target_link:
+            session.delete(source_link)
+        else:
+            source_link.person_id = body.target_person_id
+            session.add(source_link)
+        reassigned = True
+
+    if reassigned:
+        recalculate_person_appearance_counts(
+            session, {person_id, body.target_person_id}
+        )
+        old_person_can_be_deleted(session, person_id)
+        for affected_id in (person_id, body.target_person_id):
+            if session.get(Person, affected_id):
+                update_person_embedding(session, affected_id)
+        safe_commit(session)
+
+    return PersonMediaReassignResponse(
+        media_id=media_id,
+        source_person_id=person_id,
+        target_person_id=body.target_person_id,
+        reassigned=reassigned,
+    )
 
 
 @router.get("/{person_id}/faces", response_model=FaceCursorPage)

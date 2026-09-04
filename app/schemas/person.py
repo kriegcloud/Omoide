@@ -103,6 +103,31 @@ class PersonBulkUnhideResponse(BaseModel):
     skipped_ids: list[int]
 
 
+class PersonMediaBulkRequest(BaseModel):
+    media_ids: list[int]
+
+
+class PersonMediaBulkAttachResponse(BaseModel):
+    added_ids: list[int]
+    skipped_ids: list[int]
+
+
+class PersonMediaBulkDetachResponse(BaseModel):
+    detached_ids: list[int]
+    skipped_ids: list[int]
+
+
+class PersonMediaReassignRequest(BaseModel):
+    target_person_id: int
+
+
+class PersonMediaReassignResponse(BaseModel):
+    media_id: int
+    source_person_id: int
+    target_person_id: int
+    reassigned: bool
+
+
 class SimilarPerson(SQLModel):
     id: int
     name: str | None

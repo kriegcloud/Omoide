@@ -49,6 +49,13 @@ const config = {
     return getBooleanEnv(window.runtimeConfig?.VITE_API_MEME_MODE);
   },
 
+  get IS_DOCKER(): boolean {
+    if (import.meta.env.DEV) {
+      return getBooleanEnv(import.meta.env.VITE_API_IS_DOCKER);
+    }
+    return getBooleanEnv(window.runtimeConfig?.VITE_API_IS_DOCKER);
+  },
+
   /**
    * Checks if the Events tab/feature is enabled.
    * Accesses the correct source based on the environment (dev vs. prod).

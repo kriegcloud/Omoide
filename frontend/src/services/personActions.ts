@@ -27,6 +27,12 @@ export interface AddMediaAppearanceResult {
   added: boolean;
 }
 
+export interface PersonMediaBulkResult {
+  added_ids?: number[];
+  detached_ids?: number[];
+  skipped_ids: number[];
+}
+
 export const updatePerson = async (
   personId: number,
   data: { name?: string; profile_face_id?: number }
@@ -142,6 +148,49 @@ export const searchPersonsByName = async (
   if (!res.ok) throw new Error("Failed to search persons");
   const data = await res.json();
   return data.items;
+};
+
+export const attachMediaToPersonBulk = async (
+  personId: number,
+  mediaIds: number[]
+): Promise<PersonMediaBulkResult> => {
+  const res = await fetch(`${API}/api/person/${personId}/media/bulk`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ media_ids: mediaIds }),
+  });
+  if (!res.ok) throw new Error("Failed to attach selected media");
+  return res.json();
+};
+
+export const detachMediaFromPersonBulk = async (
+  personId: number,
+  mediaIds: number[]
+): Promise<PersonMediaBulkResult> => {
+  const res = await fetch(`${API}/api/person/${personId}/media/bulk-detach`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ media_ids: mediaIds }),
+  });
+  if (!res.ok) throw new Error("Failed to detach selected media");
+  return res.json();
+};
+
+export const reassignMediaToPerson = async (
+  sourcePersonId: number,
+  mediaId: number,
+  targetPersonId: number
+): Promise<{ reassigned: boolean }> => {
+  const res = await fetch(
+    `${API}/api/person/${sourcePersonId}/media/${mediaId}/reassign`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target_person_id: targetPersonId }),
+    }
+  );
+  if (!res.ok) throw new Error("Failed to assign media to person");
+  return res.json();
 };
 
 export const getSuggestedFaces = async (
