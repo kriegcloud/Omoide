@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+
+set -u -o pipefail
+
+readonly PROJECT_DIR="/home/elpresidank/YeeBois/workstation-apps/Omoide"
+readonly PORTAL_URL="http://127.0.0.1:8123"
+readonly DOCKER_HOST_URI="unix:///var/run/docker.sock"
+readonly T7_MOUNT="/run/media/elpresidank/T7"
+readonly T7_UUID="2AB6-8C1B"
+readonly T7XFER_MOUNT="/run/media/elpresidank/T7XFER"
+readonly T7XFER_UUID="6BD8-CAAD"
+readonly BACKUP_SERVICE="omoide-portal-backup.service"
+readonly ML_SERVICE="omoide-ml.service"
+readonly ML_SOCKET="/home/elpresidank/.local/share/omoide-portal/run/omoide-ml.sock"
+readonly ML_PYTHON="/home/elpresidank/.cache/omoide/photo-face/venv-rocm72/bin/python"
+readonly ML_LIBRARY_PATH="/home/elpresidank/.cache/beep/photo-face/rocm-libs/hipsparselt-7.2.4-1.1/opt/rocm/lib:/opt/rocm/lib"
+
+show_error() {
+  local message="$1"
+  if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    /usr/bin/kdialog --title "Omoide Media Portal" --error "$message" \
+      >/dev/null 2>&1 || true
+  else
+    /usr/bin/notify-send --urgency=critical "Omoide Media Portal" "$message" \
+      >/dev/null 2>&1 || true
+  fi
+}
+
+show_notice() {
+  /usr/bin/notify-send "Omoide Media Portal" "$1" >/dev/null 2>&1 || true
+}
+
+compose() {
+  /usr/bin/env \
+    -u DOCKER_CONTEXT \
+    -u DOCKER_HOST \
+    -u DOCKER_TLS_VERIFY \
+    -u DOCKER_CERT_PATH \
+    /usr/bin/docker --host "$DOCKER_HOST_URI" compose \
+    --project-directory "$PROJECT_DIR" \
+    --env-file "$PROJECT_DIR/.env" \
+    -f "$PROJECT_DIR/docker-compose.workstation.yml" \
+    "$@"
+}
+
+check_ml_health() {
+  PYTHONPATH="$PROJECT_DIR" LD_LIBRARY_PATH="$ML_LIBRARY_PATH" "$ML_PYTHON" -c "from pathlib import Path; from app.services.face_inference import AdaFaceSocketAnalysis; AdaFaceSocketAnalysis(Path('$ML_SOCKET'), 5).health()" >/dev/null 2>&1
+}
+
+migrate_face_embeddings() {
+  local migration_output
+  check_media_mounts || return 1
+  if ! /usr/bin/systemctl --user start "$BACKUP_SERVICE"; then
+    show_error "The required pre-migration catalog backup failed."
+    return 1
+  fi
+  if ! /usr/bin/systemctl --user start "$ML_SERVICE"; then
+    show_error "Omoide's isolated face-recognition service could not start."
+    return 1
+  fi
+  local attempt
+  for attempt in {1..120}; do
+    check_ml_health && break
+    /usr/bin/sleep 1
+  done
+  if ! check_ml_health; then
+    show_error "Omoide's face-recognition service did not become ready."
+    return 1
+  fi
+  if ! compose stop; then
+    show_error "The portal could not be stopped for the AdaFace migration."
+    return 1
+  fi
+  show_notice "AdaFace migration is running. Omoide will reopen when it finishes."
+  if ! migration_output="$(
+    /usr/bin/docker --host "$DOCKER_HOST_URI" run --rm +      --user 1000:1000 +      --read-only +      --cap-drop ALL +      --security-opt no-new-privileges:true +      --pids-limit 2048 +      --tmpfs /tmp:rw,noexec,nosuid,nodev,size=1g,mode=1777 +      --mount type=bind,source=/home/elpresidank/.local/share/omoide-portal,target=/app/data +      --workdir /app +      --entrypoint python +      omoide-workstation:0.7.0-local +      -m scripts.migrate_face_embeddings --apply 2>&1
+  )"; then
+    show_error "AdaFace migration failed. The Buffalo backend remains selected:"$'\n\n'"${migration_output:0:4000}"
+    ensure_running || true
+    return 1
+  fi
+  "$ML_PYTHON" - "$PROJECT_DIR/.env" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8").splitlines()
+setting = "OMOIDE_FACE_BACKEND=adaface_kprpe"
+updated = [
+    setting if line.startswith("OMOIDE_FACE_BACKEND=") else line
+    for line in lines
+]
+if not any(line == setting for line in updated):
+    updated.append(setting)
+staged = path.with_suffix(".env.tmp")
+staged.write_text("\n".join(updated) + "\n", encoding="utf-8")
+staged.chmod(0o600)
+staged.replace(path)
+PY
+  ensure_running || return 1
+  show_notice "AdaFace migration completed and the high-quality backend is active."
+}
+
+check_media_mounts() {
+  local problems=""
+  local actual_uuid
+  local expected_uuid
+  local index
+  local mount_path
+  local -a mount_paths=("$T7_MOUNT" "$T7XFER_MOUNT")
+  local -a expected_uuids=("$T7_UUID" "$T7XFER_UUID")
+
+  for index in "${!mount_paths[@]}"; do
+    mount_path="${mount_paths[$index]}"
+    expected_uuid="${expected_uuids[$index]}"
+    if ! actual_uuid="$(
+      /usr/bin/findmnt --mountpoint "$mount_path" --noheadings --raw \
+        --output UUID 2>/dev/null
+    )"; then
+      problems+=$'\n• '"$mount_path is not mounted"
+    elif [[ "$actual_uuid" != "$expected_uuid" ]]; then
+      problems+=$'\n• '"$mount_path is mounted from an unexpected device"
+    fi
+  done
+
+  if [[ -n "$problems" ]]; then
+    show_error "Omoide will only start when both configured media SSDs are mounted:${problems}"
+    return 1
+  fi
+}
+
+ensure_running() {
+  local output
+  check_media_mounts || return 1
+  if ! /usr/bin/systemctl --user start "$ML_SERVICE"; then
+    show_error "Omoide's isolated face-recognition service could not start."
+    return 1
+  fi
+  local attempt
+  for attempt in {1..120}; do
+    check_ml_health && break
+    /usr/bin/sleep 1
+  done
+  if ! check_ml_health; then
+    show_error "Omoide's face-recognition service did not become ready."
+    return 1
+  fi
+  if ! output="$(compose up --detach --wait 2>&1)"; then
+    /usr/bin/systemctl --user stop "$ML_SERVICE" >/dev/null 2>&1 || true
+    show_error "Omoide could not start. Docker reported:"$'\n\n'"${output:0:4000}"
+    return 1
+  fi
+}
+
+case "${1:---open}" in
+  --open)
+    ensure_running || exit 1
+    exec /usr/bin/xdg-open "$PORTAL_URL"
+    ;;
+  --start-only)
+    ensure_running || exit 1
+    ;;
+  --stop)
+    if compose stop; then
+      /usr/bin/systemctl --user stop "$ML_SERVICE" >/dev/null 2>&1 || true
+      "$ML_PYTHON" -c "from pathlib import Path; Path('$ML_SOCKET').unlink(missing_ok=True)"
+      show_notice "The portal is stopped. Both SSDs may now be unmounted."
+    else
+      show_error "Omoide could not be stopped."
+      exit 1
+    fi
+    ;;
+  --backup)
+    if /usr/bin/systemctl --user start "$BACKUP_SERVICE"; then
+      show_notice "The catalog backup completed successfully."
+    else
+      show_error "The catalog backup failed."
+      exit 1
+    fi
+    ;;
+  --migrate-faces)
+    migrate_face_embeddings || exit 1
+    ;;
+  --check)
+    check_media_mounts || exit 1
+    compose config --quiet || exit 1
+    /usr/bin/systemctl --user is-active --quiet "$ML_SERVICE" || {
+      printf '%s\n' "Omoide is configured but the face-recognition service is stopped."
+    }
+    if /usr/bin/curl --fail --silent "$PORTAL_URL/api/version" >/dev/null; then
+      printf '%s\n' "Omoide is healthy at $PORTAL_URL"
+    else
+      printf '%s\n' "Omoide is configured but not currently reachable."
+    fi
+    ;;
+  *)
+    show_error "Unknown launcher action: $1"
+    exit 2
+    ;;
+esac
