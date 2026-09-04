@@ -74,6 +74,7 @@ interface MediaCardProps {
   mediaListKey?: string;
   navigationContext?: MediaNavigationContext;
   personContext?: MediaPersonContext;
+  onSelectionClick?: (id: number, event: React.MouseEvent) => void;
 }
 
 export default function MediaCard({
@@ -81,6 +82,7 @@ export default function MediaCard({
   mediaListKey,
   navigationContext,
   personContext,
+  onSelectionClick,
 }: MediaCardProps) {
   const { isSelecting, selectedIds, toggle } = useSelection();
   // This state now explicitly controls when the video player is active.
@@ -99,7 +101,7 @@ export default function MediaCard({
   const useOriginalGif = memeModeEnabled && isGif;
 
   const isVideo = media ? typeof media.duration === "number" && !isGif : false;
-  const isDraggable = !!media && !isVideo;
+  const isDraggable = !!media && !isVideo && !isSelecting;
 
   const mediaUrl = media
     ? `${API}/originals/${encodeFilePath(media.path)}`
@@ -188,6 +190,8 @@ export default function MediaCard({
 
   return (
     <Card
+      data-selectable-id={mediaId ?? undefined}
+      data-media-card
       elevation={0}
       sx={{
         borderRadius: 3,
@@ -218,7 +222,8 @@ export default function MediaCard({
           isSelecting && mediaId != null
             ? (e) => {
                 e.preventDefault();
-                toggle(mediaId);
+                if (onSelectionClick) onSelectionClick(mediaId, e);
+                else toggle(mediaId);
               }
             : undefined
         }

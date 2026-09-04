@@ -1,13 +1,26 @@
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo, useRef } from "react";
 import { Box, CircularProgress, Typography } from "@mui/material";
 import { Media } from "../types";
 import MediaCard from "./MediaCard";
 import { getSimilarMedia } from "../services/media";
+import { useSelection } from "../context/SelectionContext";
+import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import MarqueeSelectionBox from "./MarqueeSelectionBox";
 
 export default function SimilarContent({ mediaId }: { mediaId: number }) {
   const [similar, setSimilar] = useState<Media[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const similarIds = useMemo(() => similar.map((item) => item.id), [similar]);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const { isSelecting, selectedIds, setSelected } = useSelection();
+  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+    containerRef: gridRef,
+    itemSelector: "[data-media-card]",
+    getId: (element) => Number(element.dataset.selectableId),
+    enabled: isSelecting,
+    selectedIds,
+    onSelectionChange: setSelected,
+  });
 
   useEffect(() => {
     if (!mediaId) return;
@@ -58,9 +71,11 @@ export default function SimilarContent({ mediaId }: { mediaId: number }) {
       </Typography>
 
       <Box
+        ref={gridRef}
         sx={{
           columnCount: { xs: 2, sm: 2, md: 3 },
           columnGap: (theme) => theme.spacing(2),
+          position: "relative",
         }}
       >
         {similar.map((item) => (
@@ -71,9 +86,14 @@ export default function SimilarContent({ mediaId }: { mediaId: number }) {
               mb: 2,
             }}
           >
-            <MediaCard media={item} navigationContext={{ ids: similarIds }} />
+            <MediaCard
+              media={item}
+              navigationContext={{ ids: similarIds }}
+              onSelectionClick={onItemClick}
+            />
           </Box>
         ))}
+        <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
       </Box>
     </Box>
   );

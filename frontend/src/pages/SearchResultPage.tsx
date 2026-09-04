@@ -26,6 +26,9 @@ import {
 import { searchCombined, searchScenes, searchTags } from "../services/search";
 import SceneResultCard from "../components/SceneResultCard";
 import { API } from "../config";
+import { useSelection } from "../context/SelectionContext";
+import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 
 const ITEMS_PER_PAGE = 30;
 
@@ -105,6 +108,16 @@ export default function SearchResultsPage() {
   const [orderBy, setOrderBy] = useState<"relevance" | "date">("relevance");
   const [retryTick, setRetryTick] = useState(0);
   const activeQueryRef = useRef<string>("");
+  const resultsGridRef = useRef<HTMLDivElement>(null);
+  const { isSelecting, selectedIds, setSelected } = useSelection();
+  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+    containerRef: resultsGridRef,
+    itemSelector: "[data-media-card]",
+    getId: (element) => Number(element.dataset.selectableId),
+    enabled: isSelecting && category === "media",
+    selectedIds,
+    onSelectionChange: setSelected,
+  });
 
   // Initial load for the combined (media) category
   useEffect(() => {
@@ -258,6 +271,7 @@ export default function SearchResultsPage() {
             media={item}
             mediaListKey={listKey}
             navigationContext={navigationContext}
+            onSelectionClick={onItemClick}
           />
         </div>
       );
@@ -368,13 +382,19 @@ export default function SearchResultsPage() {
         </Box>
       )}
 
-      <Masonry
-        breakpointCols={breakpointColumnsObj}
-        className="my-masonry-grid"
-        columnClassName="my-masonry-grid_column"
-      >
-        {visibleItems.map(renderItem)}
-      </Masonry>
+      <Box ref={resultsGridRef} sx={{ position: "relative" }}>
+        <Masonry
+          breakpointCols={breakpointColumnsObj}
+          className="my-masonry-grid"
+          columnClassName="my-masonry-grid_column"
+        >
+          {visibleItems.map(renderItem)}
+        </Masonry>
+        <MarqueeSelectionBox
+          container={resultsGridRef.current}
+          rect={marqueeRect}
+        />
+      </Box>
 
       {isLoading && (
         <Box textAlign="center" py={4}>

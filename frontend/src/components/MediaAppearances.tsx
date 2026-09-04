@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Box, CircularProgress, Autocomplete, TextField } from "@mui/material";
 import Masonry from "react-masonry-css";
 import { useInView } from "react-intersection-observer";
@@ -9,6 +9,9 @@ import { useListStore, defaultListState } from "../stores/useListStore";
 import { getPeople, getPersonMediaAppearances } from "../services/person";
 import { getTags } from "../services/tag";
 import { searchTags } from "../services/search";
+import { useSelection } from "../context/SelectionContext";
+import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import MarqueeSelectionBox from "./MarqueeSelectionBox";
 
 const breakpointColumnsObj = {
   default: 6,
@@ -38,6 +41,16 @@ export default function MediaAppearances({
   const [personOptions, setPersonOptions] = useState<PersonReadSimple[]>([]);
   const [tagOptions, setTagOptions] = useState<Tag[]>([]);
   const [tagQuery, setTagQuery] = useState("");
+  const gridRef = useRef<HTMLDivElement>(null);
+  const { isSelecting, selectedIds, setSelected } = useSelection();
+  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+    containerRef: gridRef,
+    itemSelector: "[data-selectable-id]",
+    getId: (element) => Number(element.dataset.selectableId),
+    enabled: isSelecting,
+    selectedIds,
+    onSelectionChange: setSelected,
+  });
 
   const { items, hasMore, isLoading } = useListStore(
     (state) => state.lists[mediaListKey] || defaultListState
@@ -154,22 +167,26 @@ export default function MediaAppearances({
           />
         </Box>
       </Box>
-      <Masonry
-        breakpointCols={breakpointColumnsObj}
-        className="my-masonry-grid"
-        columnClassName="my-masonry-grid_column"
-      >
-        {items &&
-          items.map((media) => (
-            <div key={media.id}>
-              <MediaCard
-                media={media}
-                mediaListKey={mediaListKey}
-                personContext={{ personId: person.id }}
-              />
-            </div>
-          ))}
-      </Masonry>
+      <Box ref={gridRef} sx={{ position: "relative" }}>
+        <Masonry
+          breakpointCols={breakpointColumnsObj}
+          className="my-masonry-grid"
+          columnClassName="my-masonry-grid_column"
+        >
+          {items &&
+            items.map((media) => (
+              <div key={media.id}>
+                <MediaCard
+                  media={media}
+                  mediaListKey={mediaListKey}
+                  personContext={{ personId: person.id }}
+                  onSelectionClick={onItemClick}
+                />
+              </div>
+            ))}
+        </Masonry>
+        <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
+      </Box>
 
       <Box ref={loaderRef} sx={{ height: "1px" }} />
 

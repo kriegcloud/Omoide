@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import {
   Alert,
@@ -15,6 +15,7 @@ import Grid from "@mui/material/Grid";
 import { useInView } from "react-intersection-observer";
 import config from "../config";
 import { usePeopleSelection } from "../hooks/usePeopleSelection";
+import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
 import { getPeople } from "../services/person";
 import {
   deletePersonsBulk,
@@ -31,6 +32,7 @@ import { useTaskCompletionVersion } from "../TaskEventsContext";
 import { Person, PersonReadSimple } from "../types";
 import ConfirmDialog from "./ConfirmDialog";
 import MergePeopleDialog from "./MergePeopleDialog";
+import MarqueeSelectionBox from "./MarqueeSelectionBox";
 import PersonCard from "./PersonCard";
 
 interface PeopleGridProps {
@@ -85,6 +87,15 @@ export default function PeopleGrid({
     open: false,
     message: "",
     severity: "success",
+  });
+  const gridRef = useRef<HTMLDivElement>(null);
+  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+    containerRef: gridRef,
+    itemSelector: "[data-selectable-id]",
+    getId: (element) => Number(element.dataset.selectableId),
+    enabled: selectionMode,
+    selectedIds,
+    onSelectionChange: setSelected,
   });
 
   useEffect(() => {
@@ -370,17 +381,27 @@ export default function PeopleGrid({
         </Alert>
       )}
 
-      <Grid container spacing={3} alignItems="stretch">
+      <Grid
+        ref={gridRef}
+        container
+        spacing={3}
+        alignItems="stretch"
+        sx={{ position: "relative" }}
+      >
         {people.map((person) => (
           <Grid key={person.id} size={{ xs: 6, sm: 4, md: 2, lg: 1.5 }}>
             <PersonCard
               person={person}
               selectable={selectionMode}
               selected={selectionMode && selectedIds.has(person.id)}
-              onToggleSelect={toggle}
+              onToggleSelect={(personId, event) => {
+                if (event) onItemClick(personId, event);
+                else toggle(personId);
+              }}
             />
           </Grid>
         ))}
+        <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
       </Grid>
 
       {isLoading && people.length > 0 && (

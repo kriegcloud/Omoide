@@ -4,6 +4,9 @@ import { Alert, Box, CircularProgress } from "@mui/material";
 import { useInView } from "react-intersection-observer";
 import MediaCard from "./MediaCard";
 import { CursorPage, Media } from "../types";
+import { useSelection } from "../context/SelectionContext";
+import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import MarqueeSelectionBox from "./MarqueeSelectionBox";
 
 const breakpointColumnsObj = {
   default: 5,
@@ -38,6 +41,16 @@ export function CursorMediaGrid({
   const [error, setError] = useState<string | null>(null);
   const requestSeq = useRef(0);
   const inFlightRef = useRef(false);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const { isSelecting, selectedIds, setSelected } = useSelection();
+  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+    containerRef: gridRef,
+    itemSelector: "[data-selectable-id]",
+    getId: (element) => Number(element.dataset.selectableId),
+    enabled: isSelecting,
+    selectedIds,
+    onSelectionChange: setSelected,
+  });
 
   const loadPage = useCallback(
     async (fromCursor: string | null, replace: boolean) => {
@@ -79,7 +92,6 @@ export function CursorMediaGrid({
     setCursor(null);
     setHasMore(true);
     void loadPage(null, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listKey, refreshToken, loadPage]);
 
   useEffect(() => {
@@ -89,7 +101,7 @@ export function CursorMediaGrid({
   }, [inView, hasMore, isLoading, error, cursor, loadPage]);
 
   return (
-    <>
+    <Box ref={gridRef} sx={{ position: "relative" }}>
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
           {error}
@@ -104,7 +116,11 @@ export function CursorMediaGrid({
         >
           {items.map((media) => (
             <div key={media.id}>
-              <MediaCard media={media} mediaListKey={listKey} />
+              <MediaCard
+                media={media}
+                mediaListKey={listKey}
+                onSelectionClick={onItemClick}
+              />
             </div>
           ))}
         </Masonry>
@@ -115,6 +131,7 @@ export function CursorMediaGrid({
         </Box>
       )}
       {hasMore && !error && <Box ref={loaderRef} sx={{ height: 10 }} />}
-    </>
+      <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
+    </Box>
   );
 }

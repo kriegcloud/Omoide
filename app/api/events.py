@@ -59,6 +59,15 @@ class EventPage(BaseModel):
     next_cursor: str | None
 
 
+class EventBulkDeleteRequest(BaseModel):
+    event_ids: list[int]
+
+
+class EventBulkDeleteResult(BaseModel):
+    deleted_ids: list[int]
+    skipped_ids: list[int]
+
+
 @router.get("", response_model=EventPage)
 def list_events(
     cursor: str | None = Query(None),
@@ -89,6 +98,50 @@ def list_events(
         items=[_event_read(session, e) for e in events],
         next_cursor=next_cursor,
     )
+
+
+def _delete_event(session: Session, event: Event) -> None:
+    for link in session.exec(
+        select(EventMediaLink).where(EventMediaLink.event_id == event.id)
+    ).all():
+        session.delete(link)
+    session.flush()
+    session.delete(event)
+
+
+@router.post("/bulk-delete", response_model=EventBulkDeleteResult)
+def delete_events_bulk(
+    body: EventBulkDeleteRequest,
+    session: Session = Depends(get_session),
+):
+    if settings.general.presentation_mode:
+        raise HTTPException(403, "Not allowed in presentation mode")
+    deleted_ids: list[int] = []
+    skipped_ids: list[int] = []
+    for event_id in dict.fromkeys(body.event_ids):
+        event = session.get(Event, event_id)
+        if not event:
+            skipped_ids.append(event_id)
+            continue
+        _delete_event(session, event)
+        deleted_ids.append(event_id)
+    safe_commit(session)
+    return EventBulkDeleteResult(
+        deleted_ids=deleted_ids,
+        skipped_ids=skipped_ids,
+    )
+
+
+@router.delete("/{event_id}")
+def delete_event(event_id: int, session: Session = Depends(get_session)):
+    if settings.general.presentation_mode:
+        raise HTTPException(403, "Not allowed in presentation mode")
+    event = session.get(Event, event_id)
+    if not event:
+        raise HTTPException(404, "Event not found")
+    _delete_event(session, event)
+    safe_commit(session)
+    return {"status": "deleted"}
 
 
 @router.get("/{event_id}", response_model=EventRead)

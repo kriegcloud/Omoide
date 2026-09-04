@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Masonry from "react-masonry-css";
 import {
   Alert,
@@ -13,6 +13,9 @@ import MediaCard from "../components/MediaCard";
 import { EmptyState } from "../components/EmptyState";
 import { getHighlights, getHighlightYears } from "../services/features";
 import { HighlightYear, Media } from "../types";
+import { useSelection } from "../context/SelectionContext";
+import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 
 const breakpointColumnsObj = {
   default: 5,
@@ -28,6 +31,16 @@ export default function HighlightsPage() {
   const [items, setItems] = useState<Media[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const { isSelecting, selectedIds, setSelected } = useSelection();
+  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+    containerRef: gridRef,
+    itemSelector: "[data-media-card]",
+    getId: (element) => Number(element.dataset.selectableId),
+    enabled: isSelecting,
+    selectedIds,
+    onSelectionChange: setSelected,
+  });
 
   useEffect(() => {
     getHighlightYears()
@@ -98,17 +111,24 @@ export default function HighlightsPage() {
           description="Scan and process some media first."
         />
       ) : (
-        <Masonry
-          breakpointCols={breakpointColumnsObj}
-          className="my-masonry-grid"
-          columnClassName="my-masonry-grid_column"
-        >
-          {items.map((media) => (
-            <div key={media.id}>
-              <MediaCard media={media} mediaListKey={`highlights-${year}`} />
-            </div>
-          ))}
-        </Masonry>
+        <Box ref={gridRef} sx={{ position: "relative" }}>
+          <Masonry
+            breakpointCols={breakpointColumnsObj}
+            className="my-masonry-grid"
+            columnClassName="my-masonry-grid_column"
+          >
+            {items.map((media) => (
+              <div key={media.id}>
+                <MediaCard
+                  media={media}
+                  mediaListKey={`highlights-${year}`}
+                  onSelectionClick={onItemClick}
+                />
+              </div>
+            ))}
+          </Masonry>
+          <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
+        </Box>
       )}
     </Container>
   );

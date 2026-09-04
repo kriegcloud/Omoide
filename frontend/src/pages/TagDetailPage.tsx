@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link as RouterLink } from "react-router-dom";
 import { useInView } from "react-intersection-observer";
 import {
@@ -18,6 +18,9 @@ import { Tag, Media, Person } from "../types";
 import { getTag } from "../services/tag";
 import { getMediaList } from "../services/media";
 import { useListStore, defaultListState } from "../stores/useListStore";
+import { useSelection } from "../context/SelectionContext";
+import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 
 const BG_SECTION = "background.default";
 const TEXT_PRIMARY = "text.primary";
@@ -32,6 +35,16 @@ export default function TagDetailPage() {
   const [retryTick, setRetryTick] = useState(0);
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
   const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
+  const mediaGridRef = useRef<HTMLDivElement>(null);
+  const { isSelecting, selectedIds, setSelected } = useSelection();
+  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+    containerRef: mediaGridRef,
+    itemSelector: "[data-selectable-id]",
+    getId: (element) => Number(element.dataset.selectableId),
+    enabled: isSelecting,
+    selectedIds,
+    onSelectionChange: setSelected,
+  });
 
   useEffect(() => {
     if (!id) return;
@@ -176,12 +189,26 @@ export default function TagDetailPage() {
             {listError}
           </Alert>
         )}
-        <Grid container spacing={2}>
+        <Grid
+          ref={mediaGridRef}
+          container
+          spacing={2}
+          sx={{ position: "relative" }}
+        >
           {filteredMediaItems.map((m: Media) => (
             <Grid key={m.id} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
-              <MediaCard media={m} mediaListKey={listKey} navigationContext={{ ids: mediaIds }} />
+              <MediaCard
+                media={m}
+                mediaListKey={listKey}
+                navigationContext={{ ids: mediaIds }}
+                onSelectionClick={onItemClick}
+              />
             </Grid>
           ))}
+          <MarqueeSelectionBox
+            container={mediaGridRef.current}
+            rect={marqueeRect}
+          />
         </Grid>
         {isLoading && (
           <Box textAlign="center" py={3}>

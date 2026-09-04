@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Masonry from "react-masonry-css";
 import SortIcon from "@mui/icons-material/Sort";
 import RefreshIcon from "@mui/icons-material/Refresh";
@@ -22,6 +22,9 @@ import { EmptyState } from "./EmptyState";
 import { useListStore, defaultListState } from "../stores/useListStore";
 import { useTaskCompletionVersion } from "../TaskEventsContext";
 import { CursorPage, Media } from "../types";
+import { useSelection } from "../context/SelectionContext";
+import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import MarqueeSelectionBox from "./MarqueeSelectionBox";
 
 export type MediaSortOrder = "newest" | "latest";
 
@@ -75,6 +78,16 @@ export default function MediaListPage({
   const refreshKey = useTaskCompletionVersion(["scan", "process_media"]);
   const [seenRefreshKey, setSeenRefreshKey] = useState(refreshKey);
   const hasNewItems = refreshKey !== seenRefreshKey;
+  const gridRef = useRef<HTMLDivElement>(null);
+  const { isSelecting, selectedIds, setSelected } = useSelection();
+  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+    containerRef: gridRef,
+    itemSelector: "[data-selectable-id]",
+    getId: (element) => Number(element.dataset.selectableId),
+    enabled: isSelecting,
+    selectedIds,
+    onSelectionChange: setSelected,
+  });
 
   // fetchInitial skips lists that already have content, so navigating back
   // restores the cached list (and scroll position) instantly.
@@ -221,17 +234,24 @@ export default function MediaListPage({
       )}
 
       {items.length > 0 && (
-        <Masonry
-          breakpointCols={breakpointColumnsObj}
-          className="my-masonry-grid"
-          columnClassName="my-masonry-grid_column"
-        >
-          {items.map((media: Media) => (
-            <div key={media.id}>
-              <MediaCard media={media} mediaListKey={listKey} />
-            </div>
-          ))}
-        </Masonry>
+        <Box ref={gridRef} sx={{ position: "relative" }}>
+          <Masonry
+            breakpointCols={breakpointColumnsObj}
+            className="my-masonry-grid"
+            columnClassName="my-masonry-grid_column"
+          >
+            {items.map((media: Media) => (
+              <div key={media.id}>
+                <MediaCard
+                  media={media}
+                  mediaListKey={listKey}
+                  onSelectionClick={onItemClick}
+                />
+              </div>
+            ))}
+          </Masonry>
+          <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
+        </Box>
       )}
 
       {items.length > 0 && isLoading && (

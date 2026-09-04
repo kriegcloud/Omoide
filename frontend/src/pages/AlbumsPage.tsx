@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -7,6 +7,7 @@ import {
   CardActionArea,
   CardContent,
   CircularProgress,
+  Checkbox,
   Container,
   Dialog,
   DialogActions,
@@ -23,6 +24,11 @@ import { encodeFilePath } from "../urlUtils";
 import { EmptyState } from "../components/EmptyState";
 import { createAlbum, getAlbums } from "../services/features";
 import { Album } from "../types";
+import ConfirmDialog from "../components/ConfirmDialog";
+import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
+import { useEntitySelection } from "../hooks/useEntitySelection";
+import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import { deleteAlbumsBulk } from "../services/albums";
 
 export default function AlbumsPage() {
   const [albums, setAlbums] = useState<Album[]>([]);
@@ -31,6 +37,18 @@ export default function AlbumsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const selection = useEntitySelection<number>();
+  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+    containerRef: gridRef,
+    itemSelector: "[data-selectable-id]",
+    getId: (element) => Number(element.dataset.selectableId),
+    enabled: selection.selectionMode,
+    selectedIds: selection.selectedIds,
+    onSelectionChange: selection.setSelected,
+  });
 
   const load = useCallback(() => {
     setIsLoading(true);
@@ -46,6 +64,10 @@ export default function AlbumsPage() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    selection.pruneTo(albums.map((album) => album.id));
+  }, [albums, selection.pruneTo]);
+
   const handleCreate = async () => {
     const trimmed = name.trim();
     if (!trimmed) return;
@@ -59,6 +81,21 @@ export default function AlbumsPage() {
       setError(err instanceof Error ? err.message : "Failed to create album");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleDeleteSelected = async () => {
+    setIsDeleting(true);
+    try {
+      const result = await deleteAlbumsBulk(Array.from(selection.selectedIds));
+      const deleted = new Set(result.deleted_ids);
+      setAlbums((previous) => previous.filter((album) => !deleted.has(album.id)));
+      selection.toggleMode();
+      setDeleteOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete albums");
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -78,14 +115,35 @@ export default function AlbumsPage() {
             Albums
           </Typography>
         </Box>
-        <Button
-          variant="contained"
-          disableElevation
-          startIcon={<AddIcon />}
-          onClick={() => setCreateOpen(true)}
-        >
-          New Album
-        </Button>
+        <Box display="flex" gap={1} alignItems="center">
+          {selection.selectionMode && (
+            <Typography variant="body2" color="text.secondary">
+              {selection.selectedIds.size} selected
+            </Typography>
+          )}
+          <Button variant="outlined" size="small" onClick={selection.toggleMode}>
+            {selection.selectionMode ? "Cancel Selection" : "Select Albums"}
+          </Button>
+          {selection.selectionMode && (
+            <Button
+              variant="contained"
+              color="error"
+              size="small"
+              disabled={selection.selectedIds.size === 0 || isDeleting}
+              onClick={() => setDeleteOpen(true)}
+            >
+              Delete Selected
+            </Button>
+          )}
+          <Button
+            variant="contained"
+            disableElevation
+            startIcon={<AddIcon />}
+            onClick={() => setCreateOpen(true)}
+          >
+            New Album
+          </Button>
+        </Box>
       </Box>
 
       {error && (
@@ -106,6 +164,7 @@ export default function AlbumsPage() {
         />
       ) : (
         <Box
+          ref={gridRef}
           sx={{
             display: "grid",
             gap: 2,
@@ -115,11 +174,29 @@ export default function AlbumsPage() {
               md: "repeat(4, 1fr)",
               lg: "repeat(5, 1fr)",
             },
+            position: "relative",
           }}
         >
           {albums.map((album) => (
-            <Card key={album.id} sx={{ borderRadius: 3 }}>
-              <CardActionArea component={Link} to={`/album/${album.id}`}>
+            <Card
+              key={album.id}
+              data-selectable-id={album.id}
+              sx={{
+                borderRadius: 3,
+                position: "relative",
+                outline: selection.selectedIds.has(album.id) ? "3px solid" : "none",
+                outlineColor: "primary.main",
+              }}
+            >
+              <CardActionArea
+                component={Link}
+                to={`/album/${album.id}`}
+                onClick={
+                  selection.selectionMode
+                    ? (event) => onItemClick(album.id, event)
+                    : undefined
+                }
+              >
                 <Box
                   sx={{
                     aspectRatio: "4/3",
@@ -158,8 +235,16 @@ export default function AlbumsPage() {
                   </Typography>
                 </CardContent>
               </CardActionArea>
+              {selection.selectionMode && (
+                <Checkbox
+                  checked={selection.selectedIds.has(album.id)}
+                  size="small"
+                  sx={{ position: "absolute", top: 4, left: 4, pointerEvents: "none" }}
+                />
+              )}
             </Card>
           ))}
+          <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
         </Box>
       )}
 
@@ -196,6 +281,15 @@ export default function AlbumsPage() {
           </Button>
         </DialogActions>
       </Dialog>
+      <ConfirmDialog
+        open={deleteOpen}
+        title="Delete Selected Albums"
+        message={`Delete ${selection.selectedIds.size} selected album${selection.selectedIds.size === 1 ? "" : "s"}? The media itself will stay in your library.`}
+        confirmLabel="Delete"
+        loading={isDeleting}
+        onConfirm={handleDeleteSelected}
+        onClose={() => setDeleteOpen(false)}
+      />
     </Container>
   );
 }

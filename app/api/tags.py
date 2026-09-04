@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy import delete
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
@@ -9,6 +10,15 @@ from app.models import Media, MediaTagLink, Person, PersonTagLink, Tag
 from app.schemas.tag import CursorPage, TagRead
 
 router = APIRouter()
+
+
+class TagBulkDeleteRequest(BaseModel):
+    tag_ids: list[int]
+
+
+class TagBulkDeleteResult(BaseModel):
+    deleted_ids: list[int]
+    skipped_ids: list[int]
 
 
 @router.get("/", response_model=CursorPage)
@@ -51,6 +61,37 @@ def get_or_create_tag(name: str, session: Session) -> Tag:
         safe_commit(session)
         session.refresh(tag)
     return tag
+
+
+def _delete_tag(session: Session, tag_id: int) -> None:
+    session.exec(delete(MediaTagLink).where(MediaTagLink.tag_id == tag_id))
+    session.exec(delete(PersonTagLink).where(PersonTagLink.tag_id == tag_id))
+    session.exec(delete(Tag).where(Tag.id == tag_id))
+
+
+@router.post("/bulk-delete", response_model=TagBulkDeleteResult)
+def delete_tags_bulk(
+    body: TagBulkDeleteRequest,
+    session: Session = Depends(get_session),
+):
+    if settings.general.presentation_mode:
+        raise HTTPException(
+            status_code=403,
+            detail="Not allowed in settings.general.presentation_mode mode.",
+        )
+    deleted_ids: list[int] = []
+    skipped_ids: list[int] = []
+    for tag_id in dict.fromkeys(body.tag_ids):
+        if not session.get(Tag, tag_id):
+            skipped_ids.append(tag_id)
+            continue
+        _delete_tag(session, tag_id)
+        deleted_ids.append(tag_id)
+    safe_commit(session)
+    return TagBulkDeleteResult(
+        deleted_ids=deleted_ids,
+        skipped_ids=skipped_ids,
+    )
 
 
 def attach_tag_to_media(
@@ -137,8 +178,7 @@ def remove_tag(tag_id: int, session: Session = Depends(get_session)):
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
-    session.exec(delete(MediaTagLink).where(MediaTagLink.tag_id == tag_id))
-    session.exec(delete(Tag).where(Tag.id == tag_id))
+    _delete_tag(session, tag_id)
     safe_commit(session)
 
 

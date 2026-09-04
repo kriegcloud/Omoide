@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link as RouterLink } from "react-router-dom";
-import { Box, Typography, IconButton, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Button, Snackbar, Alert, useTheme } from "@mui/material";
+import { Box, Typography, IconButton, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Button, Checkbox, Snackbar, Alert, useTheme } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import MovieIcon from "@mui/icons-material/Movie";
 import PersonIcon from "@mui/icons-material/Person";
@@ -13,9 +13,18 @@ import { encodeFilePath } from "../urlUtils";
 interface TagCardProps {
   tag: Tag;
   onTagDeleted: (tagId: number) => void;
+  selectable?: boolean;
+  selected?: boolean;
+  onSelectionClick?: (tagId: number, event: React.MouseEvent) => void;
 }
 
-export default function TagCard({ tag, onTagDeleted }: TagCardProps) {
+export default function TagCard({
+  tag,
+  onTagDeleted,
+  selectable = false,
+  selected = false,
+  onSelectionClick,
+}: TagCardProps) {
   const theme = useTheme();
   const [hovered, setHovered] = useState(false);
   const [openConfirmDialog, setOpenConfirmDialog] = useState(false);
@@ -64,8 +73,14 @@ export default function TagCard({ tag, onTagDeleted }: TagCardProps) {
   return (
     <>
       <Box
+        data-selectable-id={tag.id}
         component={RouterLink}
         to={`/tag/${tag.id}`}
+        onClick={
+          selectable
+            ? (event) => onSelectionClick?.(tag.id, event)
+            : undefined
+        }
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         sx={{
@@ -76,6 +91,8 @@ export default function TagCard({ tag, onTagDeleted }: TagCardProps) {
           borderRadius: 3,
           textDecoration: "none",
           bgcolor: "background.paper",
+          outline: selected ? "3px solid" : "none",
+          outlineColor: selected ? "primary.main" : "transparent",
           transition: "transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out",
           "&:hover": {
             transform: "scale(1.05)",
@@ -150,14 +167,29 @@ export default function TagCard({ tag, onTagDeleted }: TagCardProps) {
             color: (theme) => theme.palette.common.white,
           }}
         >
-          <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+          <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+            {selectable ? (
+              <Checkbox
+                checked={selected}
+                size="small"
+                sx={{
+                  color: "common.white",
+                  bgcolor: "rgba(0,0,0,0.35)",
+                  borderRadius: 1,
+                  pointerEvents: "none",
+                }}
+              />
+            ) : (
+              <span />
+            )}
             <IconButton
+              data-no-marquee
               onClick={handleOpenConfirmDialog}
               size="small"
               sx={{
                 color: (theme) => alpha(theme.palette.common.white, 0.8),
                 backgroundColor: (theme) => alpha(theme.palette.common.black, 0.3),
-                opacity: hovered ? 1 : 0,
+                opacity: hovered && !selectable ? 1 : 0,
                 transition: "opacity 0.2s ease-in-out",
                 "&:hover": {
                   color: "accent.main",

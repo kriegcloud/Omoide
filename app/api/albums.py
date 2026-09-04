@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_
 from sqlmodel import Session, func, select
 
+from app.config import settings
 from app.database import get_session, safe_commit
 from app.logger import logger
 from app.models import Album, AlbumMediaLink, Media
@@ -28,6 +29,15 @@ class AlbumUpdate(BaseModel):
 
 class AlbumMediaRequest(BaseModel):
     media_ids: list[int]
+
+
+class AlbumBulkDeleteRequest(BaseModel):
+    album_ids: list[int]
+
+
+class AlbumBulkDeleteResult(BaseModel):
+    deleted_ids: list[int]
+    skipped_ids: list[int]
 
 
 class AlbumRead(BaseModel):
@@ -95,6 +105,40 @@ def create_album(body: AlbumCreate, session: Session = Depends(get_session)):
     return _album_read(session, album)
 
 
+def _delete_album(session: Session, album: Album) -> None:
+    for link in session.exec(
+        select(AlbumMediaLink).where(AlbumMediaLink.album_id == album.id)
+    ).all():
+        session.delete(link)
+    # Flush link deletes before the parent because these models do not declare
+    # a relationship that SQLAlchemy can use to order the operations.
+    session.flush()
+    session.delete(album)
+
+
+@router.post("/bulk-delete", response_model=AlbumBulkDeleteResult)
+def delete_albums_bulk(
+    body: AlbumBulkDeleteRequest,
+    session: Session = Depends(get_session),
+):
+    if settings.general.presentation_mode:
+        raise HTTPException(403, "Not allowed in presentation mode")
+    deleted_ids: list[int] = []
+    skipped_ids: list[int] = []
+    for album_id in dict.fromkeys(body.album_ids):
+        album = session.get(Album, album_id)
+        if not album:
+            skipped_ids.append(album_id)
+            continue
+        _delete_album(session, album)
+        deleted_ids.append(album_id)
+    safe_commit(session)
+    return AlbumBulkDeleteResult(
+        deleted_ids=deleted_ids,
+        skipped_ids=skipped_ids,
+    )
+
+
 @router.get("/{album_id}", response_model=AlbumRead)
 def get_album(album_id: int, session: Session = Depends(get_session)):
     album = session.get(Album, album_id)
@@ -134,19 +178,12 @@ def update_album(
 
 @router.delete("/{album_id}")
 def delete_album(album_id: int, session: Session = Depends(get_session)):
+    if settings.general.presentation_mode:
+        raise HTTPException(403, "Not allowed in presentation mode")
     album = session.get(Album, album_id)
     if not album:
         raise HTTPException(404, "Album not found")
-    for link in session.exec(
-        select(AlbumMediaLink).where(AlbumMediaLink.album_id == album_id)
-    ).all():
-        session.delete(link)
-    # Flush the link deletes before the album delete: SQLAlchemy only orders
-    # cross-mapper deletes via a declared relationship(), which these models
-    # don't have, so without this the album delete can be emitted first and
-    # trip the foreign key constraint.
-    session.flush()
-    session.delete(album)
+    _delete_album(session, album)
     safe_commit(session)
     return {"status": "deleted"}
 

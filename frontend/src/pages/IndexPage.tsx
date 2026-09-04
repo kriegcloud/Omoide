@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useInView } from "react-intersection-observer";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -43,6 +43,9 @@ import { useTaskCompletionVersion } from "../TaskEventsContext";
 import { useHomeWidgets } from "../hooks/useHomeWidgets";
 import { HomeWidgetId } from "../homeWidgets";
 import { CameraCount, MediaFolderListing } from "../types";
+import { useSelection } from "../context/SelectionContext";
+import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 
 const breakpointColumnsObj = {
   default: 5,
@@ -82,6 +85,16 @@ export default function IndexPage() {
   );
   const [isFolderLoading, setIsFolderLoading] = useState(false);
   const [folderError, setFolderError] = useState<string | null>(null);
+  const mediaGridRef = useRef<HTMLDivElement>(null);
+  const { isSelecting, selectedIds, setSelected } = useSelection();
+  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+    containerRef: mediaGridRef,
+    itemSelector: "[data-media-card]",
+    getId: (element) => Number(element.dataset.selectableId),
+    enabled: isSelecting,
+    selectedIds,
+    onSelectionChange: setSelected,
+  });
 
   const { widgets } = useHomeWidgets();
   const recentMediaEnabled = widgets.some(
@@ -626,17 +639,27 @@ export default function IndexPage() {
 
       {/* Media Grid */}
       {items.length > 0 && (
-        <Masonry
-          breakpointCols={breakpointColumnsObj}
-          className="my-masonry-grid"
-          columnClassName="my-masonry-grid_column"
-        >
-          {items.map((mediaItem) => (
-            <div key={mediaItem.id}>
-              <MediaCard media={mediaItem} mediaListKey={mediaListKey} />
-            </div>
-          ))}
-        </Masonry>
+        <Box ref={mediaGridRef} sx={{ position: "relative" }}>
+          <Masonry
+            breakpointCols={breakpointColumnsObj}
+            className="my-masonry-grid"
+            columnClassName="my-masonry-grid_column"
+          >
+            {items.map((mediaItem) => (
+              <div key={mediaItem.id}>
+                <MediaCard
+                  media={mediaItem}
+                  mediaListKey={mediaListKey}
+                  onSelectionClick={onItemClick}
+                />
+              </div>
+            ))}
+          </Masonry>
+          <MarqueeSelectionBox
+            container={mediaGridRef.current}
+            rect={marqueeRect}
+          />
+        </Box>
       )}
 
       {/* Load More Spinner */}

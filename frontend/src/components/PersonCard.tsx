@@ -12,7 +12,7 @@ interface PersonCardProps {
   person: PersonCardPerson;
   selectable?: boolean;
   selected?: boolean;
-  onToggleSelect?: (personId: number) => void;
+  onToggleSelect?: (personId: number, event?: React.MouseEvent) => void;
 }
 
 const getInitials = (name = "") => {
@@ -48,7 +48,10 @@ export default function PersonCard({
       event.preventDefault();
       event.stopPropagation();
     }
-    onToggleSelect?.(person.id);
+    onToggleSelect?.(
+      person.id,
+      event?.type === "click" ? (event as React.MouseEvent) : undefined,
+    );
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -71,6 +74,7 @@ export default function PersonCard({
 
   return (
     <Box
+      data-selectable-id={person.id}
       component={RouterLink}
       to={`/person/${person.id}`}
       onClick={isSelectable ? handleSelectionToggle : undefined}

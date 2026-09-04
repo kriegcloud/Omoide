@@ -19,3 +19,15 @@ export const getTag = async (id: string): Promise<Tag> => {
   if (!response.ok) throw new Error(`Failed to load tag (${response.status})`);
   return response.json();
 };
+
+export const deleteTagsBulk = async (
+  tagIds: number[],
+): Promise<{ deleted_ids: number[]; skipped_ids: number[] }> => {
+  const response = await fetch(`${API}/api/tags/bulk-delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tag_ids: tagIds }),
+  });
+  if (!response.ok) throw new Error("Failed to delete selected tags");
+  return response.json();
+};
