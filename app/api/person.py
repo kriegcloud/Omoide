@@ -1,5 +1,5 @@
 from collections import deque
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 from fastapi import (
     APIRouter,
@@ -43,6 +43,9 @@ from app.schemas.person import (
     MergePersonsResult,
     PersonBulkDeleteRequest,
     PersonBulkDeleteResponse,
+    PersonBulkHideRequest,
+    PersonBulkHideResponse,
+    PersonBulkUnhideResponse,
     PersonDetail,
     PersonRead,
     PersonReadSimple,
@@ -270,6 +273,7 @@ def list_persons(
         ),
     ),
     limit: int = 50,
+    hidden: bool = Query(False),
     session: Session = Depends(get_session),
 ):
     before_count = None
@@ -282,7 +286,9 @@ def list_persons(
         except (ValueError, TypeError):
             raise HTTPException(400, "Invalid cursor format")
 
-    q = select(Person)
+    q = select(Person).where(
+        Person.hidden_at.is_not(None) if hidden else Person.hidden_at.is_(None)
+    )
 
     if name:
         q = q.where(Person.name.ilike(f"%{name}%"))
@@ -487,7 +493,9 @@ def get_faces(
 @router.get("/all-simple", response_model=list[PersonReadSimple])
 def get_all_persons_simple(session: Session = Depends(get_session)):
     """Returns a lightweight list of all persons for filter selections."""
-    people = session.exec(select(Person).order_by(Person.name)).all()
+    people = session.exec(
+        select(Person).where(Person.hidden_at.is_(None)).order_by(Person.name)
+    ).all()
     return [PersonReadSimple.model_validate(p) for p in people]
 
 
@@ -669,6 +677,7 @@ def get_person(person_id: int, session: Session = Depends(get_session)):
         profile_face=profile_face,
         tags=person.tags,
         appearance_count=int(media_count or 0),
+        hidden_at=person.hidden_at,
     )
 
 
@@ -1000,6 +1009,92 @@ def delete_persons_bulk(
     )
 
 
+def _set_person_hidden(
+    person_id: int,
+    *,
+    hidden: bool,
+    session: Session,
+) -> PersonDetail:
+    if settings.general.presentation_mode:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not allowed in settings.general.presentation_mode mode.",
+        )
+
+    person = session.get(Person, person_id)
+    if not person:
+        raise HTTPException(status_code=404, detail="Person not found")
+
+    person.hidden_at = datetime.now(UTC).replace(tzinfo=None) if hidden else None
+    session.add(person)
+    safe_commit(session)
+    session.refresh(person)
+    return get_person(person_id, session)
+
+
+@router.post("/bulk-hide", response_model=PersonBulkHideResponse)
+def hide_persons_bulk(
+    payload: PersonBulkHideRequest,
+    session: Session = Depends(get_session),
+):
+    if settings.general.presentation_mode:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not allowed in settings.general.presentation_mode mode.",
+        )
+
+    hidden_ids: list[int] = []
+    skipped_ids: list[int] = []
+    for person_id in dict.fromkeys(payload.person_ids):
+        person = session.get(Person, person_id)
+        if not person or person.hidden_at is not None:
+            skipped_ids.append(person_id)
+            continue
+        person.hidden_at = datetime.now(UTC).replace(tzinfo=None)
+        session.add(person)
+        hidden_ids.append(person_id)
+    safe_commit(session)
+    return PersonBulkHideResponse(hidden_ids=hidden_ids, skipped_ids=skipped_ids)
+
+
+@router.post("/bulk-unhide", response_model=PersonBulkUnhideResponse)
+def unhide_persons_bulk(
+    payload: PersonBulkHideRequest,
+    session: Session = Depends(get_session),
+):
+    if settings.general.presentation_mode:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not allowed in settings.general.presentation_mode mode.",
+        )
+
+    unhidden_ids: list[int] = []
+    skipped_ids: list[int] = []
+    for person_id in dict.fromkeys(payload.person_ids):
+        person = session.get(Person, person_id)
+        if not person or person.hidden_at is None:
+            skipped_ids.append(person_id)
+            continue
+        person.hidden_at = None
+        session.add(person)
+        unhidden_ids.append(person_id)
+    safe_commit(session)
+    return PersonBulkUnhideResponse(
+        unhidden_ids=unhidden_ids,
+        skipped_ids=skipped_ids,
+    )
+
+
+@router.post("/{person_id}/hide", response_model=PersonDetail)
+def hide_person(person_id: int, session: Session = Depends(get_session)):
+    return _set_person_hidden(person_id, hidden=True, session=session)
+
+
+@router.post("/{person_id}/unhide", response_model=PersonDetail)
+def unhide_person(person_id: int, session: Session = Depends(get_session)):
+    return _set_person_hidden(person_id, hidden=False, session=session)
+
+
 @router.delete(
     "/{person_id}",
     summary="Delete a person and all their faces",
@@ -1045,6 +1140,7 @@ def get_similarities(
             ON p.profile_face_id = profile_f.id -- Assuming Person table has profile_face_id
         WHERE
             pe.person_id != :p_id          -- Exclude the person themselves
+            AND p.hidden_at IS NULL
             AND pe.embedding MATCH :vec    -- Vector similarity match (specific to your pg_embedding setup)
             AND pe.k = :k_param            -- If 'k' is a parameter for the MATCH or a column in person_embeddings
                                            -- Ensure this 'k' usage is correct for your pg_embedding extension.
@@ -1177,6 +1273,8 @@ def get_person_relationships(
 
         person_obj = _load_person(pid)
         if person_obj is None:
+            return False
+        if pid != person_id and person_obj.hidden_at is not None:
             return False
 
         thumbnail = None

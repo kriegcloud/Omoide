@@ -22,6 +22,7 @@ import MapIcon from "@mui/icons-material/Map";
 import AddLocationIcon from "@mui/icons-material/AddLocation";
 import SettingsIcon from "@mui/icons-material/Settings";
 import PersonOffIcon from "@mui/icons-material/PersonOff";
+import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 import CheckBoxOutlineBlankIcon from "@mui/icons-material/CheckBoxOutlineBlank";
 import CheckBoxIcon from "@mui/icons-material/CheckBox";
 import PhotoAlbumIcon from "@mui/icons-material/PhotoAlbum";
@@ -84,6 +85,11 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
           to: "/nopersons",
           icon: <PersonOffIcon />,
         },
+        {
+          label: "Hidden People",
+          to: "/people/hidden",
+          icon: <VisibilityOffIcon />,
+        },
       ],
     },
     {
@@ -122,11 +128,13 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
     "/duplicates",
     "/configuration",
     "/nopersons",
+    "/people/hidden",
   ];
   const pathsToExcludeInPeopleDisabled: string[] = [
     "/people",
     "/orphanfaces",
     "/nopersons",
+    "/people/hidden",
   ];
   const pathsToExcludeInEventsDisabled: string[] = ["/events"];
   const shouldHidePath = (path: string) =>
@@ -144,6 +152,7 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
     const { pathname } = location;
     if (pathname.startsWith("/tag/")) return "/tags";
     if (pathname.startsWith("/person/")) return "/people";
+    if (pathname === "/people/hidden") return "/people/hidden";
     if (pathname.startsWith("/album/")) return "/albums";
     if (pathname.startsWith("/event/")) return "/events";
     if (pathname.startsWith("/places/")) return "/places";
@@ -245,7 +254,8 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
               const isActive =
                 activePath !== null &&
                 (activePath === item.to ||
-                  activePath.startsWith(`${item.to}/`));
+                  (item.to !== "/people" &&
+                    activePath.startsWith(`${item.to}/`)));
               return (
                 <ListItem key={item.to} disablePadding sx={{ mb: 0.5 }}>
                   <ListItemButton

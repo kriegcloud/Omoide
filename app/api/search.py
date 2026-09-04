@@ -628,7 +628,10 @@ def search_people(
     if not query:
         return CursorPage(items=[], next_cursor=None)
 
-    q = select(Person).where(Person.name.ilike(f"%{query}%"))
+    q = select(Person).where(
+        Person.name.ilike(f"%{query}%"),
+        Person.hidden_at.is_(None),
+    )
 
     if cursor:
         try:

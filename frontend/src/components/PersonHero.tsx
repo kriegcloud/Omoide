@@ -8,7 +8,9 @@ import {
   Paper,
   useTheme,
   CircularProgress,
+  Chip,
 } from "@mui/material";
+import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 import { alpha } from "@mui/material/styles";
 import Grid from "@mui/material/Grid";
 import { Person } from "../types";
@@ -23,6 +25,7 @@ interface PersonHeroProps {
   onDelete: () => void;
   onRefreshSimilar: () => void;
   onAutoSelectProfile: () => void;
+  onHideToggle: () => void;
   saving: boolean;
   autoSelectingProfile: boolean;
 }
@@ -34,6 +37,7 @@ export function PersonHero({
   onDelete,
   onRefreshSimilar,
   onAutoSelectProfile,
+  onHideToggle,
   saving,
   autoSelectingProfile,
 }: PersonHeroProps) {
@@ -64,9 +68,12 @@ export function PersonHero({
 
         {/* Person Details and Actions */}
         <Grid size={{ xs: 12, sm: 8, md: 9 }}>
-          <Typography variant="h3" component="h1" fontWeight="bold">
-            {person.name || "Unnamed Person"}
-          </Typography>
+          <Stack direction="row" spacing={1.5} alignItems="center">
+            <Typography variant="h3" component="h1" fontWeight="bold">
+              {person.name || "Unnamed Person"}
+            </Typography>
+            {person.hidden_at && <Chip label="Hidden" color="warning" />}
+          </Stack>
           <Typography variant="body1" color="text.secondary" gutterBottom>
             {person.appearance_count
               ? `${person.appearance_count} appearances found`
@@ -102,6 +109,15 @@ export function PersonHero({
                 ) : (
                   "Auto Profile"
                 )}
+              </Button>
+              <Button
+                variant="outlined"
+                color="warning"
+                startIcon={<VisibilityOffIcon />}
+                onClick={onHideToggle}
+                disabled={saving}
+              >
+                {person.hidden_at ? "Unhide" : "Hide"}
               </Button>
               <Button
                 variant="outlined"

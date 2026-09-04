@@ -11,6 +11,16 @@ export interface DeletePersonsResult {
   skipped_ids: number[];
 }
 
+export interface HidePersonsResult {
+  hidden_ids: number[];
+  skipped_ids: number[];
+}
+
+export interface UnhidePersonsResult {
+  unhidden_ids: number[];
+  skipped_ids: number[];
+}
+
 export interface AddMediaAppearanceResult {
   person_id: number;
   media_id: number;
@@ -46,6 +56,46 @@ export const deletePersonsBulk = async (
     body: JSON.stringify({ person_ids: personIds }),
   });
   if (!res.ok) throw new Error("Failed to delete selected people");
+  return res.json();
+};
+
+export const hidePerson = async (personId: number): Promise<Person> => {
+  const res = await fetch(`${API}/api/person/${personId}/hide`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("Failed to hide person");
+  return res.json();
+};
+
+export const unhidePerson = async (personId: number): Promise<Person> => {
+  const res = await fetch(`${API}/api/person/${personId}/unhide`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("Failed to unhide person");
+  return res.json();
+};
+
+export const hidePersonsBulk = async (
+  personIds: number[],
+): Promise<HidePersonsResult> => {
+  const res = await fetch(`${API}/api/person/bulk-hide`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ person_ids: personIds }),
+  });
+  if (!res.ok) throw new Error("Failed to hide selected people");
+  return res.json();
+};
+
+export const unhidePersonsBulk = async (
+  personIds: number[],
+): Promise<UnhidePersonsResult> => {
+  const res = await fetch(`${API}/api/person/bulk-unhide`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ person_ids: personIds }),
+  });
+  if (!res.ok) throw new Error("Failed to unhide selected people");
   return res.json();
 };
 

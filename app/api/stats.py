@@ -102,7 +102,10 @@ def get_stats(session: Session = Depends(get_session)):
             session,
             select(func.count(ExifData.id)).where(ExifData.lat.is_not(None)),
         ),
-        persons=_scalar(session, select(func.count(Person.id))),
+        persons=_scalar(
+            session,
+            select(func.count(Person.id)).where(Person.hidden_at.is_(None)),
+        ),
         faces=_scalar(session, select(func.count(Face.id))),
         tags=_scalar(session, select(func.count(Tag.id))),
         albums=_scalar(session, select(func.count(Album.id))),
@@ -162,7 +165,7 @@ def get_stats(session: Session = Depends(get_session)):
         PersonCount(id=pid, name=name, count=count or 0)
         for pid, name, count in session.exec(
             select(Person.id, Person.name, Person.appearance_count)
-            .where(Person.name.is_not(None))
+            .where(Person.name.is_not(None), Person.hidden_at.is_(None))
             .order_by(Person.appearance_count.desc())
             .limit(15)
         ).all()

@@ -8,11 +8,15 @@ import {
 } from "../types";
 
 export const getPeople = async (
-  cursor?: string
+  cursor?: string,
+  hidden = false,
 ): Promise<{ items: PersonReadSimple[]; next_cursor: string | null }> => {
   const params = new URLSearchParams();
   if (cursor) {
     params.append("cursor", cursor);
+  }
+  if (hidden) {
+    params.append("hidden", "true");
   }
   const response = await fetch(`${API}/api/person/?${params.toString()}`);
   if (!response.ok) throw new Error("Failed to fetch people");

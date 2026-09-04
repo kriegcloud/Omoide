@@ -11,6 +11,8 @@ import {
   getSuggestedFaces,
   mergeMultiplePersons,
   mergePersons,
+  hidePerson,
+  unhidePerson,
   searchPersonsByName,
   setProfileFace,
   autoSelectProfileFace as requestAutoSelectProfileFace,
@@ -640,6 +642,31 @@ export const usePersonDetailPage = () => {
     }
   }, [id, loadDetail, refreshSuggestedFaces, showMessage]);
 
+  const handleHideToggle = useCallback(async () => {
+    if (!id || !person) return;
+    const isHidden = Boolean(person.hidden_at);
+    setSaving(true);
+    try {
+      const updated = isHidden
+        ? await unhidePerson(Number(id))
+        : await hidePerson(Number(id));
+      setPerson(updated);
+      removeItems(
+        isHidden ? "people-grid-hidden" : "people-grid",
+        [updated.id],
+      );
+      showMessage(isHidden ? "Person unhidden" : "Person hidden");
+    } catch (err) {
+      console.error("Failed to update person visibility:", err);
+      showMessage(
+        isHidden ? "Failed to unhide person" : "Failed to hide person",
+        "error",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }, [id, person, removeItems, showMessage]);
+
   const handleProfileAssignmentWrapper = async (
     faceId: number,
     personId: number,
@@ -765,6 +792,7 @@ export const usePersonDetailPage = () => {
     autoMergeSimilar,
     isMergingSimilar,
     handleAutoSelectProfileFace,
+    handleHideToggle,
     handleProfileAssignmentWrapper,
     handlePersonUpdate,
     handleDeletePerson,

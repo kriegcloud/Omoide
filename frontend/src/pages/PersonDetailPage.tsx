@@ -73,6 +73,7 @@ export default function PersonDetailPage() {
     handleDetachMediaWrapper,
     handleCreateWrapper,
     handleAutoSelectProfileFace,
+    handleHideToggle,
     handleProfileAssignmentWrapper,
     handlePersonUpdate,
     handleDeletePerson,
@@ -113,6 +114,7 @@ export default function PersonDetailPage() {
         onDelete={() => setConfirmDelete(true)}
         onRefreshSimilar={loadSimilar}
         onAutoSelectProfile={handleAutoSelectProfileFace}
+        onHideToggle={handleHideToggle}
         autoSelectingProfile={isAutoSelectingProfile}
       />
 

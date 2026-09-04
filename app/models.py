@@ -178,6 +178,7 @@ class Person(SQLModel, table=True):
     name: str | None = None
     age: int | None = None
     gender: str | None = None
+    hidden_at: datetime | None = Field(default=None, index=True)
     views: int = Field(default=0, index=True)
     faces: list["Face"] = Relationship(
         back_populates="person",

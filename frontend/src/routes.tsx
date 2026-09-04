@@ -24,6 +24,7 @@ import { WriteModeBoundary } from "./components/ReadOnlyBoundary";
 import { MaintenanceShell } from "./components/MaintenanceShell";
 
 const PersonDetailPage = lazy(() => import("./pages/PersonDetailPage"));
+const HiddenPeoplePage = lazy(() => import("./pages/HiddenPeoplePage"));
 const MapPage = lazy(() => import("./pages/MapPage"));
 const MapEditorPage = lazy(() => import("./pages/MapEditorPage"));
 const ConfigurationPage = lazy(() => import("./pages/ConfigurationPage"));
@@ -83,6 +84,7 @@ export const AppRoutes = () => {
           <Route path="/videos" element={<VideosPage />} />
           <Route path="/favorites" element={<FavoritesPage />} />
           <Route path="/people" element={<PeoplePage />} />
+          <Route path="/people/hidden" element={<HiddenPeoplePage />} />
           <Route path="/person/:id" element={<PersonDetailPage />} />
           <Route path="/tag/:id" element={<TagDetailPage />} />
           <Route path="/highlights" element={<HighlightsPage />} />

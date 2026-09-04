@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict
 from app.schemas.face import FaceRead
 from sqlmodel import SQLModel
@@ -22,6 +24,7 @@ class PersonDetail(BaseModel):
     profile_face: ProfileFace | None
     tags: list[TagSimple]
     appearance_count: int
+    hidden_at: datetime | None = None
 
 
 class PersonUpdate(BaseModel):
@@ -49,6 +52,7 @@ class PersonRead(SQLModel):
     name: str | None
     profile_face: FaceRead | None
     appearance_count: int | None
+    hidden_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -57,6 +61,7 @@ class PersonReadSimple(SQLModel):
     id: int
     name: str | None
     profile_face: FaceRead | None
+    hidden_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -81,6 +86,20 @@ class PersonBulkDeleteRequest(BaseModel):
 
 class PersonBulkDeleteResponse(BaseModel):
     deleted_ids: list[int]
+    skipped_ids: list[int]
+
+
+class PersonBulkHideRequest(BaseModel):
+    person_ids: list[int]
+
+
+class PersonBulkHideResponse(BaseModel):
+    hidden_ids: list[int]
+    skipped_ids: list[int]
+
+
+class PersonBulkUnhideResponse(BaseModel):
+    unhidden_ids: list[int]
     skipped_ids: list[int]
 
 
