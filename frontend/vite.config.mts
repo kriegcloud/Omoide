@@ -26,6 +26,17 @@ export default defineConfig(({ mode, command }) => {
         "/api": {
           target: `${domain}`,
         },
+        // Dev-only: serve thumbnails/originals/static through the dev origin so
+        // the hardened workstation backend sees same-origin requests.
+        "/thumbnails": {
+          target: `${domain}`,
+        },
+        "/originals": {
+          target: `${domain}`,
+        },
+        "/static": {
+          target: `${domain}`,
+        },
       },
     },
     build: {
