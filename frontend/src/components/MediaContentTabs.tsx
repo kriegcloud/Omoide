@@ -15,6 +15,8 @@ import CollectionsIcon from "@mui/icons-material/Collections";
 import DataObjectIcon from "@mui/icons-material/DataObject";
 import ReplayIcon from "@mui/icons-material/Replay";
 import MovieIcon from "@mui/icons-material/Movie";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
+import { MediaAnnotationsTab } from "./MediaAnnotationsTab";
 import { MediaProcessorsTab } from "./MediaProcessorsTab";
 
 const SimilarContent = lazy(() => import("./MediaRelatedContent"));
@@ -72,6 +74,11 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
       icon: <PeopleIcon />,
     });
   tabs.push({ key: "tags", label: "Tags", icon: <TagIcon /> });
+  tabs.push({
+    key: "annotations",
+    label: "Annotations",
+    icon: <AutoAwesomeIcon />,
+  });
   tabs.push({ key: "exif", label: "Exif Data", icon: <DataObjectIcon /> });
   tabs.push({ key: "processors", label: "Processors", icon: <ReplayIcon /> });
 
@@ -146,6 +153,14 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
               media={media}
               onTagAdded={onTagAdded}
               onUpdate={onTagUpdate}
+            />
+          </TabPanel>
+
+          <TabPanel value={activeTab} index="annotations">
+            <MediaAnnotationsTab
+              key={media.id}
+              mediaId={media.id}
+              isVideo={isVideo}
             />
           </TabPanel>
 

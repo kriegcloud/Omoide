@@ -30,6 +30,10 @@ from sqlalchemy import delete, distinct, func, or_, text, union_all
 from sqlmodel import Session, delete, select, text, update
 
 from app.accelerators import get_ffmpeg_accel_config
+from app.annotation_coordination import (
+    MEDIA_ANNOTATION_MUTATION_LOCK,
+    lock_media_annotation_mutation,
+)
 from app.config import settings
 from app.database import safe_commit
 from app.ffmpeg import ensure_ffmpeg_available
@@ -37,6 +41,8 @@ from app.logger import logger
 from app.models import (
     Album,
     AlbumMediaLink,
+    AnnotationAttempt,
+    AnnotationAttemptStatus,
     DuplicateIgnore,
     DuplicateMedia,
     Event,
@@ -1402,9 +1408,64 @@ def split_video(
 
 
 def delete_record(media_id, session: Session):
+    with MEDIA_ANNOTATION_MUTATION_LOCK:
+        return _delete_record_locked(media_id, session)
+
+
+def _delete_record_locked(media_id, session: Session):
+    # Acquire a database write/row lease before checking attempts. Annotation
+    # creation takes the same lease, so an attempt either commits first and
+    # blocks deletion, or deletion commits first and admission sees no media.
+    if not lock_media_annotation_mutation(session, media_id):
+        session.rollback()
+        raise HTTPException(status_code=404, detail="Media not found")
     media = session.get(Media, media_id)
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
+    active_annotation = session.exec(
+        select(AnnotationAttempt).where(
+            AnnotationAttempt.media_id == media.id,
+            AnnotationAttempt.active_slot == 1,
+        )
+    ).first()
+    if active_annotation is not None:
+        active_attempt_id = active_annotation.id
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "annotation_active",
+                "message": "Cancel the active annotation before deleting this media.",
+                "attempt_id": active_attempt_id,
+            },
+        )
+    pending_history_cleanup = session.exec(
+        select(AnnotationAttempt).where(
+            AnnotationAttempt.media_id == media.id,
+            AnnotationAttempt.backend == "comfy",
+            AnnotationAttempt.status.in_(
+                (
+                    AnnotationAttemptStatus.SUCCEEDED,
+                    AnnotationAttemptStatus.FAILED,
+                    AnnotationAttemptStatus.CANCELLED,
+                )
+            ),
+            AnnotationAttempt.history_acknowledged_at.is_(None),
+        )
+    ).first()
+    if pending_history_cleanup is not None:
+        pending_attempt_id = pending_history_cleanup.id
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "annotation_history_cleanup_pending",
+                "message": (
+                    "Wait for annotation history cleanup before deleting this media."
+                ),
+                "attempt_id": pending_attempt_id,
+            },
+        )
     to_unlink: list[Path] = []
     thumbnail = media.thumbnail_path
     if not thumbnail:

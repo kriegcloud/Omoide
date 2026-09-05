@@ -80,6 +80,7 @@ from sqlmodel import Session, select
 import app.database as db
 from app.api import (
     albums,
+    annotations,
     blur,
     broken,
     config,
@@ -473,6 +474,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Could not ensure vec0 tables: %s", e)
 
+    if db.get_migration_state() == db.MigrationState.FAILED:
+        logger.warning(
+            "lifespan: annotation reconciliation skipped because database "
+            "migration is unavailable"
+        )
+    else:
+        logger.info("lifespan: reconciling annotation attempts...")
+        try:
+            from app.annotation_tasks import start_annotation_reconciliation
+
+            start_annotation_reconciliation()
+            logger.info("lifespan: annotation reconciliation started")
+        except Exception as e:
+            logger.warning("Annotation reconciliation failed to start: %s", e)
+
     logger.info("lifespan: checking ffmpeg availability...")
     try:
         ensure_ffmpeg_available()
@@ -498,9 +514,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Auto-scan job setup failed: %s", e)
     logger.info("lifespan: startup complete, serving requests")
-    yield
-    # On shutdown, clean up tasks so next run starts cleanly
-    _cleanup_tasks_on_shutdown()
+    try:
+        yield
+    finally:
+        # Stop the bounded history outbox before database shutdown. This wake
+        # interrupts its idle wait; its cleanup-only socket deadline bounds a
+        # currently active acknowledgement.
+        try:
+            from app.annotation_tasks import stop_annotation_reconciliation
+
+            stop_annotation_reconciliation()
+        except Exception as e:
+            logger.warning("Annotation reconciliation shutdown failed: %s", e)
+        # On shutdown, clean up tasks so next run starts cleanly.
+        _cleanup_tasks_on_shutdown()
 
 
 logger.debug(settings)
@@ -562,6 +589,9 @@ app.include_router(broken.router, prefix="/api/broken", tags=["broken"])
 app.include_router(memories, prefix="/api/memories", tags=["memories"])
 app.include_router(stats, prefix="/api/stats", tags=["stats"])
 app.include_router(albums, prefix="/api/albums", tags=["albums"])
+app.include_router(
+    annotations.router, prefix="/api/annotations", tags=["annotations"]
+)
 app.include_router(events, prefix="/api/events", tags=["events"])
 app.include_router(places, prefix="/api/places", tags=["places"])
 app.include_router(exports.router, prefix="/api/export", tags=["export"])
@@ -790,11 +820,20 @@ def run_migrations():
 def _apply_migrations_once() -> None:
     """Run migrations at most once per process."""
     global _migrations_applied
-    if _migrations_applied:
+    if (
+        _migrations_applied
+        and db.get_migration_state() == db.MigrationState.APPLIED
+    ):
         return
     with _migrations_lock:
-        if _migrations_applied:
+        if (
+            _migrations_applied
+            and db.get_migration_state() == db.MigrationState.APPLIED
+        ):
             return
+        # The configured engine may have changed since a prior successful run.
+        # Never retain the old database's success flag across a fresh attempt.
+        _migrations_applied = False
         db.run_migrations()
         _migrations_applied = True
 

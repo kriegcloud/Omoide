@@ -1,0 +1,42 @@
+[Unit]
+Description=Omoide allowlisted ComfyUI annotation bridge
+Documentation=file:///home/elpresidank/YeeBois/workstation-apps/Omoide/integrations/comfyui/bridge/README.md
+After=local-fs.target
+ConditionPathExists=/home/elpresidank/.config/omoide/comfy-bridge.json
+
+[Service]
+Type=simple
+WorkingDirectory=/home/elpresidank/YeeBois/workstation-apps/Omoide
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStartPre=/usr/bin/mkdir -p /home/elpresidank/.local/share/omoide-portal/run
+ExecStartPre=/usr/bin/mkdir -p /home/elpresidank/ai/ComfyUI/input/omoide
+ExecStart=/home/elpresidank/YeeBois/workstation-apps/Omoide/packaging/omoide-comfy-bridge-launcher --serve
+Restart=on-failure
+RestartSec=5s
+Nice=5
+CPUWeight=25
+MemoryHigh=384M
+MemoryMax=512M
+TimeoutStartSec=30s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=-/home/elpresidank/ai/workflows/comfy
+ReadWritePaths=-/home/elpresidank/.local/share/omoide-portal/run
+ReadWritePaths=-/home/elpresidank/ai/ComfyUI/input/omoide
+InaccessiblePaths=-/run/media/elpresidank/T7
+InaccessiblePaths=-/run/media/elpresidank/T7XFER
+RestrictAddressFamilies=AF_UNIX AF_INET
+IPAddressDeny=any
+IPAddressAllow=127.0.0.1
+LockPersonality=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=default.target

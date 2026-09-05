@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly PROJECT_DIR="/home/elpresidank/YeeBois/workstation-apps/Omoide"
+readonly DEFAULT_CONFIG="/home/elpresidank/.config/omoide/comfy-bridge.json"
+readonly DEFAULT_SOCKET="/home/elpresidank/.local/share/omoide-portal/run/omoide-comfy.sock"
+readonly BRIDGE_CONFIG="${OMOIDE_COMFY_BRIDGE_CONFIG:-$DEFAULT_CONFIG}"
+readonly BRIDGE_SOCKET="${OMOIDE_COMFY_BRIDGE_SOCKET:-$DEFAULT_SOCKET}"
+readonly BRIDGE_PYTHON="${OMOIDE_COMFY_BRIDGE_PYTHON:-/usr/bin/python}"
+
+case "${1:---serve}" in
+  --serve)
+    cd "$PROJECT_DIR"
+    exec "$BRIDGE_PYTHON" -m integrations.comfyui.bridge \
+      --config "$BRIDGE_CONFIG" \
+      --socket "$BRIDGE_SOCKET"
+    ;;
+  --check)
+    cd "$PROJECT_DIR"
+    exec "$BRIDGE_PYTHON" -m integrations.comfyui.bridge \
+      --config "$BRIDGE_CONFIG" \
+      --check-config
+    ;;
+  --health)
+    cd "$PROJECT_DIR"
+    exec "$BRIDGE_PYTHON" -c \
+      'from dataclasses import asdict; from pathlib import Path; import json, sys; from app.services.comfy_annotation import ComfyAnnotationClient; print(json.dumps(asdict(ComfyAnnotationClient(Path(sys.argv[1]), 60).health()), default=str, sort_keys=True))' \
+      "$BRIDGE_SOCKET"
+    ;;
+  *)
+    printf '%s\n' "Usage: $0 [--serve|--check|--health]" >&2
+    exit 2
+    ;;
+esac

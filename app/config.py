@@ -472,6 +472,23 @@ class TaggingSettings(BaseModel):
     custom_tags: list[str] = []
 
 
+class AnnotationSettings(BaseModel):
+    """Host-bridge settings for opt-in, single-media dataset annotation."""
+
+    enabled: bool = False
+    inference_socket_path: Path = Path(
+        "/app/data/run/omoide-comfy.sock"
+    )
+    inference_timeout_seconds: float = Field(
+        # The bridge profile may spend 900 seconds after submission. Keep the
+        # socket caller strictly above that plus readiness/upload/reconcile
+        # margin so the client cannot abandon a still-running exact UUID first.
+        default=1080.0, gt=0.0, le=3600.0
+    )
+    caption_profile_id: str = "omoide-caption-v1"
+    tags_profile_id: str = "omoide-tags-v1"
+
+
 class ScanSettings(BaseModel):
     # enables automatic background scans for new files
     auto_scan: bool = False
@@ -820,6 +837,7 @@ class AppSettings(BaseModel):
     scan: ScanSettings = Field(default_factory=ScanSettings)
     ai: AISettings = Field(default_factory=AISettings)
     tagging: TaggingSettings = Field(default_factory=TaggingSettings)
+    annotations: AnnotationSettings = Field(default_factory=AnnotationSettings)
     face_recognition: FaceRecognitionSettings = Field(
         default_factory=FaceRecognitionSettings
     )
