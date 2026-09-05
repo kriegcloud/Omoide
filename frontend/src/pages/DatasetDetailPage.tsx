@@ -57,6 +57,7 @@ export default function DatasetDetailPage() {
   const [items, setItems] = useState<DatasetItem[]>([]);
   const [exports, setExports] = useState<DatasetExport[]>([]);
   const [analysis, setAnalysis] = useState<DatasetAnalysis | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [sort, setSort] = useState("position");
   const [tab, setTab] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -84,25 +85,37 @@ export default function DatasetDetailPage() {
     onSelectionChange: selection.setSelected,
   });
 
+  // The analysis is the expensive, optional part of the page: it runs after
+  // the dataset, items and exports are on screen and its failure only
+  // affects the Analysis tab.
+  const loadAnalysis = useCallback(async () => {
+    setAnalysisError(null);
+    try {
+      setAnalysis(await getDatasetAnalysis(datasetId));
+    } catch (reason) {
+      setAnalysis(null);
+      setAnalysisError(reason instanceof Error ? reason.message : "Failed to analyse dataset");
+    }
+  }, [datasetId]);
+
   const load = useCallback(async () => {
     try {
-      const [nextDataset, page, history, nextAnalysis] = await Promise.all([
+      const [nextDataset, page, history] = await Promise.all([
         getDataset(datasetId),
         getDatasetItems(datasetId, null, sort),
         getDatasetExports(datasetId),
-        getDatasetAnalysis(datasetId),
       ]);
       setDataset(nextDataset);
       setItems(page.items);
       setExports(history);
-      setAnalysis(nextAnalysis);
       setExportLayout(nextDataset.export_layout);
+      void loadAnalysis();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Failed to load dataset");
     } finally {
       setLoading(false);
     }
-  }, [datasetId, sort]);
+  }, [datasetId, sort, loadAnalysis]);
 
   useEffect(() => { void load(); return () => selection.clear(); }, [load]);
   const hasRunning = exports.some((entry) => entry.status === "pending" || entry.status === "running");
@@ -117,12 +130,9 @@ export default function DatasetDetailPage() {
     setItems((current) => current.map((entry) => entry.id === updated.id ? updated : entry));
   };
   const refreshCuration = async () => {
-    const [page, nextAnalysis] = await Promise.all([
-      getDatasetItems(datasetId, null, sort),
-      getDatasetAnalysis(datasetId),
-    ]);
+    const page = await getDatasetItems(datasetId, null, sort);
     setItems(page.items);
-    setAnalysis(nextAnalysis);
+    await loadAnalysis();
   };
   const selectedItems = useMemo(() => items.filter((item) => selection.selectedIds.has(item.media_id)), [items, selection.selectedIds]);
   const bulkExcluded = async (excluded: boolean) => {
@@ -137,7 +147,8 @@ export default function DatasetDetailPage() {
     selection.clear();
   };
 
-  if (loading || !dataset) return <Box minHeight="60vh" display="grid" sx={{ placeItems: "center" }}><CircularProgress /></Box>;
+  if (loading) return <Box minHeight="60vh" display="grid" sx={{ placeItems: "center" }}><CircularProgress /></Box>;
+  if (!dataset) return <Container maxWidth="xl" sx={{ py: 4 }}><Alert severity="error">{error ?? "Dataset not found"}</Alert></Container>;
 
   return (
     <Container maxWidth="xl" sx={{ py: 4, pb: 12 }}>
@@ -195,7 +206,7 @@ export default function DatasetDetailPage() {
       {tab === 1 && (
         <Stack spacing={3}>
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1}><Button variant="contained" onClick={() => { setPreviewExcluded(null); setAutoOpen(true); }}>Auto-select…</Button><Button variant="outlined" onClick={() => setRegularizationOpen(true)}>Build regularization set…</Button></Stack>
-          {!analysis ? <CircularProgress /> : <>
+          {analysisError ? <Alert severity="error" action={<Button color="inherit" size="small" onClick={() => void loadAnalysis()}>Retry</Button>}>{analysisError}</Alert> : !analysis ? <CircularProgress /> : <>
             <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", md: "repeat(2, 1fr)" } }}>
               {Object.entries(analysis.summary).map(([section, buckets]) => {
                 const total = Math.max(1, Object.values(buckets).reduce((sum, count) => sum + count, 0));
