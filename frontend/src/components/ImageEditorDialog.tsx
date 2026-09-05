@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import type { getCurrentImgDataFunction } from "react-filerobot-image-editor";
 import {
   Alert,
   AppBar,
@@ -31,7 +32,31 @@ interface LazyEditorProps {
   source: string;
   loadableDesignState?: FilerobotDesignState;
   onModify: (state: FilerobotDesignState) => void;
+  getCurrentImgDataFnRef: { current?: getCurrentImgDataFunction };
+  updateStateFnRef: { current?: FilerobotUpdateState };
   theme: Record<string, unknown>;
+}
+
+/**
+ * Filerobot's UPDATE_STATE reducer accepts a function payload and calls it
+ * with the live store state. Returning null leaves the state untouched, which
+ * turns the setter into a reader for the current crop box, rotation, flips,
+ * shown-image dimensions and the Konva design layer.
+ */
+type FilerobotUpdateState = (
+  newStatePart:
+    | Record<string, unknown>
+    | ((currentState: FilerobotStoreState) => Record<string, unknown> | null)
+) => void;
+
+interface FilerobotStoreState {
+  adjustments?: FilerobotDesignState["adjustments"];
+  resize?: FilerobotDesignState["resize"];
+  finetunesProps?: FilerobotDesignState["finetunesProps"];
+  shownImageDimensions?: FilerobotDesignState["shownImageDimensions"];
+  designLayer?: {
+    attrs?: { clipX?: number; clipY?: number; clipWidth?: number; clipHeight?: number };
+  };
 }
 
 const FilerobotImageEditor = lazy(async () => {
@@ -64,6 +89,7 @@ const FilerobotImageEditor = lazy(async () => {
         }}
         Rotate={{ angle: 90, componentType: "buttons" }}
         useZoomPresetsMenu
+        observePluginContainerSize
         disableSaveIfNoChanges
         onBeforeSave={() => false}
         onSave={() => undefined}
@@ -93,22 +119,80 @@ export default function ImageEditorDialog({
   const muiTheme = useTheme();
   const addItem = useListStore((state) => state.addItem);
   const updateItem = useListStore((state) => state.updateItem);
+  // Filerobot treats loadableDesignState as a state to (re)load, so it must
+  // only ever carry the saved state the dialog opened with. Feeding the live
+  // onModify state back into it re-applies every change and recurses until
+  // the stack overflows.
+  const initialDesignState = useMemo(
+    () => (media.edit_design_state as FilerobotDesignState | null) ?? undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [open, media.id]
+  );
   const [designState, setDesignState] = useState<FilerobotDesignState | null>(
-    (media.edit_design_state as FilerobotDesignState | null) ?? null
+    initialDesignState ?? null
   );
   const [hasChanges, setHasChanges] = useState(false);
+  // Filerobot fills this with a getter for the *current* design state. The
+  // onModify callback can lag one interaction behind (e.g. a crop preset
+  // click updates the ratio before the crop box), so saves read from here.
+  const currentImgDataRef = useRef<getCurrentImgDataFunction | undefined>(
+    undefined
+  );
+  const updateStateRef = useRef<FilerobotUpdateState | undefined>(undefined);
+
+  const readLiveDesignState = async (): Promise<FilerobotDesignState | null> => {
+    const updateState = updateStateRef.current;
+    if (!updateState) return null;
+    let captured: FilerobotStoreState | null = null;
+    updateState((state) => {
+      captured = state;
+      return null;
+    });
+    // useReducer may evaluate the payload lazily on the next render.
+    for (let attempt = 0; attempt < 5 && !captured; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 16));
+    }
+    const live: FilerobotStoreState | null = captured;
+    if (!live) return null;
+    const clip = live.designLayer?.attrs;
+    const crop = live.adjustments?.crop;
+    return {
+      ...(designState ?? {}),
+      adjustments: {
+        ...live.adjustments,
+        crop: crop
+          ? {
+              ...crop,
+              // Filerobot's own save falls back to the canvas clip box when
+              // the state has no explicit values (useTransformedImgData).
+              x: crop.x ?? clip?.clipX,
+              y: crop.y ?? clip?.clipY,
+              width: crop.width ?? clip?.clipWidth,
+              height: crop.height ?? clip?.clipHeight,
+            }
+          : crop,
+      },
+      resize: live.resize,
+      finetunesProps: live.finetunesProps,
+      shownImageDimensions: live.shownImageDimensions,
+    };
+  };
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmOverwrite, setConfirmOverwrite] = useState(false);
+  // Filerobot measures its canvas container once on mount and derives the
+  // design layer + shown-image dimensions from it. Inside a fading full-screen
+  // dialog that container has no size yet, so mount the editor only after the
+  // transition finished (and let Filerobot observe later resizes).
+  const [entered, setEntered] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    setDesignState(
-      (media.edit_design_state as FilerobotDesignState | null) ?? null
-    );
+    setDesignState(initialDesignState ?? null);
+    setEntered(false);
     setHasChanges(false);
     setError(null);
-  }, [open, media.id, media.edit_design_state]);
+  }, [open, media.id, initialDesignState]);
 
   const editorTheme = useMemo(
     () => ({
@@ -131,25 +215,59 @@ export default function ImageEditorDialog({
   }`;
 
   const save = async (mode: "copy" | "overwrite") => {
-    if (!designState) return;
     setSaving(true);
     setError(null);
     try {
       if (!media.width || !media.height) {
         throw new Error("Image dimensions are unavailable. Rescan this item and try again.");
       }
+      let current: ReturnType<getCurrentImgDataFunction> | undefined;
+      try {
+        current = currentImgDataRef.current?.({}, false, false);
+      } catch (reason) {
+        // Known to throw in some embeddings when the design layer is not yet
+        // registered in Filerobot's store; the live-state read below covers it.
+        if (import.meta.env.DEV) console.debug("Filerobot getCurrentImgData unavailable", reason);
+      }
+      const liveState = await readLiveDesignState();
+      const freshState =
+        liveState ??
+        (current?.designState
+          ? (current.designState as unknown as FilerobotDesignState)
+          : designState);
+      if (!freshState) {
+        throw new Error("The editor state could not be read. Close the editor and try again.");
+      }
       const ops = designStateToOps(
-        designState,
+        freshState,
         media.width,
-        media.height
+        media.height,
+        current?.imageData
+          ? { width: current.imageData.width, height: current.imageData.height }
+          : undefined
       );
+      if (import.meta.env.DEV) {
+        console.debug(
+          "image edit ops",
+          JSON.stringify({
+            ops,
+            imageData: current?.imageData
+              ? { width: current.imageData.width, height: current.imageData.height }
+              : null,
+            adjustments: freshState.adjustments,
+            shown: freshState.shownImageDimensions,
+            resize: freshState.resize,
+            source: { width: media.width, height: media.height },
+          })
+        );
+      }
       if (ops.length === 0) {
         throw new Error("Make at least one image change before saving.");
       }
       const detail = await editMedia(media.id, {
         ops,
         mode,
-        design_state: designState,
+        design_state: freshState,
       });
       if (mode === "overwrite") {
         detail.media.cache_version = Date.now();
@@ -175,7 +293,15 @@ export default function ImageEditorDialog({
 
   return (
     <>
-      <Dialog fullScreen open={open} onClose={saving ? undefined : onClose}>
+      <Dialog
+        fullScreen
+        open={open}
+        onClose={saving ? undefined : onClose}
+        TransitionProps={{
+          onEntered: () => setEntered(true),
+          onExited: () => setEntered(false),
+        }}
+      >
         <AppBar position="relative" color="default" elevation={0}>
           <Toolbar sx={{ gap: 1 }}>
             <IconButton
@@ -207,9 +333,12 @@ export default function ImageEditorDialog({
               </Box>
             }
           >
+            {entered && (
             <FilerobotImageEditor
               source={source}
-              loadableDesignState={designState ?? undefined}
+              loadableDesignState={initialDesignState}
+              getCurrentImgDataFnRef={currentImgDataRef}
+              updateStateFnRef={updateStateRef}
               onModify={(nextState) => {
                 setDesignState(nextState);
                 setHasChanges(true);
@@ -217,6 +346,7 @@ export default function ImageEditorDialog({
               }}
               theme={editorTheme}
             />
+            )}
           </Suspense>
         </Box>
 
