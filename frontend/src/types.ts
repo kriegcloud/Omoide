@@ -709,6 +709,36 @@ export interface DatasetTriagePage {
   total_count: number;
 }
 
+export interface FrameMiningVideo {
+  media_id: number;
+  filename: string;
+  duration?: number | null;
+  thumbnail_path?: string | null;
+  detected_face_count: number;
+  already_mined_count: number;
+}
+
+export interface FrameCandidate {
+  timestamp: number;
+  timestamp_ms: number;
+  likeness: number;
+  bbox: number[];
+  yaw?: number | null;
+  pitch?: number | null;
+  sharpness: number;
+  face_size: number;
+  phash: string;
+  novelty: number;
+  score: number;
+  preview_data_url?: string | null;
+}
+
+export interface FrameMiningCandidates {
+  videos: FrameMiningVideo[];
+  video_media_id?: number | null;
+  candidates: FrameCandidate[];
+}
+
 export type DatasetCaptionFilter =
   | "all"
   | "findings"

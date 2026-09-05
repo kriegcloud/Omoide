@@ -23,6 +23,7 @@ import type {
   CompositionGap,
   DatasetTriageFilter,
   DatasetTriagePage,
+  FrameMiningCandidates,
 } from "../types";
 import type { EditOp, FilerobotDesignState } from "../utils/editorOps";
 
@@ -109,6 +110,26 @@ export const fillDatasetGaps = (id: number, input: { max_add: number; dimensions
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
 }).then(json<{ added_ids: number[] }>);
 export const backfillDatasetPose = (id: number) => fetch(`${API}/api/datasets/${id}/pose-backfill`, { method: "POST" }).then(json<{ id: string }>);
+export const getFrameMiningCandidates = (
+  id: number,
+  input: { video_media_id?: number; min_face_px?: number; fps?: number; max_candidates?: number } = {},
+) => {
+  const params = new URLSearchParams();
+  Object.entries(input).forEach(([key, value]) => {
+    if (value != null) params.set(key, String(value));
+  });
+  const query = params.size ? `?${params}` : "";
+  return fetch(`${API}/api/datasets/${id}/mine-frames/candidates${query}`).then(json<FrameMiningCandidates>);
+};
+export const mineDatasetFrames = (id: number, input: {
+  video_media_ids?: number[];
+  max_per_video: number;
+  min_face_px: number;
+  fps: number;
+  selected_timestamps_ms?: Record<number, number[]>;
+}) => fetch(`${API}/api/datasets/${id}/mine-frames`, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+}).then(json<Task>);
 export const autoSelectDataset = (id: number, input: AutoSelectInput) => fetch(`${API}/api/datasets/${id}/auto-select`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
 }).then(json<AutoSelectResult>);

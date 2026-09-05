@@ -31,6 +31,7 @@ import BatchCropDialog from "../components/BatchCropDialog";
 import RepairDialog from "../components/RepairDialog";
 import TrainingRunsPanel from "../components/TrainingRunsPanel";
 import DatasetCaptionsPanel from "../components/DatasetCaptionsPanel";
+import FrameMiningDialog from "../components/FrameMiningDialog";
 import config from "../config";
 import { API } from "../config";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
@@ -139,9 +140,11 @@ export default function DatasetDetailPage() {
   const [regularizationGender, setRegularizationGender] = useState("");
   const [batchCropOpen, setBatchCropOpen] = useState(false);
   const [repairOpen, setRepairOpen] = useState(false);
+  const [frameMiningOpen, setFrameMiningOpen] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
   const selection = useSelection();
   const poseTaskVersion = useTaskCompletionVersion(["pose_backfill"]);
+  const frameMiningTaskVersion = useTaskCompletionVersion(["dataset_frame_mining"]);
   const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
     containerRef: gridRef,
     itemSelector: "[data-media-card]",
@@ -196,6 +199,9 @@ export default function DatasetDetailPage() {
   }, [datasetId, sort, loadAnalysis]);
 
   useEffect(() => { void load(); return () => selection.clear(); }, [load]);
+  useEffect(() => {
+    if (frameMiningTaskVersion > 0) void load();
+  }, [frameMiningTaskVersion, load]);
   useEffect(() => {
     if (!gapPreview) { setGapMedia([]); return; }
     let cancelled = false;
@@ -303,6 +309,7 @@ export default function DatasetDetailPage() {
             {selection.isSelecting && <><Button disabled={!selectedItems.length} onClick={() => void bulkExcluded(true)}>Exclude</Button><Button disabled={!selectedItems.length} onClick={() => void bulkExcluded(false)}>Include</Button><Button disabled={!selectedItems.length || !config.REPAIRS_ENABLED} onClick={() => setRepairOpen(true)}>Repair…</Button><Button color="error" disabled={!selectedItems.length} onClick={() => void remove(selectedItems)}>Remove</Button></>}
             <Button variant="outlined" disabled={dataset.person_id == null || items.length === 0} onClick={() => setBatchCropOpen(true)}>Batch crop…</Button>
             <Button variant="contained" disabled={items.length === 0} onClick={() => navigate(`/dataset/${datasetId}/triage`)}>Triage</Button>
+            <Button variant="outlined" disabled={dataset.person_id == null} onClick={() => setFrameMiningOpen(true)}>Mine video frames…</Button>
             <FormControl size="small" sx={{ minWidth: 180, ml: "auto" }}><InputLabel>Sort</InputLabel><Select label="Sort" value={sort} onChange={(event) => setSort(event.target.value)}><MenuItem value="position">Position</MenuItem><MenuItem value="sharpness">Sharpness</MenuItem><MenuItem value="frontality">Frontality</MenuItem><MenuItem value="face_ratio">Face ratio</MenuItem><MenuItem value="identity_distance">Identity distance</MenuItem><MenuItem value="brightness">Brightness</MenuItem></Select></FormControl>
           </Stack>
           {items.length === 0 ? <Typography color="text.secondary">Add images from any media grid to start curating this dataset.</Typography> : (
@@ -351,6 +358,12 @@ export default function DatasetDetailPage() {
         personId={dataset.person_id ?? undefined}
         onClose={() => setRepairOpen(false)}
         onStarted={() => selection.clear()}
+      />
+      <FrameMiningDialog
+        open={frameMiningOpen}
+        datasetId={datasetId}
+        onClose={() => setFrameMiningOpen(false)}
+        onStarted={() => setNotice("Video frame mining started. New frames will appear when processing finishes.")}
       />
 
       {tab === 2 && (

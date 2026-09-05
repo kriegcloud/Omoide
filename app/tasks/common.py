@@ -68,6 +68,7 @@ def create_and_run_task(
         "export_dataset",
         "batch_edit_media",
         "dataset_caption_generation",
+        "dataset_frame_mining",
     ],
     callable_task: Callable[[str], None],
     *,

@@ -60,6 +60,8 @@ from app.schemas.dataset import (
     FaceSummary,
     FillGapsRequest,
     FillGapsResult,
+    FrameMiningCandidatesRead,
+    FrameMiningRequest,
     RegularizationRequest,
     RunLikenessRead,
     TrainingRunRead,
@@ -97,10 +99,13 @@ from app.services.curation import (
     fill_dataset_gaps,
     compute_item_metrics,
 )
+from app.services.frame_mining import dataset_videos, mine_candidates
+from app.services.media_files import MediaFileMissingError, MediaFileError
 from app.tasks.common import create_and_run_task
 from app.tasks.dataset_export import export_dataset
 from app.tasks.dataset_caption_generation import generate_dataset_captions
 from app.tasks.backfill import run_pose_backfill
+from app.tasks.dataset_frame_mining import mine_dataset_frames
 
 
 router = APIRouter()
@@ -558,6 +563,77 @@ def pose_backfill(
         background_tasks,
         "pose_backfill",
         partial(run_pose_backfill, dataset_id=dataset_id),
+        reuse_running=False,
+    )
+
+
+@router.get(
+    "/{dataset_id}/mine-frames/candidates",
+    response_model=FrameMiningCandidatesRead,
+)
+def frame_mining_candidates(
+    dataset_id: int,
+    video_media_id: int | None = None,
+    min_face_px: int = Query(default=160, ge=1),
+    fps: float = Query(default=2.0, gt=0, le=30),
+    max_candidates: int = Query(default=48, ge=1, le=96),
+    session: Session = Depends(get_session),
+) -> FrameMiningCandidatesRead:
+    dataset = _dataset_or_404(session, dataset_id)
+    videos = dataset_videos(session, dataset)
+    candidates: list[dict] = []
+    if video_media_id is not None:
+        video = session.get(Media, video_media_id)
+        if video is None or video.duration is None:
+            raise HTTPException(status_code=404, detail="Video not found")
+        if not any(entry["media_id"] == video_media_id for entry in videos):
+            raise HTTPException(
+                status_code=409, detail="The dataset person was not detected in this video"
+            )
+        try:
+            mined = mine_candidates(
+                session,
+                dataset,
+                video,
+                fps=fps,
+                min_face_px=min_face_px,
+                max_candidates=max_candidates,
+            )
+        except MediaFileMissingError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (MediaFileError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        candidates = [
+            entry.preview_dict()
+            for entry in sorted(mined, key=lambda value: value.score, reverse=True)
+        ]
+    return FrameMiningCandidatesRead(
+        videos=videos,
+        video_media_id=video_media_id,
+        candidates=candidates,
+    )
+
+
+@router.post("/{dataset_id}/mine-frames", response_model=ProcessingTask)
+def start_frame_mining(
+    dataset_id: int,
+    payload: FrameMiningRequest,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+) -> ProcessingTask:
+    _mutating()
+    dataset = _dataset_or_404(session, dataset_id)
+    if dataset.person_id is None:
+        raise HTTPException(status_code=409, detail="Dataset has no subject person")
+    return create_and_run_task(
+        session,
+        background_tasks,
+        "dataset_frame_mining",
+        partial(
+            mine_dataset_frames,
+            dataset_id=dataset_id,
+            **payload.model_dump(),
+        ),
         reuse_running=False,
     )
 

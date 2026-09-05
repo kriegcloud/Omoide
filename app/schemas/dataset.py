@@ -134,6 +134,44 @@ class FillGapsResult(BaseModel):
     added_ids: list[int] = Field(default_factory=list)
 
 
+class FrameMiningRequest(BaseModel):
+    video_media_ids: list[int] | None = None
+    max_per_video: int = Field(default=12, ge=1, le=100)
+    min_face_px: int = Field(default=160, ge=1)
+    fps: float = Field(default=2.0, gt=0, le=30)
+    selected_timestamps_ms: dict[int, list[int]] | None = None
+
+
+class FrameMiningVideoRead(BaseModel):
+    media_id: int
+    filename: str
+    duration: float | None
+    thumbnail_path: str | None
+    detected_face_count: int
+    already_mined_count: int
+
+
+class FrameCandidateRead(BaseModel):
+    timestamp: float
+    timestamp_ms: int
+    likeness: float
+    bbox: list[int]
+    yaw: float | None
+    pitch: float | None
+    sharpness: float
+    face_size: float
+    phash: str
+    novelty: float
+    score: float
+    preview_data_url: str | None
+
+
+class FrameMiningCandidatesRead(BaseModel):
+    videos: list[FrameMiningVideoRead]
+    video_media_id: int | None = None
+    candidates: list[FrameCandidateRead] = Field(default_factory=list)
+
+
 class DatasetBatchCropRequest(BaseModel):
     item_ids: list[int] | None = None
     framing: Literal["closeup", "portrait", "half_body", "full_body"]
