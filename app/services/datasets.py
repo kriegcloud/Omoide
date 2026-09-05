@@ -124,7 +124,13 @@ def _git_revision() -> str:
             text=True,
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
-        return "unknown"
+        # Container images carry no .git; fall back to the application version.
+        try:
+            from app.version import get_app_version
+
+            return f"v{get_app_version()}"
+        except Exception:  # pragma: no cover - defensive
+            return "unknown"
 
 
 def _ai_toolkit_config(dataset: TrainingDataset, output_dir: Path) -> dict:
