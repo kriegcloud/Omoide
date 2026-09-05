@@ -182,3 +182,35 @@ class ImageEditTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExifOrientationEditTests(unittest.TestCase):
+    """Ops are expressed in display orientation; sources may carry EXIF rotation."""
+
+    def test_transposed_source_matches_display_frame(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from PIL import Image, ImageOps
+
+        from app.schemas.media import EditOp
+        from app.services.image_edits import apply_edit_ops
+        from pydantic import TypeAdapter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rot.jpg"
+            # 400x200 stored landscape, tagged Orientation=6 → displays as 200x400.
+            stored = Image.new("RGB", (400, 200), "white")
+            exif = Image.Exif()
+            exif[0x0112] = 6
+            stored.save(path, exif=exif.tobytes())
+            with Image.open(path) as opened:
+                self.assertEqual(opened.getexif().get(0x0112), 6)
+                displayed = ImageOps.exif_transpose(opened)
+                self.assertEqual(displayed.size, (200, 400))
+                ops = TypeAdapter(list[EditOp]).validate_python(
+                    [{"op": "crop", "x": 0, "y": 0, "width": 200, "height": 200}]
+                )
+                edited = apply_edit_ops(displayed, ops)
+                self.assertEqual(edited.size, (200, 200))
+                self.assertIsNone(edited.getexif().get(0x0112))
