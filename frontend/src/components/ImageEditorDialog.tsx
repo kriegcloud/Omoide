@@ -8,7 +8,10 @@ import {
   CircularProgress,
   Dialog,
   DialogActions,
+  FormControlLabel,
   IconButton,
+  Stack,
+  Switch,
   Toolbar,
   Typography,
   useTheme,
@@ -18,9 +21,9 @@ import SaveAltIcon from "@mui/icons-material/SaveAlt";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import { useNavigate } from "react-router-dom";
 import { API } from "../config";
-import { editMedia } from "../services/mediaActions";
+import { editMedia, getFaceCropSuggestions } from "../services/mediaActions";
 import { useListStore } from "../stores/useListStore";
-import type { Media, MediaDetail } from "../types";
+import type { CropFraming, FaceCropSuggestion, Media, MediaDetail } from "../types";
 import { encodeFilePath } from "../urlUtils";
 import {
   designStateToOps,
@@ -59,6 +62,21 @@ interface FilerobotStoreState {
     attrs?: { clipX?: number; clipY?: number; clipWidth?: number; clipHeight?: number };
   };
 }
+
+interface FaceOverlayLayout {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  rotation: number;
+}
+
+const FRAMING_PRESETS: Array<{ framing: CropFraming; label: string }> = [
+  { framing: "closeup", label: "Close-up" },
+  { framing: "portrait", label: "Portrait" },
+  { framing: "half_body", label: "Half body" },
+  { framing: "full_body", label: "Full body" },
+];
 
 const FilerobotImageEditor = lazy(async () => {
   const editorModule = await import("react-filerobot-image-editor");
@@ -145,8 +163,12 @@ export default function ImageEditorDialog({
     undefined
   );
   const updateStateRef = useRef<FilerobotUpdateState | undefined>(undefined);
+  const editorHostRef = useRef<HTMLDivElement>(null);
+  const [faceGuides, setFaceGuides] = useState(false);
+  const [faceSuggestions, setFaceSuggestions] = useState<FaceCropSuggestion[] | null>(null);
+  const [faceOverlay, setFaceOverlay] = useState<FaceOverlayLayout | null>(null);
 
-  const readLiveDesignState = async (): Promise<FilerobotDesignState | null> => {
+  const captureStoreState = async (): Promise<FilerobotStoreState | null> => {
     const updateState = updateStateRef.current;
     if (!updateState) return null;
     let captured: FilerobotStoreState | null = null;
@@ -154,11 +176,14 @@ export default function ImageEditorDialog({
       captured = state;
       return null;
     });
-    // useReducer may evaluate the payload lazily on the next render.
     for (let attempt = 0; attempt < 5 && !captured; attempt += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 16));
     }
-    const live: FilerobotStoreState | null = captured;
+    return captured;
+  };
+
+  const readLiveDesignState = async (): Promise<FilerobotDesignState | null> => {
+    const live = await captureStoreState();
     if (!live) return null;
     const clip = live.designLayer?.attrs;
     const crop = live.adjustments?.crop;
@@ -198,7 +223,84 @@ export default function ImageEditorDialog({
     setEntered(false);
     setHasChanges(false);
     setError(null);
+    setFaceGuides(false);
+    setFaceSuggestions(null);
+    setFaceOverlay(null);
   }, [open, media.id, initialDesignState]);
+
+  const updateFaceOverlay = async () => {
+    const live = await captureStoreState();
+    const shown = live?.shownImageDimensions;
+    const host = editorHostRef.current;
+    const canvas = host?.querySelector<HTMLElement>(".FIE_canvas-container");
+    if (!shown?.width || !shown.height || !host || !canvas) {
+      setFaceOverlay(null);
+      return;
+    }
+    const hostRect = host.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+    setFaceOverlay({
+      left: canvasRect.left - hostRect.left + (shown.x ?? 0),
+      top: canvasRect.top - hostRect.top + (shown.y ?? 0),
+      width: shown.width,
+      height: shown.height,
+      rotation: live?.adjustments?.rotation ?? 0,
+    });
+  };
+
+  const toggleFaceGuides = async (checked: boolean) => {
+    setFaceGuides(checked);
+    if (!checked) return;
+    try {
+      if (faceSuggestions === null) {
+        setFaceSuggestions(await getFaceCropSuggestions(media.id));
+      }
+      await updateFaceOverlay();
+    } catch (reason) {
+      setFaceGuides(false);
+      setError(reason instanceof Error ? reason.message : "Failed to load face guides");
+    }
+  };
+
+  const applyFramingPreset = async (framing: CropFraming) => {
+    setError(null);
+    try {
+      if (!media.width || !media.height) {
+        throw new Error("Image dimensions are unavailable. Rescan this item and try again.");
+      }
+      const suggestions = await getFaceCropSuggestions(media.id, framing, "free");
+      const suggestion = suggestions[0];
+      if (!suggestion) throw new Error("No detected face is available for this preset.");
+      const live = await captureStoreState();
+      const shown = live?.shownImageDimensions;
+      if (!shown?.width || !shown.height || !updateStateRef.current) {
+        throw new Error("The editor image is still loading. Try the preset again.");
+      }
+      const crop = suggestion.crop_op;
+      updateStateRef.current({
+        adjustments: {
+          crop: {
+            x: crop.x * shown.width / media.width,
+            y: crop.y * shown.height / media.height,
+            width: crop.width * shown.width / media.width,
+            height: crop.height * shown.height / media.height,
+            ratio: "custom",
+          },
+        },
+      });
+      setHasChanges(true);
+      window.setTimeout(() => { void updateFaceOverlay(); }, 0);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Failed to apply face framing");
+    }
+  };
+
+  useEffect(() => {
+    if (!faceGuides) return;
+    const onResize = () => { void updateFaceOverlay(); };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [faceGuides]);
 
   const editorTheme = useMemo(
     () => ({
@@ -314,7 +416,7 @@ export default function ImageEditorDialog({
         }}
       >
         <AppBar position="relative" color="default" elevation={0}>
-          <Toolbar sx={{ gap: 1 }}>
+          <Toolbar sx={{ gap: 1, flexWrap: "wrap" }}>
             <IconButton
               edge="start"
               onClick={onClose}
@@ -331,10 +433,22 @@ export default function ImageEditorDialog({
                 {media.filename}
               </Typography>
             </Box>
+            <Stack direction="row" spacing={0.5} alignItems="center" sx={{ ml: { sm: "auto" }, overflowX: "auto" }}>
+              <FormControlLabel
+                control={<Switch size="small" checked={faceGuides} onChange={(event) => void toggleFaceGuides(event.target.checked)} />}
+                label="Face guides"
+                sx={{ whiteSpace: "nowrap", mr: 0.5 }}
+              />
+              {FRAMING_PRESETS.map((preset) => (
+                <Button key={preset.framing} size="small" variant="outlined" onClick={() => void applyFramingPreset(preset.framing)} sx={{ whiteSpace: "nowrap" }}>
+                  {preset.label}
+                </Button>
+              ))}
+            </Stack>
           </Toolbar>
         </AppBar>
 
-        <Box sx={{ flex: 1, minHeight: 0, bgcolor: "background.default" }}>
+        <Box ref={editorHostRef} sx={{ flex: 1, minHeight: 0, bgcolor: "background.default", position: "relative" }}>
           <Suspense
             fallback={
               <Box
@@ -354,11 +468,22 @@ export default function ImageEditorDialog({
                 setDesignState(nextState);
                 setHasChanges(true);
                 setError(null);
+                if (faceGuides) window.setTimeout(() => { void updateFaceOverlay(); }, 0);
               }}
               theme={editorTheme}
             />
             )}
           </Suspense>
+          {faceGuides && faceOverlay && media.width && media.height && ((faceOverlay.rotation % 360) + 360) % 360 === 0 && (
+            <Box sx={{ position: "absolute", pointerEvents: "none", zIndex: 5, left: faceOverlay.left, top: faceOverlay.top, width: faceOverlay.width, height: faceOverlay.height, overflow: "hidden" }}>
+              {(faceSuggestions ?? []).map((suggestion) => {
+                const [x, y, width, height] = suggestion.face_bbox;
+                return (
+                  <Box key={suggestion.face_id} sx={{ position: "absolute", border: "2px solid", borderColor: "warning.light", boxShadow: "0 0 0 1px rgba(0,0,0,0.6)", left: `${(x / media.width) * 100}%`, top: `${(y / media.height) * 100}%`, width: `${(width / media.width) * 100}%`, height: `${(height / media.height) * 100}%` }} />
+                );
+              })}
+            </Box>
+          )}
         </Box>
 
         {error && (

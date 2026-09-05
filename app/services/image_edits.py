@@ -7,9 +7,15 @@ from typing import Literal
 
 import piexif
 from PIL import Image, ImageEnhance, ImageOps
+from sqlmodel import Session, select
 
+from app.config import settings
+from app.database import safe_commit
+from app.logger import logger
+from app.models import Face, Media
 from app.schemas.media import EditOp
 from app.services.media_files import MediaRoot, require_writable_media_file
+from app.utils import generate_perceptual_hash, generate_thumbnail
 
 
 def apply_edit_ops(image: Image.Image, ops: list[EditOp]) -> Image.Image:
@@ -108,3 +114,87 @@ def write_edited(
     finally:
         temporary.unlink(missing_ok=True)
     return original
+
+
+def edit_media_record(
+    session: Session,
+    media: Media,
+    ops: list[EditOp],
+    mode: Literal["copy", "overwrite"],
+    *,
+    design_state: dict | None = None,
+) -> Media:
+    """Apply the Phase 6 edit path and persist the resulting media record."""
+    with Image.open(media.path) as opened:
+        orientation = opened.getexif().get(0x0112, 1)
+        source = ImageOps.exif_transpose(opened) if orientation not in (None, 1) else opened
+        edited = apply_edit_ops(source, ops)
+    target = write_edited(
+        media.path,
+        edited,
+        mode,
+        media_roots=settings.general.resolved_media_dirs(),
+        rotated=any(op.op == "rotate" for op in ops) or orientation not in (None, 1),
+    )
+
+    if mode == "copy":
+        result_media = Media(
+            path=os.fspath(target),
+            filename=target.name,
+            size=target.stat().st_size,
+            width=edited.width,
+            height=edited.height,
+            created_at=media.created_at,
+            edit_design_state=design_state,
+        )
+        session.add(result_media)
+        safe_commit(session)
+        session.refresh(result_media)
+        result_media.phash = generate_perceptual_hash(result_media, type="image")
+        result_media.thumbnail_path, thumbnail_error = generate_thumbnail(result_media)
+        if thumbnail_error:
+            logger.warning(
+                "Edited media %s thumbnail failed: %s",
+                result_media.id,
+                thumbnail_error,
+            )
+        session.add(result_media)
+        safe_commit(session)
+        return result_media
+
+    from app.api.face import delete_faces
+
+    old_thumbnail = (
+        settings.general.thumb_dir / media.thumbnail_path
+        if media.thumbnail_path
+        else None
+    )
+    face_ids = session.exec(select(Face.id).where(Face.media_id == media.id)).all()
+    if face_ids:
+        delete_faces(face_ids=face_ids, session=session)
+        refreshed = session.get(Media, media.id)
+        if refreshed is None:
+            raise ValueError("Media disappeared while resetting faces")
+        media = refreshed
+
+    media.size = target.stat().st_size
+    media.width = edited.width
+    media.height = edited.height
+    media.phash = generate_perceptual_hash(media, type="image")
+    media.faces_extracted = False
+    media.embeddings_created = False
+    media.ran_auto_tagging = False
+    media.edit_design_state = design_state
+    media.thumbnail_path, thumbnail_error = generate_thumbnail(media)
+    if thumbnail_error:
+        logger.warning("Edited media %s thumbnail failed: %s", media.id, thumbnail_error)
+    new_thumbnail = (
+        settings.general.thumb_dir / media.thumbnail_path
+        if media.thumbnail_path
+        else None
+    )
+    if old_thumbnail and old_thumbnail != new_thumbnail:
+        old_thumbnail.unlink(missing_ok=True)
+    session.add(media)
+    safe_commit(session)
+    return media

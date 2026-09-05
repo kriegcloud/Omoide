@@ -23,6 +23,7 @@ export interface FilerobotDesignState {
       y?: number;
       width?: number;
       height?: number;
+      ratio?: number | string;
     };
     isFlippedX?: boolean;
     isFlippedY?: boolean;
@@ -30,6 +31,8 @@ export interface FilerobotDesignState {
   };
   resize?: { width?: number; height?: number };
   shownImageDimensions?: {
+    x?: number;
+    y?: number;
     width: number;
     height: number;
     scaledBy: number;

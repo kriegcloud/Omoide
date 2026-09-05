@@ -16,6 +16,7 @@ from .backfill import (
     run_backfill_face_timestamps,
 )
 from .blur import compute_blur_scores
+from .batch_edit import batch_edit_media
 from .common import create_and_run_task
 from .duplicates import run_duplicate_detection
 from .hashes import generate_hashes
@@ -43,6 +44,7 @@ from .scan import run_scan
 __all__ = [
     "clean_missing_files",
     "compute_blur_scores",
+    "batch_edit_media",
     "run_backfill_demographics",
     "run_backfill_face_quality",
     "run_backfill_face_timestamps",

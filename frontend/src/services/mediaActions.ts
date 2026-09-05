@@ -1,6 +1,6 @@
 import { API } from "../config";
 import { Media, MediaPreview, Task } from "../types";
-import type { MediaDetail } from "../types";
+import type { CropAspect, CropFraming, FaceCropSuggestion, MediaDetail } from "../types";
 import type { EditOp, FilerobotDesignState } from "../utils/editorOps";
 
 export interface BulkMoveResult {
@@ -136,5 +136,32 @@ export const editMedia = async (
     body: JSON.stringify(request),
   });
   if (!res.ok) throw await responseError(res, "Failed to save image edits");
+  return res.json();
+};
+
+export const getFaceCropSuggestions = async (
+  mediaId: number,
+  framing: CropFraming = "portrait",
+  aspect: CropAspect = "free",
+  personId?: number | null
+): Promise<FaceCropSuggestion[]> => {
+  const params = new URLSearchParams({ framing, aspect });
+  if (personId != null) params.set("person_id", String(personId));
+  const res = await fetch(`${API}/api/media/${mediaId}/face-crops?${params}`);
+  if (!res.ok) throw await responseError(res, "Failed to load face crop suggestions");
+  return res.json();
+};
+
+export const batchEditMedia = async (
+  mediaIds: number[],
+  ops: EditOp[],
+  mode: "copy" | "overwrite" = "copy"
+): Promise<Task> => {
+  const res = await fetch(`${API}/api/media/batch-edit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ media_ids: mediaIds, ops, mode }),
+  });
+  if (!res.ok) throw await responseError(res, "Failed to start batch edit");
   return res.json();
 };

@@ -25,6 +25,9 @@ from app.models import (
 from app.schemas.dataset import (
     AutoSelectRequest,
     AutoSelectResult,
+    DatasetBatchCropRequest,
+    DatasetBatchCropResult,
+    DatasetBatchCropSkipped,
     DatasetCreate,
     DatasetExportRead,
     DatasetExportRequest,
@@ -40,6 +43,7 @@ from app.schemas.dataset import (
 )
 from app.schemas.media import MediaPreview
 from app.services.datasets import resolve_caption, slugify
+from app.services.face_crops import bbox_to_source_pixels, suggest_crop
 from app.services.curation import (
     auto_select_dataset,
     build_regularization_dataset,
@@ -277,6 +281,69 @@ def update_item(dataset_id: int, item_id: int, payload: DatasetItemUpdate, sessi
     session.commit()
     session.refresh(item)
     return _item_read(session, dataset, item)
+
+
+@router.post("/{dataset_id}/items/batch-crop", response_model=DatasetBatchCropResult)
+def batch_crop_items(
+    dataset_id: int,
+    payload: DatasetBatchCropRequest,
+    session: Session = Depends(get_session),
+) -> DatasetBatchCropResult:
+    _mutating()
+    dataset = _dataset_or_404(session, dataset_id)
+    query = select(DatasetItem).where(DatasetItem.dataset_id == dataset_id)
+    if payload.item_ids is not None:
+        query = query.where(DatasetItem.id.in_(payload.item_ids))
+    items = list(session.exec(query.order_by(DatasetItem.position, DatasetItem.id)).all())
+    updated_ids: list[int] = []
+    skipped: list[DatasetBatchCropSkipped] = []
+
+    requested = set(payload.item_ids or [])
+    found = {int(item.id) for item in items}
+    for missing_id in sorted(requested - found):
+        skipped.append(DatasetBatchCropSkipped(item_id=missing_id, reason="Dataset item not found"))
+
+    for item in items:
+        item_id = int(item.id)
+        if item.edit_ops and not payload.overwrite_existing_ops:
+            skipped.append(DatasetBatchCropSkipped(item_id=item_id, reason="Existing edit ops"))
+            continue
+        if dataset.person_id is None:
+            skipped.append(DatasetBatchCropSkipped(item_id=item_id, reason="No subject person"))
+            continue
+        media = session.get(Media, item.media_id)
+        if media is None:
+            skipped.append(DatasetBatchCropSkipped(item_id=item_id, reason="Media not found"))
+            continue
+        if not media.width or not media.height:
+            skipped.append(DatasetBatchCropSkipped(item_id=item_id, reason="Media dimensions unavailable"))
+            continue
+        faces = list(
+            session.exec(
+                select(Face).where(
+                    Face.media_id == media.id,
+                    Face.person_id == dataset.person_id,
+                )
+            ).all()
+        )
+        if not faces:
+            skipped.append(DatasetBatchCropSkipped(item_id=item_id, reason="No subject face"))
+            continue
+        face = max(faces, key=lambda candidate: candidate.bbox[2] * candidate.bbox[3])
+        face_px = bbox_to_source_pixels(face.bbox, media.width, media.height)
+        crop, _ = suggest_crop(
+            face_px,
+            media.width,
+            media.height,
+            payload.framing,
+            payload.aspect,
+        )
+        item.edit_ops = [crop.model_dump(mode="json")]
+        item.edit_design_state = None
+        session.add(item)
+        updated_ids.append(item_id)
+    session.commit()
+    return DatasetBatchCropResult(updated_ids=updated_ids, skipped=skipped)
 
 
 def _item_read(

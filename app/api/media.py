@@ -16,7 +16,6 @@ from fastapi import (
     status,
 )
 from fastapi.responses import PlainTextResponse
-from PIL import Image, ImageOps
 from sqlalchemy import and_, case, func, or_, text, tuple_, union_all
 from sqlalchemy.orm import aliased, selectinload
 from sqlmodel import Session, col, select
@@ -30,6 +29,7 @@ from app.models import (
     Media,
     Person,
     PersonMediaLink,
+    ProcessingTask,
     Scene,
     Tag,
 )
@@ -39,6 +39,8 @@ from app.schemas.media import (
     FavoriteUpdate,
     GeoUpdate,
     MediaDetail,
+    FaceCropSuggestion,
+    MediaBatchEditRequest,
     MediaEditRequest,
     MediaFolderBreadcrumb,
     MediaFolderCreateRequest,
@@ -67,7 +69,8 @@ from app.services.media_files import (
     move_media_file,
     rename_media_file,
 )
-from app.services.image_edits import apply_edit_ops, write_edited
+from app.services.face_crops import CropAspect, Framing, bbox_to_source_pixels, suggest_crop
+from app.services.image_edits import edit_media_record
 from app.utils import (
     delete_file,
     delete_record,
@@ -838,24 +841,12 @@ def edit_media(
         raise HTTPException(status_code=400, detail="At least one edit is required")
 
     try:
-        with Image.open(media.path) as opened:
-            # The editor works in display orientation (browsers honour the
-            # EXIF Orientation tag), so bring the pixels into that frame
-            # before replaying ops. The tag is then dropped on save.
-            orientation = opened.getexif().get(0x0112, 1)
-            source = (
-                ImageOps.exif_transpose(opened)
-                if orientation not in (None, 1)
-                else opened
-            )
-            edited = apply_edit_ops(source, body.ops)
-        target = write_edited(
-            media.path,
-            edited,
+        result_media = edit_media_record(
+            session,
+            media,
+            body.ops,
             body.mode,
-            media_roots=settings.general.resolved_media_dirs(),
-            rotated=any(op.op == "rotate" for op in body.ops)
-            or orientation not in (None, 1),
+            design_state=body.design_state,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -867,70 +858,72 @@ def edit_media(
     ) as exc:
         raise _media_file_conflict(exc) from exc
 
-    if body.mode == "copy":
-        result_media = Media(
-            path=os.fspath(target),
-            filename=target.name,
-            size=target.stat().st_size,
-            width=edited.width,
-            height=edited.height,
-            created_at=media.created_at,
-            inserted_at=datetime.now(),
-            edit_design_state=body.design_state,
-        )
-        session.add(result_media)
-        safe_commit(session)
-        session.refresh(result_media)
-        result_media.phash = generate_perceptual_hash(result_media, type="image")
-        result_media.thumbnail_path, thumbnail_error = generate_thumbnail(result_media)
-        if thumbnail_error:
-            logger.warning(
-                "Edited media %s thumbnail failed: %s",
-                result_media.id,
-                thumbnail_error,
-            )
-        session.add(result_media)
-        safe_commit(session)
-    else:
-        from app.api.face import delete_faces
-
-        old_thumbnail = (
-            settings.general.thumb_dir / media.thumbnail_path
-            if media.thumbnail_path
-            else None
-        )
-        face_ids = session.exec(
-            select(Face.id).where(Face.media_id == media.id)
-        ).all()
-        if face_ids:
-            delete_faces(face_ids=face_ids, session=session)
-            media = session.get(Media, media_id)
-
-        media.size = target.stat().st_size
-        media.width = edited.width
-        media.height = edited.height
-        media.phash = generate_perceptual_hash(media, type="image")
-        media.faces_extracted = False
-        media.embeddings_created = False
-        media.ran_auto_tagging = False
-        media.edit_design_state = body.design_state
-        media.thumbnail_path, thumbnail_error = generate_thumbnail(media)
-        if thumbnail_error:
-            logger.warning(
-                "Edited media %s thumbnail failed: %s", media.id, thumbnail_error
-            )
-        if old_thumbnail and old_thumbnail != (
-            settings.general.thumb_dir / media.thumbnail_path
-            if media.thumbnail_path
-            else None
-        ):
-            old_thumbnail.unlink(missing_ok=True)
-        session.add(media)
-        safe_commit(session)
-        result_media = media
-
     _queue_edited_media(result_media.id, session, background_tasks)
     return get_media(result_media.id, session)
+
+
+@router.get("/{media_id}/face-crops", response_model=list[FaceCropSuggestion])
+def get_face_crops(
+    media_id: int,
+    person_id: int | None = None,
+    framing: Framing = Query(default="portrait"),
+    aspect: CropAspect = Query(default="free"),
+    session: Session = Depends(get_session),
+) -> list[FaceCropSuggestion]:
+    media = session.get(Media, media_id)
+    if media is None:
+        raise HTTPException(status_code=404, detail="Media not found")
+    if not media.width or not media.height:
+        raise HTTPException(status_code=409, detail="Media dimensions are unavailable")
+    faces = list(session.exec(select(Face).where(Face.media_id == media_id)).all())
+    if person_id is not None:
+        faces.sort(key=lambda face: (face.person_id != person_id, face.id))
+    else:
+        faces.sort(key=lambda face: face.id)
+    suggestions: list[FaceCropSuggestion] = []
+    for face in faces:
+        face_px = bbox_to_source_pixels(face.bbox, media.width, media.height)
+        crop, output = suggest_crop(
+            face_px,
+            media.width,
+            media.height,
+            framing,
+            aspect,
+        )
+        suggestions.append(
+            FaceCropSuggestion(
+                face_id=face.id,
+                person_id=face.person_id,
+                face_bbox=face_px,
+                crop_op=crop,
+                output=output,
+            )
+        )
+    return suggestions
+
+
+@router.post("/batch-edit", response_model=ProcessingTask)
+def start_batch_edit(
+    body: MediaBatchEditRequest,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    _require_media_mutations_allowed()
+    if not body.media_ids:
+        raise HTTPException(status_code=400, detail="At least one media id is required")
+    if not body.ops:
+        raise HTTPException(status_code=400, detail="At least one edit is required")
+    from app.tasks import create_and_run_task
+    from app.tasks.batch_edit import batch_edit_media
+
+    payload = body.model_dump(mode="json")
+    return create_and_run_task(
+        session=session,
+        background_tasks=background_tasks,
+        task_type="batch_edit_media",
+        callable_task=lambda task_id: batch_edit_media(task_id, payload),
+        reuse_running=False,
+    )
 
 
 @router.get("/locations", response_model=list[MediaLocation])

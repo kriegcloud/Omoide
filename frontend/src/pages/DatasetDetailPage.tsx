@@ -26,6 +26,7 @@ import SaveIcon from "@mui/icons-material/Save";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
 import { useNavigate, useParams } from "react-router-dom";
 import ImageEditorDialog from "../components/ImageEditorDialog";
+import BatchCropDialog from "../components/BatchCropDialog";
 import { API } from "../config";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 import MediaCard from "../components/MediaCard";
@@ -71,6 +72,7 @@ export default function DatasetDetailPage() {
   const [regularizationOpen, setRegularizationOpen] = useState(false);
   const [regularizationCount, setRegularizationCount] = useState(100);
   const [regularizationGender, setRegularizationGender] = useState("");
+  const [batchCropOpen, setBatchCropOpen] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
   const selection = useSelection();
   const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
@@ -168,6 +170,7 @@ export default function DatasetDetailPage() {
             <Button variant="outlined" onClick={selection.toggleSelecting}>{selection.isSelecting ? "Cancel selection" : "Select items"}</Button>
             {selection.isSelecting && <Typography color="text.secondary">{selection.selectedIds.size} selected</Typography>}
             {selection.isSelecting && <><Button disabled={!selectedItems.length} onClick={() => void bulkExcluded(true)}>Exclude</Button><Button disabled={!selectedItems.length} onClick={() => void bulkExcluded(false)}>Include</Button><Button color="error" disabled={!selectedItems.length} onClick={() => void remove(selectedItems)}>Remove</Button></>}
+            <Button variant="outlined" disabled={dataset.person_id == null || items.length === 0} onClick={() => setBatchCropOpen(true)}>Batch crop…</Button>
             <FormControl size="small" sx={{ minWidth: 180, ml: "auto" }}><InputLabel>Sort</InputLabel><Select label="Sort" value={sort} onChange={(event) => setSort(event.target.value)}><MenuItem value="position">Position</MenuItem><MenuItem value="sharpness">Sharpness</MenuItem><MenuItem value="frontality">Frontality</MenuItem><MenuItem value="face_ratio">Face ratio</MenuItem><MenuItem value="identity_distance">Identity distance</MenuItem><MenuItem value="brightness">Brightness</MenuItem></Select></FormControl>
           </Stack>
           {items.length === 0 ? <Typography color="text.secondary">Add images from any media grid to start curating this dataset.</Typography> : (
@@ -247,6 +250,17 @@ export default function DatasetDetailPage() {
         <DialogContent><Stack spacing={2} sx={{ mt: 1 }}><TextField type="number" label="Target count" value={regularizationCount} onChange={(event) => setRegularizationCount(Number(event.target.value))} /><FormControl><InputLabel>Gender</InputLabel><Select label="Gender" value={regularizationGender} onChange={(event) => setRegularizationGender(event.target.value)}><MenuItem value="">Subject default</MenuItem><MenuItem value="female">Woman</MenuItem><MenuItem value="male">Man</MenuItem></Select></FormControl></Stack></DialogContent>
         <DialogActions><Button onClick={() => setRegularizationOpen(false)}>Cancel</Button><Button variant="contained" onClick={async () => { const created = await buildRegularizationDataset(datasetId, { target_count: regularizationCount, ...(regularizationGender ? { gender: regularizationGender } : {}) }); navigate(`/dataset/${created.id}`); }}>Build</Button></DialogActions>
       </Dialog>
+
+      <BatchCropDialog
+        open={batchCropOpen}
+        datasetId={datasetId}
+        personId={dataset.person_id}
+        items={items}
+        onClose={() => setBatchCropOpen(false)}
+        onApplied={async () => {
+          await refreshCuration();
+        }}
+      />
 
       <Dialog open={Boolean(captionItem)} onClose={() => setCaptionItem(null)} fullWidth maxWidth="sm"><DialogTitle>Edit caption</DialogTitle><DialogContent><TextField autoFocus multiline minRows={3} fullWidth value={caption} onChange={(event) => setCaption(event.target.value)} sx={{ mt: 1 }} /></DialogContent><DialogActions><Button onClick={() => setCaptionItem(null)}>Cancel</Button><Button variant="contained" onClick={async () => { if (captionItem) await patchItem(captionItem, { caption_override: caption.trim() || null }); setCaptionItem(null); }}>Save caption</Button></DialogActions></Dialog>
       {cropItem && <ImageEditorDialog

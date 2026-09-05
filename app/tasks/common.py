@@ -65,6 +65,7 @@ def create_and_run_task(
         "build_events",
         "geocode_places",
         "export_dataset",
+        "batch_edit_media",
     ],
     callable_task: Callable[[str], None],
     *,

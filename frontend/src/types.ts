@@ -269,7 +269,8 @@ export type TaskType =
   | "backfill_demographics"
   | "build_events"
   | "geocode_places"
-  | "export_dataset";
+  | "export_dataset"
+  | "batch_edit_media";
 export type TaskStatus =
   | "pending"
   | "running"
@@ -362,6 +363,23 @@ export interface Task {
   merge_total?: number;
   merge_processed?: number;
   merge_pending?: number;
+  result?: Record<string, unknown> | null;
+}
+
+export type CropFraming = "closeup" | "portrait" | "half_body" | "full_body";
+export type CropAspect = "1:1" | "2:3" | "3:4" | "4:5" | "9:16" | "free";
+
+export interface FaceCropSuggestion {
+  face_id: number;
+  person_id?: number | null;
+  face_bbox: [number, number, number, number];
+  crop_op: { op: "crop"; x: number; y: number; width: number; height: number };
+  output: { width: number; height: number };
+}
+
+export interface DatasetBatchCropResult {
+  updated_ids: number[];
+  skipped: Array<{ item_id: number; reason: string }>;
 }
 
 export interface TaskFailure {

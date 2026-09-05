@@ -542,6 +542,9 @@ class ProcessingTask(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.now)
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    result: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
 
     class Config:
         from_attributes = True
@@ -549,7 +552,16 @@ class ProcessingTask(SQLModel, table=True):
 
 # Read model that augments ProcessingTask with transient fields.
 # These fields are not stored in the DB; we only use them for API responses.
-class ProcessingTaskRead(ProcessingTask, table=False):
+class ProcessingTaskRead(SQLModel):
+    id: str
+    task_type: str
+    status: Status
+    total: int
+    processed: int
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    result: dict[str, Any] | None = None
     current_item: str | None = None
     current_step: str | None = None
     failure_count: int | None = None

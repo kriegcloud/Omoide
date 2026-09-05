@@ -8,6 +8,9 @@ import type {
   AutoSelectInput,
   AutoSelectResult,
   TrainingDataset,
+  CropAspect,
+  CropFraming,
+  DatasetBatchCropResult,
 } from "../types";
 import type { EditOp, FilerobotDesignState } from "../utils/editorOps";
 
@@ -61,3 +64,11 @@ export const autoSelectDataset = (id: number, input: AutoSelectInput) => fetch(`
 export const buildRegularizationDataset = (id: number, input: { target_count: number; gender?: string }) => fetch(`${API}/api/datasets/${id}/regularization`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
 }).then(json<TrainingDataset>);
+export const batchCropDatasetItems = (id: number, input: {
+  item_ids?: number[];
+  framing: CropFraming;
+  aspect: CropAspect;
+  overwrite_existing_ops: boolean;
+}) => fetch(`${API}/api/datasets/${id}/items/batch-crop`, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+}).then(json<DatasetBatchCropResult>);

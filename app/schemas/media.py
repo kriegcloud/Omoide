@@ -92,6 +92,20 @@ class MediaEditRequest(BaseModel):
     design_state: dict | None = None
 
 
+class MediaBatchEditRequest(BaseModel):
+    media_ids: list[int]
+    ops: list[EditOp]
+    mode: Literal["copy", "overwrite"] = "copy"
+
+
+class FaceCropSuggestion(BaseModel):
+    face_id: int
+    person_id: int | None
+    face_bbox: tuple[int, int, int, int]
+    crop_op: CropEditOp
+    output: dict[str, int]
+
+
 class MediaLocation(SQLModel):
     id: int
     latitude: float

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -114,6 +115,23 @@ class DatasetItemsRequest(BaseModel):
 class DatasetItemsResult(BaseModel):
     added_ids: list[int] = Field(default_factory=list)
     skipped_ids: list[int] = Field(default_factory=list)
+
+
+class DatasetBatchCropRequest(BaseModel):
+    item_ids: list[int] | None = None
+    framing: Literal["closeup", "portrait", "half_body", "full_body"]
+    aspect: Literal["1:1", "2:3", "3:4", "4:5", "9:16", "free"]
+    overwrite_existing_ops: bool = False
+
+
+class DatasetBatchCropSkipped(BaseModel):
+    item_id: int
+    reason: str
+
+
+class DatasetBatchCropResult(BaseModel):
+    updated_ids: list[int] = Field(default_factory=list)
+    skipped: list[DatasetBatchCropSkipped] = Field(default_factory=list)
 
 
 class DatasetItemCursorPage(BaseModel):
