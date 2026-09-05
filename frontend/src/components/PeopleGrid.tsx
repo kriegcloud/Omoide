@@ -31,6 +31,7 @@ import {
   useListStore,
 } from "../stores/useListStore";
 import { useTaskCompletionVersion } from "../TaskEventsContext";
+import { clearPeopleGrids, resortPeopleGrid } from "../stores/peopleCache";
 import { Person, PersonReadSimple } from "../types";
 import ConfirmDialog from "./ConfirmDialog";
 import MergePeopleDialog from "./MergePeopleDialog";
@@ -154,6 +155,9 @@ export default function PeopleGrid({
         : await hidePersonsBulk(ids);
       const changedIds = hidden ? result.unhidden_ids : result.hidden_ids;
       removeItems(listKey, changedIds);
+      // The hidden/visible counterpart and any gender-filtered variant now
+      // hold stale membership; drop them so they refetch on their next visit.
+      clearPeopleGrids([listKey]);
       updateSelectionAfterRemoval(changedIds);
       const action = hidden ? "Unhidden" : "Hidden";
       const parts = [
@@ -192,6 +196,7 @@ export default function PeopleGrid({
     try {
       const result = await deletePersonsBulk(ids);
       removeItems(listKey, result.deleted_ids);
+      clearPeopleGrids([listKey]);
       updateSelectionAfterRemoval(result.deleted_ids);
       const deletedCount = result.deleted_ids.length;
       const parts: string[] = [];
@@ -260,6 +265,10 @@ export default function PeopleGrid({
           };
         });
       }
+      // The target's count grew, so its position in the count-ordered grid
+      // changed; re-sort this grid and drop the other cached variants.
+      resortPeopleGrid(listKey);
+      clearPeopleGrids([listKey]);
       updateSelectionAfterRemoval(result.merged_ids);
       setMergeOpen(false);
       if (selectedIds.size - result.merged_ids.length < 2) {

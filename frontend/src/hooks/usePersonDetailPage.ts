@@ -23,6 +23,11 @@ import appConfig from "../config";
 import type { MergeResult } from "../services/personActions";
 import { defaultListState, useListStore } from "../stores/useListStore";
 import {
+  clearPeopleGrids,
+  patchPersonInGrids,
+  removePeopleFromGrids,
+} from "../stores/peopleCache";
+import {
   FaceRead,
   Person,
   PersonReadSimple,
@@ -156,6 +161,9 @@ export const usePersonDetailPage = () => {
         setForm({
           name: personData.name ?? "",
         });
+        // Keep cached people grids in step with counts/name/gender changes
+        // made from this page (face assign/detach, rename, merges into us).
+        patchPersonInGrids(personData);
       } catch (err) {
         if (signal?.aborted !== true) {
           console.error("Error in loadDetail:", err);
@@ -517,6 +525,8 @@ export const usePersonDetailPage = () => {
   ): Promise<Person> => {
     try {
       const newPerson = await createPersonFromFaces(faceIds, name);
+      // A new person exists now; every cached grid is missing it.
+      clearPeopleGrids();
         setSuggestedFaces((prev) => prev.filter((f) => !faceIds.includes(f.id)));
         await Promise.all([
           refreshDetectedFaces(),
@@ -544,6 +554,7 @@ export const usePersonDetailPage = () => {
         const result = await mergeMultiplePersons(Number(id), sourceIds);
         const mergedCount = result.merged_ids.length;
         if (mergedCount > 0) {
+          removePeopleFromGrids(result.merged_ids);
           const skippedCount = result.skipped_ids.length;
           const messageParts = [`Merged ${mergedCount} similar person${mergedCount > 1 ? "s" : ""}`];
           if (skippedCount > 0) {
@@ -588,6 +599,7 @@ export const usePersonDetailPage = () => {
       const result = await autoMergeSimilarPersons(Number(id));
       const mergedCount = result.merged_ids.length;
       if (mergedCount > 0) {
+        removePeopleFromGrids(result.merged_ids);
         const skippedCount = result.skipped_ids.length;
         const messageParts = [`Auto-merged ${mergedCount} similar person${mergedCount > 1 ? "s" : ""}`];
         if (skippedCount > 0) {
@@ -654,15 +666,9 @@ export const usePersonDetailPage = () => {
       // The person grids cache one list per filter (people-grid-all,
       // people-grid-female, people-grid-hidden, ...); drop the person from
       // every cached variant of the list they are leaving.
-      const leavingPrefix = isHidden ? "people-grid-hidden" : "people-grid";
-      for (const key of Object.keys(useListStore.getState().lists)) {
-        if (
-          key.startsWith(leavingPrefix) &&
-          (isHidden || !key.startsWith("people-grid-hidden"))
-        ) {
-          removeItems(key, [updated.id]);
-        }
-      }
+      removePeopleFromGrids([updated.id]);
+      // The list the person is joining (hidden ⇄ visible) must refetch.
+      clearPeopleGrids();
       showMessage(isHidden ? "Person unhidden" : "Person hidden");
     } catch (err) {
       console.error("Failed to update person visibility:", err);
@@ -698,6 +704,7 @@ export const usePersonDetailPage = () => {
     if (!id) return;
     try {
       await deletePersonService(Number(id));
+      removePeopleFromGrids([Number(id)]);
       showMessage("Person deleted");
       navigate("/people");
     } catch (err) {
@@ -759,6 +766,9 @@ export const usePersonDetailPage = () => {
     setMergeOpen(false);
     try {
       await mergePersons(sourceId, targetId);
+      // We no longer exist; the target's count is refreshed by loadDetail on
+      // the page we navigate to, which patches the grids.
+      removePeopleFromGrids([sourceId]);
       navigate(`/person/${targetId}`, {
         replace: true,
         state: {
