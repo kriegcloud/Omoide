@@ -20,7 +20,13 @@ CAPTION_PROFILE_ID = "omoide-caption-v1"
 TAGS_PROFILE_ID = "omoide-tags-v1"
 SUPPORTED_PROFILE_IDS = frozenset({CAPTION_PROFILE_ID, TAGS_PROFILE_ID})
 KNOWN_PROFILE_IDS = SUPPORTED_PROFILE_IDS | frozenset(
-    {"omoide-remove-text-v1", "omoide-upscale-v1", "omoide-remove-people-v1"}
+    {
+        "omoide-remove-text-v1",
+        "omoide-upscale-v1",
+        "omoide-remove-people-v1",
+        "omoide-background-swap-v1",
+        "omoide-eval-zimage-v1",
+    }
 )
 MAX_REQUEST_BYTES = 32 * 1024 * 1024
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
