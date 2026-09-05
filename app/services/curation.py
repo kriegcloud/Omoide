@@ -393,14 +393,12 @@ def _duplicate_groups(metrics: list[dict]) -> list[dict]:
     ]
 
 
-def compute_dataset_analysis(session: Session, dataset: TrainingDataset) -> dict:
-    items = list(
-        session.exec(
-            select(DatasetItem)
-            .where(DatasetItem.dataset_id == dataset.id)
-            .order_by(DatasetItem.position, DatasetItem.id)
-        ).all()
-    )
+def compute_item_metrics(
+    session: Session,
+    dataset: TrainingDataset,
+    items: Iterable[DatasetItem],
+) -> list[dict]:
+    """Compute curation metrics for only the supplied dataset items."""
     centroid = _person_centroid(session, dataset.person_id)
     metrics: list[dict] = []
     for item in items:
@@ -424,12 +422,24 @@ def compute_dataset_analysis(session: Session, dataset: TrainingDataset) -> dict
             "_embedding": embedding,
         }
         metrics.append(metric)
+    session.commit()
+    return metrics
+
+
+def compute_dataset_analysis(session: Session, dataset: TrainingDataset) -> dict:
+    items = list(
+        session.exec(
+            select(DatasetItem)
+            .where(DatasetItem.dataset_id == dataset.id)
+            .order_by(DatasetItem.position, DatasetItem.id)
+        ).all()
+    )
+    metrics = compute_item_metrics(session, dataset, items)
     duplicates = _duplicate_groups(metrics)
     for group_index, group in enumerate(duplicates, start=1):
         for metric in metrics:
             if metric["item_id"] in group["item_ids"]:
                 metric["duplicate_group"] = group_index
-    session.commit()
     public = [{key: value for key, value in metric.items() if not key.startswith("_") and key not in {"phash", "resolution"}} for metric in metrics]
     summary = {
         "framing": dict(Counter(metric["framing"] for metric in metrics)),

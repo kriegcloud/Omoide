@@ -21,6 +21,8 @@ import type {
   DatasetCaptionPage,
   Task,
   CompositionGap,
+  DatasetTriageFilter,
+  DatasetTriagePage,
 } from "../types";
 import type { EditOp, FilerobotDesignState } from "../utils/editorOps";
 
@@ -57,10 +59,25 @@ export const getDatasetItems = (id: number, cursor?: string | null, sort = "posi
 };
 export const updateDatasetItem = (datasetId: number, itemId: number, input: {
   caption_override?: string | null; edit_ops?: EditOp[] | null; edit_design_state?: FilerobotDesignState | null;
-  excluded?: boolean; weight?: number; position?: number;
+  excluded?: boolean; weight?: number; position?: number; reviewed_at?: string | null;
 }) => fetch(`${API}/api/datasets/${datasetId}/items/${itemId}`, {
   method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
 }).then(json<DatasetItem>);
+export const reviewDatasetItem = (datasetId: number, itemId: number) => fetch(
+  `${API}/api/datasets/${datasetId}/items/${itemId}/review`,
+  { method: "POST" },
+).then(json<DatasetItem>);
+export const getDatasetTriage = (
+  id: number,
+  filter: DatasetTriageFilter,
+  cursor?: string | null,
+) => {
+  const params = new URLSearchParams({ filter, limit: "50" });
+  if (cursor) params.set("cursor", cursor);
+  return fetch(`${API}/api/datasets/${id}/triage?${params}`).then(
+    json<DatasetTriagePage>,
+  );
+};
 export const createDatasetExport = (id: number, layout?: DatasetExportLayout) => fetch(`${API}/api/datasets/${id}/export`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ layout }),
 }).then(json<DatasetExport>);

@@ -101,6 +101,7 @@ class DatasetItemRead(BaseModel):
     face_summary: FaceSummary
     metrics: dict | None = None
     caption_reviewed_at: datetime | None = None
+    reviewed_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -112,6 +113,7 @@ class DatasetItemUpdate(BaseModel):
     weight: float | None = Field(default=None, gt=0)
     excluded: bool | None = None
     position: int | None = Field(default=None, ge=0)
+    reviewed_at: datetime | None = None
 
 
 class DatasetItemsRequest(BaseModel):
@@ -152,6 +154,45 @@ class DatasetBatchCropResult(BaseModel):
 class DatasetItemCursorPage(BaseModel):
     items: list[DatasetItemRead]
     next_cursor: str | None
+
+
+class DatasetTriageItem(BaseModel):
+    id: int
+    position: int
+    excluded: bool
+    weight: float
+    reviewed_at: datetime | None
+    caption_override: str | None
+
+
+class DatasetTriageMedia(BaseModel):
+    id: int
+    filename: str
+    path: str
+    width: int | None
+    height: int | None
+    thumbnail_path: str | None
+    thumbnail_url: str | None
+    original_url: str
+
+
+class DatasetTriageEntry(BaseModel):
+    item: DatasetTriageItem
+    media: DatasetTriageMedia
+    face_bbox: tuple[int, int, int, int] | None
+    metrics: dict
+    caption: str
+    effective_caption: str | None
+    caption_source: Literal["override", "approved", "candidate", "template", "none"]
+    findings: list["CaptionLintFindingRead"] = Field(default_factory=list)
+    face_crop_suggestion: dict | None = None
+
+
+class DatasetTriageCursorPage(BaseModel):
+    items: list[DatasetTriageEntry]
+    next_cursor: str | None
+    reviewed_count: int
+    total_count: int
 
 
 class DatasetExportRequest(BaseModel):
@@ -317,3 +358,4 @@ class DatasetCaptionReviewedRead(BaseModel):
 
 
 DatasetRead.model_rebuild()
+DatasetTriageEntry.model_rebuild()

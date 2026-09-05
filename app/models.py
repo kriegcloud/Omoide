@@ -495,6 +495,7 @@ class DatasetItem(SQLModel, table=True):
     origin: str = Field(default="media", nullable=False)
     created_at: datetime = Field(default_factory=datetime.now, index=True)
     caption_reviewed_at: datetime | None = Field(default=None, nullable=True)
+    reviewed_at: datetime | None = Field(default=None, nullable=True, index=True)
 
 
 class MediaCurationStats(SQLModel, table=True):

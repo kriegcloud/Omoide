@@ -596,6 +596,7 @@ export interface DatasetItem {
   face_summary: DatasetFaceSummary;
   metrics?: DatasetItemMetrics | null;
   caption_reviewed_at?: string | null;
+  reviewed_at?: string | null;
 }
 
 export interface DatasetItemMetrics {
@@ -659,6 +660,53 @@ export interface AutoSelectResult {
 export interface DatasetItemPage {
   items: DatasetItem[];
   next_cursor?: string | null;
+}
+
+export type DatasetTriageFilter = "all" | "findings" | "excluded";
+
+export interface DatasetTriageEntry {
+  item: {
+    id: number;
+    position: number;
+    excluded: boolean;
+    weight: number;
+    reviewed_at?: string | null;
+    caption_override?: string | null;
+  };
+  media: {
+    id: number;
+    filename: string;
+    path: string;
+    width?: number | null;
+    height?: number | null;
+    thumbnail_path?: string | null;
+    thumbnail_url?: string | null;
+    original_url: string;
+  };
+  face_bbox?: [number, number, number, number] | null;
+  metrics: {
+    sharpness?: number | null;
+    frontality?: number | null;
+    face_ratio?: number | null;
+    framing: "closeup" | "portrait" | "half_body" | "full_body" | "none";
+    identity_distance?: number | null;
+    brightness?: number | null;
+  };
+  caption: string;
+  effective_caption?: string | null;
+  caption_source: "override" | "approved" | "candidate" | "template" | "none";
+  findings: CaptionLintFinding[];
+  face_crop_suggestion?: {
+    crop_op: Extract<import("./utils/editorOps").EditOp, { op: "crop" }>;
+    output: { width: number; height: number };
+  } | null;
+}
+
+export interface DatasetTriagePage {
+  items: DatasetTriageEntry[];
+  next_cursor?: string | null;
+  reviewed_count: number;
+  total_count: number;
 }
 
 export type DatasetCaptionFilter =

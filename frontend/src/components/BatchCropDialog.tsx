@@ -39,6 +39,8 @@ interface BatchCropDialogProps {
   items: DatasetItem[];
   onClose: () => void;
   onApplied: (result: DatasetBatchCropResult) => Promise<void> | void;
+  itemIds?: number[];
+  acceptOnEnter?: boolean;
 }
 
 const FRAMINGS: Array<{ value: CropFraming; label: string }> = [
@@ -56,6 +58,8 @@ export default function BatchCropDialog({
   items,
   onClose,
   onApplied,
+  itemIds,
+  acceptOnEnter = false,
 }: BatchCropDialogProps) {
   const [framing, setFraming] = useState<CropFraming>("portrait");
   const [aspect, setAspect] = useState<CropAspect>("2:3");
@@ -103,6 +107,7 @@ export default function BatchCropDialog({
     setError(null);
     try {
       const result = await batchCropDatasetItems(datasetId, {
+        item_ids: itemIds,
         framing,
         aspect,
         overwrite_existing_ops: overwrite,
@@ -117,7 +122,18 @@ export default function BatchCropDialog({
   };
 
   return (
-    <Dialog open={open} onClose={applying ? undefined : onClose} fullWidth maxWidth="md">
+    <Dialog
+      open={open}
+      onClose={applying ? undefined : onClose}
+      fullWidth
+      maxWidth="md"
+      onKeyDown={(event) => {
+        if (acceptOnEnter && event.key === "Enter" && !applying) {
+          event.preventDefault();
+          void apply();
+        }
+      }}
+    >
       <DialogTitle>Batch crop</DialogTitle>
       <DialogContent>
         <Stack spacing={2.5} sx={{ mt: 0.5 }}>

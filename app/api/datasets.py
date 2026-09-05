@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from functools import partial
 from pathlib import Path
+from urllib.parse import quote
 
 import yaml
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -47,6 +48,10 @@ from app.schemas.dataset import (
     DatasetExportRequest,
     DatasetItemCursorPage,
     DatasetItemRead,
+    DatasetTriageCursorPage,
+    DatasetTriageEntry,
+    DatasetTriageItem,
+    DatasetTriageMedia,
     DatasetItemsRequest,
     DatasetItemsResult,
     DatasetItemUpdate,
@@ -90,6 +95,7 @@ from app.services.curation import (
     compute_dataset_analysis,
     dataset_gaps,
     fill_dataset_gaps,
+    compute_item_metrics,
 )
 from app.tasks.common import create_and_run_task
 from app.tasks.dataset_export import export_dataset
@@ -1000,3 +1006,222 @@ def start_caption_generation(
     session.commit()
     session.refresh(task)
     return task
+
+
+# Phase 20 triage routes are isolated here to ease stacked-branch merges.
+
+
+@router.post(
+    "/{dataset_id}/items/{item_id}/review", response_model=DatasetItemRead
+)
+def review_item(
+    dataset_id: int,
+    item_id: int,
+    session: Session = Depends(get_session),
+) -> DatasetItemRead:
+    _mutating()
+    dataset = _dataset_or_404(session, dataset_id)
+    item = _caption_item_or_404(session, dataset_id, item_id)
+    item.reviewed_at = datetime.now()
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return _item_read(session, dataset, item)
+
+
+def _triage_annotations(
+    session: Session, media_ids: list[int]
+) -> dict[int, list[MediaAnnotation]]:
+    by_media = {media_id: [] for media_id in media_ids}
+    if not media_ids:
+        return by_media
+    annotations = session.exec(
+        select(MediaAnnotation)
+        .where(
+            MediaAnnotation.media_id.in_(media_ids),
+            MediaAnnotation.kind == AnnotationKind.CAPTION,
+        )
+        .order_by(MediaAnnotation.media_id, MediaAnnotation.revision.desc())
+    ).all()
+    for annotation in annotations:
+        by_media.setdefault(annotation.media_id, []).append(annotation)
+    return by_media
+
+
+@router.get("/{dataset_id}/triage", response_model=DatasetTriageCursorPage)
+def list_triage(
+    dataset_id: int,
+    cursor: str | None = None,
+    filter: str = Query(default="all", pattern="^(all|findings|excluded)$"),
+    limit: int = Query(default=50, ge=1, le=200),
+    session: Session = Depends(get_session),
+) -> DatasetTriageCursorPage:
+    dataset = _dataset_or_404(session, dataset_id)
+    items = list(
+        session.exec(
+            select(DatasetItem)
+            .where(DatasetItem.dataset_id == dataset_id)
+            .order_by(DatasetItem.position, DatasetItem.id)
+        ).all()
+    )
+    items.sort(
+        key=lambda item: (
+            item.reviewed_at is not None,
+            item.position,
+            int(item.id),
+        )
+    )
+    total_count = len(items)
+    reviewed_count = sum(item.reviewed_at is not None for item in items)
+
+    media_ids = [item.media_id for item in items]
+    media_by_id = (
+        {
+            media.id: media
+            for media in session.exec(
+                select(Media).where(Media.id.in_(media_ids))
+            ).all()
+        }
+        if media_ids
+        else {}
+    )
+    annotations_by_media = _triage_annotations(session, media_ids)
+    caption_rows: list[tuple[DatasetItem, Media, str, str, str | None, list]] = []
+    bodies: list[str] = []
+    person = session.get(Person, dataset.person_id) if dataset.person_id else None
+    for item in items:
+        media = media_by_id.get(item.media_id)
+        if media is None:
+            continue
+        body, source, _ = caption_body_and_source(
+            dataset, item, annotations_by_media.get(item.media_id, [])
+        )
+        if body:
+            bodies.append(body)
+        caption_rows.append(
+            (item, media, body, source, render_caption(dataset, body, person), [])
+        )
+
+    filtered: list[tuple[DatasetItem, Media, str, str, str | None, list]] = []
+    for item, media, body, source, effective, _ in caption_rows:
+        others = list(bodies)
+        if body:
+            others.remove(body)
+        findings = lint_caption(body, dataset, others) if body else []
+        if filter == "excluded" and not item.excluded:
+            continue
+        if filter == "findings" and not findings:
+            continue
+        filtered.append((item, media, body, source, effective, findings))
+
+    if cursor:
+        try:
+            reviewed_key, position_key, item_key = (
+                int(part) for part in cursor.split(":", 2)
+            )
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid triage cursor") from exc
+        cursor_key = (reviewed_key, position_key, item_key)
+        filtered = [
+            row
+            for row in filtered
+            if (
+                int(row[0].reviewed_at is not None),
+                row[0].position,
+                int(row[0].id),
+            )
+            > cursor_key
+        ]
+    selected = filtered[: limit + 1]
+    page_rows = selected[:limit]
+    page_items = [row[0] for row in page_rows]
+    raw_metrics = compute_item_metrics(session, dataset, page_items)
+    metrics_by_id = {metric["item_id"]: metric for metric in raw_metrics}
+
+    entries: list[DatasetTriageEntry] = []
+    for item, media, body, source, effective, findings in page_rows:
+        metric = metrics_by_id.get(item.id, {})
+        faces = list(
+            session.exec(select(Face).where(Face.media_id == media.id)).all()
+        )
+        if dataset.person_id is not None:
+            subject_faces = [
+                face for face in faces if face.person_id == dataset.person_id
+            ]
+        else:
+            subject_faces = faces
+        subject = max(
+            subject_faces,
+            key=lambda face: face.bbox[2] * face.bbox[3],
+            default=None,
+        )
+        face_bbox = None
+        crop_suggestion = None
+        if subject and media.width and media.height:
+            face_bbox = bbox_to_source_pixels(
+                subject.bbox, media.width, media.height
+            )
+            framing = metric.get("framing")
+            if framing in {"closeup", "portrait", "half_body", "full_body"}:
+                crop, output = suggest_crop(
+                    face_bbox,
+                    media.width,
+                    media.height,
+                    framing,
+                    "2:3",
+                )
+                crop_suggestion = {
+                    "crop_op": crop.model_dump(mode="json"),
+                    "output": output,
+                }
+        public_metrics = {
+            "sharpness": metric.get("sharpness"),
+            "frontality": metric.get("frontality"),
+            "face_ratio": metric.get("face_ratio"),
+            "framing": metric.get("framing", "none"),
+            "identity_distance": metric.get("identity_distance"),
+            "brightness": metric.get("brightness_mean"),
+        }
+        entries.append(
+            DatasetTriageEntry(
+                item=DatasetTriageItem(**item.model_dump()),
+                media=DatasetTriageMedia(
+                    id=int(media.id),
+                    filename=media.filename,
+                    path=media.path,
+                    width=media.width,
+                    height=media.height,
+                    thumbnail_path=media.thumbnail_path,
+                    thumbnail_url=(
+                        f"/thumbnails/{quote(media.thumbnail_path, safe='/')}"
+                        if media.thumbnail_path
+                        else None
+                    ),
+                    original_url=f"/originals/{quote(media.path, safe='/')}",
+                ),
+                face_bbox=face_bbox,
+                metrics=public_metrics,
+                caption=body,
+                effective_caption=effective,
+                caption_source=source,
+                findings=[finding.__dict__ for finding in findings],
+                face_crop_suggestion=crop_suggestion,
+            )
+        )
+    return DatasetTriageCursorPage(
+        items=entries,
+        next_cursor=(
+            ":".join(
+                str(value)
+                for value in (
+                    int(page_rows[-1][0].reviewed_at is not None),
+                    page_rows[-1][0].position,
+                    int(page_rows[-1][0].id),
+                )
+            )
+            if len(selected) > limit and page_rows
+            else None
+        ),
+        reviewed_count=reviewed_count,
+        total_count=total_count,
+    )
