@@ -42,6 +42,7 @@ interface HistoryEntry {
   itemId: number;
   index: number;
   excluded: boolean;
+  excluded_reason: "duplicate" | "burst" | "manual" | "quality" | null;
   reviewed_at: string | null;
   weight: number;
 }
@@ -169,6 +170,7 @@ export default function DatasetTriagePage() {
       itemId: entry.item.id,
       index,
       excluded: entry.item.excluded,
+      excluded_reason: entry.item.excluded_reason ?? null,
       reviewed_at: entry.item.reviewed_at ?? null,
       weight: entry.item.weight,
     }]);
@@ -208,10 +210,12 @@ export default function DatasetTriagePage() {
     try {
       const updated = await updateDatasetItem(datasetId, current.item.id, {
         excluded: true,
+        excluded_reason: "manual",
         reviewed_at: reviewedAt,
       });
       replaceEntry(current.item.id, {
         excluded: updated.excluded,
+        excluded_reason: updated.excluded_reason ?? "manual",
         reviewed_at: updated.reviewed_at ?? reviewedAt,
       });
       if (!current.item.reviewed_at) setReviewedCount((count) => count + 1);
@@ -248,6 +252,7 @@ export default function DatasetTriagePage() {
     try {
       const updated = await updateDatasetItem(datasetId, previous.itemId, {
         excluded: previous.excluded,
+        excluded_reason: previous.excluded_reason,
         reviewed_at: previous.reviewed_at,
         weight: previous.weight,
       });
@@ -256,6 +261,7 @@ export default function DatasetTriagePage() {
       if (!existing?.item.reviewed_at && previous.reviewed_at) setReviewedCount((count) => count + 1);
       replaceEntry(previous.itemId, {
         excluded: updated.excluded,
+        excluded_reason: updated.excluded_reason ?? null,
         reviewed_at: updated.reviewed_at ?? null,
         weight: updated.weight,
       });
@@ -383,6 +389,7 @@ export default function DatasetTriagePage() {
     caption_override: current.item.caption_override,
     weight: current.item.weight,
     excluded: current.item.excluded,
+    excluded_reason: current.item.excluded_reason,
     reviewed_at: current.item.reviewed_at,
     created_at: "",
     media: {

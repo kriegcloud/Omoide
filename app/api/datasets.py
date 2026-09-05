@@ -44,6 +44,8 @@ from app.schemas.dataset import (
     DatasetCaptionReviewedRead,
     DatasetCaptionUpdate,
     DatasetCreate,
+    DatasetDedupeRequest,
+    DatasetDedupeResult,
     DatasetExportRead,
     DatasetExportRequest,
     DatasetItemCursorPage,
@@ -56,6 +58,8 @@ from app.schemas.dataset import (
     DatasetItemsResult,
     DatasetItemUpdate,
     DatasetRead,
+    DatasetReincludeRequest,
+    DatasetReincludeResult,
     DatasetUpdate,
     FaceSummary,
     FillGapsRequest,
@@ -95,8 +99,10 @@ from app.services.curation import (
     auto_select_dataset,
     build_regularization_dataset,
     compute_dataset_analysis,
+    dedupe_dataset,
     dataset_gaps,
     fill_dataset_gaps,
+    reinclude_dataset_items,
     compute_item_metrics,
 )
 from app.services.frame_mining import dataset_videos, mine_candidates
@@ -386,7 +392,10 @@ def update_item(dataset_id: int, item_id: int, payload: DatasetItemUpdate, sessi
     item = session.get(DatasetItem, item_id)
     if item is None or item.dataset_id != dataset_id:
         raise HTTPException(status_code=404, detail="Dataset item not found")
-    for key, value in payload.model_dump(exclude_unset=True, mode="json").items():
+    changes = payload.model_dump(exclude_unset=True, mode="json")
+    if changes.get("excluded") is False and "excluded_reason" not in changes:
+        changes["excluded_reason"] = None
+    for key, value in changes.items():
         setattr(item, key, value)
     session.add(item)
     session.commit()
@@ -528,6 +537,38 @@ def list_items(
 @router.get("/{dataset_id}/analysis")
 def get_analysis(dataset_id: int, session: Session = Depends(get_session)) -> dict:
     return compute_dataset_analysis(session, _dataset_or_404(session, dataset_id))
+
+
+@router.post("/{dataset_id}/dedupe", response_model=DatasetDedupeResult)
+def dedupe(
+    dataset_id: int,
+    payload: DatasetDedupeRequest,
+    session: Session = Depends(get_session),
+) -> DatasetDedupeResult:
+    _mutating()
+    result = dedupe_dataset(
+        session,
+        _dataset_or_404(session, dataset_id),
+        **payload.model_dump(),
+    )
+    return DatasetDedupeResult(**result)
+
+
+@router.post(
+    "/{dataset_id}/items/reinclude", response_model=DatasetReincludeResult
+)
+def reinclude_items(
+    dataset_id: int,
+    payload: DatasetReincludeRequest,
+    session: Session = Depends(get_session),
+) -> DatasetReincludeResult:
+    _mutating()
+    included = reinclude_dataset_items(
+        session,
+        _dataset_or_404(session, dataset_id),
+        reason=payload.reason,
+    )
+    return DatasetReincludeResult(included=included)
 
 
 @router.get("/{dataset_id}/gaps")

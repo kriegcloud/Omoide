@@ -23,6 +23,7 @@ import DatasetItemMenu from "./DatasetItemMenu";
 export interface MediaDatasetContext {
   caption?: string | null;
   excluded: boolean;
+  excludedReason?: "duplicate" | "burst" | "manual" | "quality" | null;
   hasOps: boolean;
   detScore?: number | null;
   frontality?: number | null;
@@ -432,7 +433,7 @@ export default function MediaCard({
             {datasetContext.identityDistance != null && <Chip size="small" label={`ID ${datasetContext.identityDistance.toFixed(2)}`} />}
             {datasetContext.faceCount > 1 && <Chip size="small" color="warning" label={`${datasetContext.faceCount} faces`} />}
             {datasetContext.hasOps && <Chip size="small" color="primary" label="Cropped" />}
-            {datasetContext.excluded && <Chip size="small" label="Excluded" />}
+            {datasetContext.excluded && <Chip size="small" color="error" label={datasetContext.excludedReason ? `Excluded: ${datasetContext.excludedReason}` : "Excluded"} />}
           </Box>
         </Box>
       )}

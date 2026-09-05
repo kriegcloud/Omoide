@@ -588,6 +588,7 @@ export interface DatasetItem {
   caption_override?: string | null;
   weight: number;
   excluded: boolean;
+  excluded_reason?: "duplicate" | "burst" | "manual" | "quality" | null;
   origin: "media" | "frame" | "crop";
   created_at: string;
   media: MediaPreview;
@@ -638,9 +639,28 @@ export interface DatasetAnalysis {
   summary: Record<string, Record<string, number>>;
   outliers: number[];
   duplicates: Array<{ item_ids: number[]; best_item_id: number }>;
+  groups: DatasetDedupeGroup[];
   composition: Record<string, Record<string, number>>;
   clusters: CompositionCluster[];
   gaps: CompositionGap[];
+}
+
+export interface DatasetDedupeGroup {
+  kind: "burst" | "near";
+  keep: number[];
+  drop: number[];
+}
+
+export interface DatasetDedupeInput {
+  mode: "burst" | "near" | "both";
+  keep: "sharpest" | "largest_face";
+  pose_aware: boolean;
+  dry_run: boolean;
+}
+
+export interface DatasetDedupeResult {
+  groups: DatasetDedupeGroup[];
+  excluded: number;
 }
 
 export interface AutoSelectInput {
@@ -669,6 +689,7 @@ export interface DatasetTriageEntry {
     id: number;
     position: number;
     excluded: boolean;
+    excluded_reason?: "duplicate" | "burst" | "manual" | "quality" | null;
     weight: number;
     reviewed_at?: string | null;
     caption_override?: string | null;

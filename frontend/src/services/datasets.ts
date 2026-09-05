@@ -24,6 +24,8 @@ import type {
   DatasetTriageFilter,
   DatasetTriagePage,
   FrameMiningCandidates,
+  DatasetDedupeInput,
+  DatasetDedupeResult,
 } from "../types";
 import type { EditOp, FilerobotDesignState } from "../utils/editorOps";
 
@@ -60,7 +62,8 @@ export const getDatasetItems = (id: number, cursor?: string | null, sort = "posi
 };
 export const updateDatasetItem = (datasetId: number, itemId: number, input: {
   caption_override?: string | null; edit_ops?: EditOp[] | null; edit_design_state?: FilerobotDesignState | null;
-  excluded?: boolean; weight?: number; position?: number; reviewed_at?: string | null;
+  excluded?: boolean; excluded_reason?: "duplicate" | "burst" | "manual" | "quality" | null;
+  weight?: number; position?: number; reviewed_at?: string | null;
 }) => fetch(`${API}/api/datasets/${datasetId}/items/${itemId}`, {
   method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
 }).then(json<DatasetItem>);
@@ -105,6 +108,12 @@ export const trainingSampleImageUrl = (runId: number, sampleId: number) => `${AP
 export const createDatasetFromPerson = (personId: number) => fetch(`${API}/api/datasets/from-person/${personId}`, { method: "POST" }).then(json<TrainingDataset>);
 export const datasetManifestUrl = (exportId: number) => `${API}/api/datasets/exports/${exportId}/manifest`;
 export const getDatasetAnalysis = (id: number) => fetch(`${API}/api/datasets/${id}/analysis`).then(json<DatasetAnalysis>);
+export const dedupeDataset = (id: number, input: DatasetDedupeInput) => fetch(`${API}/api/datasets/${id}/dedupe`, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+}).then(json<DatasetDedupeResult>);
+export const reincludeDatasetItems = (id: number, reason?: "burst" | "duplicate") => fetch(`${API}/api/datasets/${id}/items/reinclude`, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }),
+}).then(json<{ included: number }>);
 export const getDatasetGaps = (id: number) => fetch(`${API}/api/datasets/${id}/gaps`).then(json<CompositionGap[]>);
 export const fillDatasetGaps = (id: number, input: { max_add: number; dimensions?: string[] }) => fetch(`${API}/api/datasets/${id}/fill-gaps`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),

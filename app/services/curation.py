@@ -240,6 +240,7 @@ def _metric_for_media(
     return {
         "media_id": media.id,
         "face_ratio": face_ratio,
+        "face_area": _face_area(subject) if subject else None,
         "framing": framing_for_ratio(face_ratio),
         "other_people": sum(face.person_id != dataset.person_id for face in faces),
         "frontality": subject.frontality if subject else None,
@@ -355,8 +356,53 @@ def _histogram(values: list[float | int | None], edges: list[float], labels: lis
     return result
 
 
-def _duplicate_groups(metrics: list[dict]) -> list[dict]:
+def _dedupe_rank(metric: dict, keep: str) -> tuple[float, float, int]:
+    primary = (
+        metric.get("face_area", metric.get("face_ratio"))
+        if keep == "largest_face"
+        else metric.get("sharpness")
+    )
+    return (float(primary or 0), _quality(metric), -int(metric["item_id"]))
+
+
+def _group_keepers(
+    group: list[dict], *, keep: str, pose_aware: bool
+) -> list[int]:
+    ranked = sorted(group, key=lambda metric: _dedupe_rank(metric, keep), reverse=True)
+    if not pose_aware or not any(metric.get("yaw") is not None for metric in group):
+        return [int(ranked[0]["item_id"])]
+
+    sharpest = max(
+        group,
+        key=lambda metric: (
+            float(metric.get("sharpness") or 0),
+            _quality(metric),
+            -int(metric["item_id"]),
+        ),
+    )
+    selected: list[dict] = []
+    selected_yaws: list[float] = []
+    for metric in ranked:
+        yaw = metric.get("yaw")
+        if yaw is None:
+            continue
+        if all(abs(float(yaw) - existing) > 15 for existing in selected_yaws):
+            selected.append(metric)
+            selected_yaws.append(float(yaw))
+    if sharpest not in selected:
+        selected.append(sharpest)
+    return [int(metric["item_id"]) for metric in selected]
+
+
+def _duplicate_groups(
+    metrics: list[dict],
+    *,
+    mode: str = "near",
+    keep: str = "sharpest",
+    pose_aware: bool = False,
+) -> list[dict]:
     parent = list(range(len(metrics)))
+    burst_edges: list[tuple[int, int]] = []
 
     def find(value: int) -> int:
         while parent[value] != value:
@@ -374,23 +420,45 @@ def _duplicate_groups(metrics: list[dict]) -> list[dict]:
             a, b = metrics[left], metrics[right]
             if not a.get("phash") or not b.get("phash"):
                 continue
-            if hamming(a["phash"], b["phash"]) > 6:
-                continue
-            embeddings = a.get("_embedding"), b.get("_embedding")
-            if all(vector is not None for vector in embeddings) and cosine_distance(*embeddings) >= 0.25:
+            distance = hamming(a["phash"], b["phash"])
+            near = distance <= 6
+            created_a, created_b = a.get("created_at"), b.get("created_at")
+            burst = (
+                distance <= 12
+                and created_a is not None
+                and created_b is not None
+                and abs((created_a - created_b).total_seconds()) <= 3
+            )
+            if not (
+                (mode == "near" and near)
+                or (mode == "burst" and burst)
+                or (mode == "both" and (near or burst))
+            ):
                 continue
             union(left, right)
+            if burst and (mode == "burst" or not near):
+                burst_edges.append((left, right))
     groups: dict[int, list[dict]] = {}
     for index, metric in enumerate(metrics):
         groups.setdefault(find(index), []).append(metric)
-    return [
-        {
-            "item_ids": [metric["item_id"] for metric in group],
-            "best_item_id": max(group, key=_quality)["item_id"],
-        }
-        for group in groups.values()
-        if len(group) > 1
-    ]
+    result: list[dict] = []
+    burst_roots = {find(left) for left, _ in burst_edges}
+    for root, group in groups.items():
+        if len(group) <= 1:
+            continue
+        keepers = _group_keepers(group, keep=keep, pose_aware=pose_aware)
+        keeper_set = set(keepers)
+        item_ids = [int(metric["item_id"]) for metric in group]
+        result.append(
+            {
+                "kind": "burst" if mode == "burst" or root in burst_roots else "near",
+                "item_ids": item_ids,
+                "best_item_id": keepers[0],
+                "keep": keepers,
+                "drop": [item_id for item_id in item_ids if item_id not in keeper_set],
+            }
+        )
+    return result
 
 
 def compute_item_metrics(
@@ -419,6 +487,7 @@ def compute_item_metrics(
             ),
             "duplicate_group": None,
             "phash": media.phash,
+            "created_at": media.created_at,
             "_embedding": embedding,
         }
         metrics.append(metric)
@@ -436,11 +505,14 @@ def compute_dataset_analysis(session: Session, dataset: TrainingDataset) -> dict
     )
     metrics = compute_item_metrics(session, dataset, items)
     duplicates = _duplicate_groups(metrics)
+    groups = _duplicate_groups(
+        metrics, mode="both", keep="sharpest", pose_aware=True
+    )
     for group_index, group in enumerate(duplicates, start=1):
         for metric in metrics:
             if metric["item_id"] in group["item_ids"]:
                 metric["duplicate_group"] = group_index
-    public = [{key: value for key, value in metric.items() if not key.startswith("_") and key not in {"phash", "resolution"}} for metric in metrics]
+    public = [{key: value for key, value in metric.items() if not key.startswith("_") and key not in {"phash", "resolution", "created_at", "face_area"}} for metric in metrics]
     summary = {
         "framing": dict(Counter(metric["framing"] for metric in metrics)),
         "aspect": dict(Counter(metric["aspect"] for metric in metrics)),
@@ -455,10 +527,76 @@ def compute_dataset_analysis(session: Session, dataset: TrainingDataset) -> dict
         "summary": summary,
         "outliers": [metric["item_id"] for metric in metrics if (metric["identity_distance"] or 0) > 0.55],
         "duplicates": duplicates,
+        "groups": [
+            {key: value for key, value in group.items() if key in {"kind", "keep", "drop"}}
+            for group in groups
+        ],
         "composition": composition,
         "clusters": _dataset_clusters(session, metrics),
         "gaps": _composition_gaps(dataset, composition, len(metrics)),
     }
+
+
+def dedupe_dataset(
+    session: Session,
+    dataset: TrainingDataset,
+    *,
+    mode: str,
+    keep: str,
+    pose_aware: bool,
+    dry_run: bool,
+) -> dict:
+    items = list(
+        session.exec(
+            select(DatasetItem)
+            .where(DatasetItem.dataset_id == dataset.id)
+            .order_by(DatasetItem.position, DatasetItem.id)
+        ).all()
+    )
+    metrics = compute_item_metrics(session, dataset, items)
+    groups = _duplicate_groups(
+        metrics, mode=mode, keep=keep, pose_aware=pose_aware
+    )
+    dropped = {item_id for group in groups for item_id in group["drop"]}
+    if not dry_run:
+        by_id = {int(item.id): item for item in items}
+        for group in groups:
+            reason = "burst" if group["kind"] == "burst" else "duplicate"
+            for item_id in group["drop"]:
+                item = by_id[item_id]
+                if item.excluded and item.excluded_reason in {"manual", "quality"}:
+                    continue
+                item.excluded = True
+                item.excluded_reason = reason
+                session.add(item)
+        session.commit()
+    return {
+        "groups": [
+            {key: value for key, value in group.items() if key in {"kind", "keep", "drop"}}
+            for group in groups
+        ],
+        "excluded": len(dropped),
+    }
+
+
+def reinclude_dataset_items(
+    session: Session, dataset: TrainingDataset, *, reason: str | None
+) -> int:
+    reasons = {reason} if reason is not None else {"burst", "duplicate"}
+    items = list(
+        session.exec(
+            select(DatasetItem).where(
+                DatasetItem.dataset_id == dataset.id,
+                DatasetItem.excluded_reason.in_(reasons),
+            )
+        ).all()
+    )
+    for item in items:
+        item.excluded = False
+        item.excluded_reason = None
+        session.add(item)
+    session.commit()
+    return len(items)
 
 
 def dataset_gaps(session: Session, dataset: TrainingDataset) -> list[dict]:
@@ -631,6 +769,7 @@ def auto_select_dataset(
     if not dry_run:
         for item in session.exec(select(DatasetItem).where(DatasetItem.dataset_id == dataset.id)).all():
             item.excluded = item.id in excluded
+            item.excluded_reason = "quality" if item.excluded else None
             session.add(item)
         session.commit()
     return {"selected_item_ids": selected, "excluded_item_ids": excluded}

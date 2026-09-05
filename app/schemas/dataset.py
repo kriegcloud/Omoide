@@ -93,6 +93,7 @@ class DatasetItemRead(BaseModel):
     caption_override: str | None
     weight: float
     excluded: bool
+    excluded_reason: Literal["duplicate", "burst", "manual", "quality"] | None
     origin: str
     created_at: datetime
     media: MediaPreview
@@ -112,6 +113,7 @@ class DatasetItemUpdate(BaseModel):
     edit_design_state: dict | None = None
     weight: float | None = Field(default=None, gt=0)
     excluded: bool | None = None
+    excluded_reason: Literal["duplicate", "burst", "manual", "quality"] | None = None
     position: int | None = Field(default=None, ge=0)
     reviewed_at: datetime | None = None
 
@@ -123,6 +125,32 @@ class DatasetItemsRequest(BaseModel):
 class DatasetItemsResult(BaseModel):
     added_ids: list[int] = Field(default_factory=list)
     skipped_ids: list[int] = Field(default_factory=list)
+
+
+class DatasetDedupeRequest(BaseModel):
+    mode: Literal["burst", "near", "both"] = "both"
+    keep: Literal["sharpest", "largest_face"] = "sharpest"
+    pose_aware: bool = True
+    dry_run: bool = False
+
+
+class DatasetDedupeGroup(BaseModel):
+    kind: Literal["burst", "near"]
+    keep: list[int]
+    drop: list[int]
+
+
+class DatasetDedupeResult(BaseModel):
+    groups: list[DatasetDedupeGroup]
+    excluded: int
+
+
+class DatasetReincludeRequest(BaseModel):
+    reason: Literal["burst", "duplicate"] | None = None
+
+
+class DatasetReincludeResult(BaseModel):
+    included: int
 
 
 class FillGapsRequest(BaseModel):
@@ -198,6 +226,7 @@ class DatasetTriageItem(BaseModel):
     id: int
     position: int
     excluded: bool
+    excluded_reason: Literal["duplicate", "burst", "manual", "quality"] | None
     weight: float
     reviewed_at: datetime | None
     caption_override: str | None

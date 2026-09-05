@@ -492,6 +492,7 @@ class DatasetItem(SQLModel, table=True):
     caption_override: str | None = Field(default=None)
     weight: float = Field(default=1.0)
     excluded: bool = Field(default=False, index=True)
+    excluded_reason: str | None = Field(default=None, nullable=True)
     origin: str = Field(default="media", nullable=False)
     created_at: datetime = Field(default_factory=datetime.now, index=True)
     caption_reviewed_at: datetime | None = Field(default=None, nullable=True)

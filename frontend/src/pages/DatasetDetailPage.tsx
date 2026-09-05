@@ -55,8 +55,10 @@ import {
   updateDatasetItem,
   addDatasetItems,
   backfillDatasetPose,
+  dedupeDataset,
+  reincludeDatasetItems,
 } from "../services/datasets";
-import type { AutoSelectInput, CompositionGap, DatasetAnalysis, DatasetExport, DatasetExportLayout, DatasetItem, Media, TrainingDataset, TrainingHealth, TrainingRun } from "../types";
+import type { AutoSelectInput, CompositionGap, DatasetAnalysis, DatasetDedupeGroup, DatasetExport, DatasetExportLayout, DatasetItem, Media, TrainingDataset, TrainingHealth, TrainingRun } from "../types";
 import type { FilerobotDesignState } from "../utils/editorOps";
 import { encodeFilePath } from "../urlUtils";
 import { getMedia } from "../services/media";
@@ -104,6 +106,36 @@ function CompositionPanel({ analysis, gaps, items, onPreview }: {
   </Stack>;
 }
 
+function DuplicatesPanel({ groups, items, busy, onApply, onUndo }: {
+  groups: DatasetDedupeGroup[];
+  items: DatasetItem[];
+  busy: boolean;
+  onApply: () => void;
+  onUndo: () => void;
+}) {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  return <Box>
+    <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ sm: "center" }} gap={1} mb={1.5}>
+      <Box><Typography variant="h6">Duplicates</Typography><Typography variant="body2" color="text.secondary">Preview keeps pose-diverse frames and the sharpest image in each group.</Typography></Box>
+      <Stack direction="row" spacing={1}><Button variant="contained" disabled={busy || groups.length === 0} onClick={onApply}>Apply</Button><Button variant="outlined" disabled={busy} onClick={onUndo}>Undo</Button></Stack>
+    </Stack>
+    {groups.length === 0 ? <Typography color="text.secondary">No burst or near-duplicate groups.</Typography> : <Stack spacing={1.5}>{groups.map((group, index) => {
+      const keepers = new Set(group.keep);
+      return <Paper key={`${group.kind}-${index}`} elevation={0} sx={{ p: 1.5, border: 1, borderColor: "divider", borderRadius: 3 }}>
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ overflowX: "auto", pb: 0.5 }}>
+          <Chip size="small" color={group.kind === "burst" ? "warning" : "default"} label={group.kind} />
+          {[...group.keep, ...group.drop].map((itemId) => {
+            const item = byId.get(itemId);
+            return <Box key={itemId} title={`${keepers.has(itemId) ? "Keep" : "Drop"} item ${itemId}`} sx={{ flex: "0 0 auto", width: 72, height: 72, borderRadius: 1.5, overflow: "hidden", border: keepers.has(itemId) ? 3 : 1, borderColor: keepers.has(itemId) ? "success.main" : "divider", bgcolor: "action.hover", display: "grid", placeItems: "center", opacity: keepers.has(itemId) ? 1 : 0.55 }}>
+              {item?.media.thumbnail_path ? <Box component="img" src={`${API}/thumbnails/${encodeFilePath(item.media.thumbnail_path)}`} alt="" sx={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Typography variant="caption">#{itemId}</Typography>}
+            </Box>;
+          })}
+        </Stack>
+      </Paper>;
+    })}</Stack>}
+  </Box>;
+}
+
 export default function DatasetDetailPage() {
   const { id } = useParams();
   const datasetId = Number(id);
@@ -141,6 +173,7 @@ export default function DatasetDetailPage() {
   const [batchCropOpen, setBatchCropOpen] = useState(false);
   const [repairOpen, setRepairOpen] = useState(false);
   const [frameMiningOpen, setFrameMiningOpen] = useState(false);
+  const [dedupeBusy, setDedupeBusy] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
   const selection = useSelection();
   const poseTaskVersion = useTaskCompletionVersion(["pose_backfill"]);
@@ -261,8 +294,8 @@ export default function DatasetDetailPage() {
   };
   const selectedItems = useMemo(() => items.filter((item) => selection.selectedIds.has(item.media_id)), [items, selection.selectedIds]);
   const bulkExcluded = async (excluded: boolean) => {
-    await Promise.all(selectedItems.map((item) => updateDatasetItem(datasetId, item.id, { excluded })));
-    setItems((current) => current.map((item) => selection.selectedIds.has(item.media_id) ? { ...item, excluded } : item));
+    await Promise.all(selectedItems.map((item) => updateDatasetItem(datasetId, item.id, { excluded, excluded_reason: excluded ? "manual" : null })));
+    setItems((current) => current.map((item) => selection.selectedIds.has(item.media_id) ? { ...item, excluded, excluded_reason: excluded ? "manual" : null } : item));
     selection.clear();
   };
   const remove = async (targets: DatasetItem[]) => {
@@ -316,11 +349,11 @@ export default function DatasetDetailPage() {
             <Box ref={gridRef} sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(3, 1fr)", md: "repeat(4, 1fr)", lg: "repeat(5, 1fr)" }, position: "relative" }}>
               {items.map((item) => (
                 <MediaCard key={item.id} media={item.media} onSelectionClick={onItemClick} datasetContext={{
-                  caption: item.effective_caption, excluded: item.excluded, hasOps: item.has_ops,
+                  caption: item.effective_caption, excluded: item.excluded, excludedReason: item.excluded_reason, hasOps: item.has_ops,
                   detScore: item.face_summary.det_score, frontality: item.face_summary.frontality, faceCount: item.face_summary.face_count,
                   framing: item.metrics?.framing, sharpness: item.metrics?.sharpness, otherPeople: item.metrics?.other_people,
                   identityDistance: item.metrics?.identity_distance,
-                  onToggleExcluded: () => void patchItem(item, { excluded: !item.excluded }),
+                  onToggleExcluded: () => void patchItem(item, { excluded: !item.excluded, excluded_reason: item.excluded ? null : "manual" }),
                   onEditCaption: () => { setCaptionItem(item); setCaption(item.caption_override ?? item.effective_caption ?? ""); },
                   onEditCrop: () => setCropItem(item), onRemove: () => void remove([item]),
                 }} />
@@ -347,8 +380,8 @@ export default function DatasetDetailPage() {
               })}
             </Box>
             <CompositionPanel analysis={analysis} gaps={gaps} items={items} onPreview={setGapPreview} />
-            <Box><Typography variant="h6" gutterBottom>Identity outliers</Typography>{analysis.outliers.length === 0 ? <Typography color="text.secondary">No identity-distance outliers.</Typography> : <Stack direction="row" spacing={2} sx={{ overflowX: "auto", pb: 1 }}>{analysis.outliers.map((itemId) => { const item = items.find((entry) => entry.id === itemId); const metric = analysis.items.find((entry) => entry.item_id === itemId); return item && <Paper key={itemId} elevation={0} sx={{ p: 1.5, minWidth: 180, border: 1, borderColor: "divider" }}><Box component="img" src={`${API}/thumbnails/${encodeFilePath(item.media.thumbnail_path)}`} sx={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 1 }} /><Typography variant="body2" mt={1}>Distance {metric?.identity_distance?.toFixed(3)}</Typography><Button size="small" onClick={async () => { await patchItem(item, { excluded: true }); await refreshCuration(); }}>Exclude</Button></Paper>; })}</Stack>}</Box>
-            <Box><Typography variant="h6" gutterBottom>Duplicate groups</Typography>{analysis.duplicates.length === 0 ? <Typography color="text.secondary">No likely duplicates.</Typography> : <Stack spacing={1}>{analysis.duplicates.map((group, index) => <Paper key={index} elevation={0} sx={{ p: 2, border: 1, borderColor: "divider" }}><Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ sm: "center" }} gap={1}><Typography>Items {group.item_ids.join(", ")} · best {group.best_item_id}</Typography><Button onClick={async () => { await Promise.all(group.item_ids.filter((itemId) => itemId !== group.best_item_id).map((itemId) => { const item = items.find((entry) => entry.id === itemId); return item ? updateDatasetItem(datasetId, item.id, { excluded: true }) : Promise.resolve(null); })); await refreshCuration(); }}>Keep best</Button></Stack></Paper>)}</Stack>}</Box>
+            <Box><Typography variant="h6" gutterBottom>Identity outliers</Typography>{analysis.outliers.length === 0 ? <Typography color="text.secondary">No identity-distance outliers.</Typography> : <Stack direction="row" spacing={2} sx={{ overflowX: "auto", pb: 1 }}>{analysis.outliers.map((itemId) => { const item = items.find((entry) => entry.id === itemId); const metric = analysis.items.find((entry) => entry.item_id === itemId); return item && <Paper key={itemId} elevation={0} sx={{ p: 1.5, minWidth: 180, border: 1, borderColor: "divider" }}><Box component="img" src={`${API}/thumbnails/${encodeFilePath(item.media.thumbnail_path)}`} sx={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 1 }} /><Typography variant="body2" mt={1}>Distance {metric?.identity_distance?.toFixed(3)}</Typography><Button size="small" onClick={async () => { await patchItem(item, { excluded: true, excluded_reason: "quality" }); await refreshCuration(); }}>Exclude</Button></Paper>; })}</Stack>}</Box>
+            <DuplicatesPanel groups={analysis.groups} items={items} busy={dedupeBusy} onApply={() => { setDedupeBusy(true); void dedupeDataset(datasetId, { mode: "both", keep: "sharpest", pose_aware: true, dry_run: false }).then((result) => { setNotice(`Excluded ${result.excluded} duplicate${result.excluded === 1 ? "" : "s"}.`); return refreshCuration(); }).catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to apply duplicate exclusions")).finally(() => setDedupeBusy(false)); }} onUndo={() => { setDedupeBusy(true); void reincludeDatasetItems(datasetId).then((result) => { setNotice(`Reincluded ${result.included} duplicate${result.included === 1 ? "" : "s"}.`); return refreshCuration(); }).catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to undo duplicate exclusions")).finally(() => setDedupeBusy(false)); }} />
           </>}
         </Stack>
       )}
