@@ -215,10 +215,16 @@ export default function PersonDetailPage() {
           <TextField
             label="Search by name..."
             fullWidth
+            autoFocus
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             sx={{ mb: 2 }}
           />
+          {!searchTerm.trim() && candidates.length > 0 && (
+            <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: "block" }}>
+              Most media first
+            </Typography>
+          )}
           <Stack spacing={1}>
             {candidates.map((candidate) => (
               <Box
