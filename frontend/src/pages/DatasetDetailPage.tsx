@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useInView } from "react-intersection-observer";
 import {
   Alert,
   Box,
@@ -57,6 +58,10 @@ export default function DatasetDetailPage() {
   const navigate = useNavigate();
   const [dataset, setDataset] = useState<TrainingDataset | null>(null);
   const [items, setItems] = useState<DatasetItem[]>([]);
+  // Items arrive in pages of 500; the sentinel below the grid pulls the rest.
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const { ref: loadMoreRef, inView: loadMoreInView } = useInView({ rootMargin: "400px" });
   const [exports, setExports] = useState<DatasetExport[]>([]);
   const [analysis, setAnalysis] = useState<DatasetAnalysis | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
@@ -110,6 +115,7 @@ export default function DatasetDetailPage() {
       ]);
       setDataset(nextDataset);
       setItems(page.items);
+      setNextCursor(page.next_cursor ?? null);
       setExports(history);
       setExportLayout(nextDataset.export_layout);
       void loadAnalysis();
@@ -128,6 +134,24 @@ export default function DatasetDetailPage() {
     return () => window.clearInterval(timer);
   }, [datasetId, hasRunning]);
 
+  useEffect(() => {
+    if (!loadMoreInView || !nextCursor || loadingMore || tab !== 0) return;
+    let cancelled = false;
+    setLoadingMore(true);
+    getDatasetItems(datasetId, nextCursor, sort)
+      .then((page) => {
+        if (cancelled) return;
+        setItems((current) => {
+          const seen = new Set(current.map((entry) => entry.id));
+          return [...current, ...page.items.filter((entry) => !seen.has(entry.id))];
+        });
+        setNextCursor(page.next_cursor ?? null);
+      })
+      .catch((reason) => console.error("Failed to load more dataset items", reason))
+      .finally(() => { if (!cancelled) setLoadingMore(false); });
+    return () => { cancelled = true; };
+  }, [loadMoreInView, nextCursor, loadingMore, tab, datasetId, sort]);
+
   const patchItem = async (item: DatasetItem, input: Parameters<typeof updateDatasetItem>[2]) => {
     const updated = await updateDatasetItem(datasetId, item.id, input);
     setItems((current) => current.map((entry) => entry.id === updated.id ? updated : entry));
@@ -135,6 +159,7 @@ export default function DatasetDetailPage() {
   const refreshCuration = async () => {
     const page = await getDatasetItems(datasetId, null, sort);
     setItems(page.items);
+    setNextCursor(page.next_cursor ?? null);
     await loadAnalysis();
   };
   const selectedItems = useMemo(() => items.filter((item) => selection.selectedIds.has(item.media_id)), [items, selection.selectedIds]);
@@ -176,7 +201,7 @@ export default function DatasetDetailPage() {
         </Stack>
       </Paper>
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
-      <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ mb: 2 }}><Tab label={`Items (${items.length})`} /><Tab label="Analysis" /><Tab label={`Exports (${exports.length})`} /></Tabs>
+      <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ mb: 2 }}><Tab label={`Items (${dataset.item_count ?? items.length})`} /><Tab label="Analysis" /><Tab label={`Exports (${exports.length})`} /></Tabs>
 
       {tab === 0 && (
         <>
@@ -201,6 +226,11 @@ export default function DatasetDetailPage() {
                 }} />
               ))}
               <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
+            </Box>
+          )}
+          {nextCursor && (
+            <Box ref={loadMoreRef} sx={{ display: "grid", placeItems: "center", py: 3 }}>
+              {loadingMore ? <CircularProgress size={24} /> : <Typography variant="caption" color="text.secondary">{items.length} of {dataset.item_count ?? "?"} loaded</Typography>}
             </Box>
           )}
         </>

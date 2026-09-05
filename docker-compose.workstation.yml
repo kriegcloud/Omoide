@@ -23,6 +23,9 @@ services:
       OMOIDE_GENERAL__DOCKER_MEDIA_READ_ONLY: "false"
       OMOIDE_GENERAL__MEDIA_EXPORT_HOST_ROOT_T7: "${HOST_MEDIA_DIR_T7}"
       OMOIDE_GENERAL__MEDIA_EXPORT_HOST_ROOT_T7XFER: "${HOST_MEDIA_DIR_T7XFER}"
+      # Host path of /app/data/datasets, written into generated training configs
+      # so ai-toolkit on the host can consume an export directly.
+      OMOIDE_GENERAL__DATASETS_HOST_ROOT: "${HOST_DATA_DIR}/datasets"
       OMOIDE_FACE_RECOGNITION__EMBEDDING_BACKEND: "${OMOIDE_FACE_BACKEND:-buffalo_l}"
       OMOIDE_FACE_RECOGNITION__INFERENCE_SOCKET_PATH: /app/data/run/omoide-ml.sock
       OMOIDE_ANNOTATIONS__ENABLED: "true"
