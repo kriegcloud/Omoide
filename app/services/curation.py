@@ -12,6 +12,7 @@ import numpy as np
 from PIL import Image
 from sqlalchemy import func, text, true
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlmodel import Session, select
 
 from app.config import settings
@@ -147,13 +148,18 @@ def _brightness(session: Session, media: Media) -> tuple[float | None, float | N
     except (OSError, ValueError):
         return None, None
     mean, std = float(pixels.mean()), float(pixels.std())
-    session.add(
-        MediaCurationStats(
+    # Concurrent analyses (two tabs, a refetch racing the first request) can
+    # compute the same media at once; an idempotent insert keeps the second
+    # writer from failing the whole request on the primary key.
+    session.execute(
+        sqlite_insert(MediaCurationStats)
+        .values(
             media_id=media.id,
             brightness_mean=mean,
             contrast_std=std,
             computed_at=datetime.now(),
         )
+        .on_conflict_do_nothing(index_elements=["media_id"])
     )
     return mean, std
 
