@@ -2,6 +2,7 @@
   "schema": "omoide-comfy-bridge-config/v1",
   "comfy_base_url": "http://127.0.0.1:8188",
   "staging_directory": "/home/elpresidank/ai/ComfyUI/input/omoide",
+  "output_directory": "/home/elpresidank/ai/ComfyUI/output",
   "profiles": {
     "omoide-caption-v1": {
       "workflow_path": "/home/elpresidank/ai/workflows/comfy/omoide-caption-v1/workflow.api.json",

@@ -54,6 +54,36 @@ export interface ProfileFace {
   media_id?: number;
 }
 
+export type RepairProfile =
+  | "omoide-remove-text-v1"
+  | "omoide-upscale-v1"
+  | "omoide-remove-people-v1";
+
+export type ImageRepairStatus =
+  | "created"
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export interface ImageRepairJob {
+  id: string;
+  media_id: number;
+  profile: RepairProfile;
+  params: Record<string, unknown>;
+  status: ImageRepairStatus;
+  external_prompt_id?: string | null;
+  result_media_id?: number | null;
+  mask_path?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  retryable: boolean;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+}
+
 export type SocialPlatform =
   | "instagram"
   | "tiktok"
@@ -894,6 +924,14 @@ export interface AppConfig {
     inference_timeout_seconds: number;
     caption_profile_id: string;
     tags_profile_id: string;
+  };
+  repairs: {
+    enabled: boolean;
+    inference_socket_path: string;
+    timeout_seconds: number;
+    remove_text_profile_id: string;
+    upscale_profile_id: string;
+    remove_people_profile_id: string;
   };
   face_recognition: {
     preset: "strict" | "normal" | "loose" | "custom";

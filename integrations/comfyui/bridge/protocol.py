@@ -12,6 +12,7 @@ from .errors import BridgeError
 PROTOCOL_VERSION = "omoide-comfy/v1"
 MAX_REQUEST_BYTES = 32 * 1024 * 1024
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+MAX_IMAGE_RESPONSE_BYTES = 96 * 1024 * 1024
 
 
 def read_exact(connection: socket.socket, size: int) -> bytes:
@@ -60,7 +61,14 @@ def write_message(connection: socket.socket, payload: dict[str, Any]) -> None:
             "protocol-error",
             "response could not be encoded",
         ) from error
-    if not encoded or len(encoded) > MAX_RESPONSE_BYTES:
+    raw_result = payload.get("raw_result")
+    is_image_result = (
+        payload.get("kind") == "result"
+        and isinstance(raw_result, dict)
+        and isinstance(raw_result.get("image"), str)
+    )
+    response_limit = MAX_IMAGE_RESPONSE_BYTES if is_image_result else MAX_RESPONSE_BYTES
+    if not encoded or len(encoded) > response_limit:
         raise BridgeError(
             "output-limit-exceeded",
             "response exceeds the bridge output limit",

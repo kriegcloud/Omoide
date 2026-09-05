@@ -495,6 +495,17 @@ class AnnotationSettings(BaseModel):
     tags_profile_id: str = "omoide-tags-v1"
 
 
+class RepairSettings(BaseModel):
+    """Opt-in settings for host-side ComfyUI image repair."""
+
+    enabled: bool = False
+    inference_socket_path: Path = Path("/app/data/run/omoide-comfy.sock")
+    timeout_seconds: float = Field(default=1080.0, gt=0.0, le=3600.0)
+    remove_text_profile_id: str = "omoide-remove-text-v1"
+    upscale_profile_id: str = "omoide-upscale-v1"
+    remove_people_profile_id: str = "omoide-remove-people-v1"
+
+
 class ScanSettings(BaseModel):
     # enables automatic background scans for new files
     auto_scan: bool = False
@@ -849,6 +860,7 @@ class AppSettings(BaseModel):
     ai: AISettings = Field(default_factory=AISettings)
     tagging: TaggingSettings = Field(default_factory=TaggingSettings)
     annotations: AnnotationSettings = Field(default_factory=AnnotationSettings)
+    repairs: RepairSettings = Field(default_factory=RepairSettings)
     face_recognition: FaceRecognitionSettings = Field(
         default_factory=FaceRecognitionSettings
     )

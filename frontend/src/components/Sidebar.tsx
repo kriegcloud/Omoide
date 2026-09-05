@@ -97,6 +97,7 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
       label: "Training",
       items: [
         { label: "Datasets", to: "/datasets", icon: <DatasetIcon /> },
+        { label: "Repairs", to: "/repairs", icon: <BuildIcon /> },
       ],
     },
     {

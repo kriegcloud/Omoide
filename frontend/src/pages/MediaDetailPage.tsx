@@ -27,6 +27,8 @@ import { MediaHeader } from "../components/MediaHeader";
 import { MediaContentTabs } from "../components/MediaContentTabs";
 import { SwipeHint } from "../components/SwipeHint";
 import ImageEditorDialog from "../components/ImageEditorDialog";
+import BeforeAfterCompare from "../components/BeforeAfterCompare";
+import { listRepairs } from "../services/repairs";
 
 import { Media, MediaDetail, Tag, Task } from "../types";
 import { getMedia } from "../services/media";
@@ -102,6 +104,8 @@ export default function MediaDetailPage() {
   }, []);
   const [showSwipeHint, setShowSwipeHint] = useState(false);
   const [isBinary, setIsBinary] = useState<boolean>(false);
+  const [compareSource, setCompareSource] = useState<Media | null>(null);
+  const [compareEnabled, setCompareEnabled] = useState(false);
 
   // --- 2. DERIVED DATA & CONTEXT ---
 
@@ -216,6 +220,21 @@ export default function MediaDetailPage() {
       .catch(() => setIsBinary(false));
     return () => controller.abort();
   }, [id, location.key, fetchDetail]);
+
+  useEffect(() => {
+    setCompareSource(null);
+    setCompareEnabled(false);
+    const media = detail?.media;
+    if (!media || !media.filename.includes("_repaired-")) return;
+    let cancelled = false;
+    void listRepairs({ resultMediaId: media.id, limit: 1 })
+      .then((page) => page.items[0] ? getMedia(String(page.items[0].media_id)) : null)
+      .then((sourceDetail) => {
+        if (!cancelled && sourceDetail) setCompareSource(sourceDetail.media);
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [detail?.media.id, detail?.media.filename]);
 
   const handleNavigate = useCallback(
     (direction: "prev" | "next") => {
@@ -535,13 +554,22 @@ export default function MediaDetailPage() {
                       }
                     }}
                   />
-                  <MediaDisplay
-                    media={detail.media}
-                    initialTime={sceneStartTime ?? undefined}
-                    autoplay={shouldAutoplayVideo}
-                    seekRequest={seekRequest}
-                    onProgress={handleVideoProgress}
-                  />
+                  {compareSource && (
+                    <Button sx={{ mb: 1 }} variant={compareEnabled ? "contained" : "outlined"} onClick={() => setCompareEnabled((value) => !value)}>
+                      Compare
+                    </Button>
+                  )}
+                  {compareEnabled && compareSource ? (
+                    <BeforeAfterCompare before={compareSource} after={detail.media} />
+                  ) : (
+                    <MediaDisplay
+                      media={detail.media}
+                      initialTime={sceneStartTime ?? undefined}
+                      autoplay={shouldAutoplayVideo}
+                      seekRequest={seekRequest}
+                      onProgress={handleVideoProgress}
+                    />
+                  )}
                 </Box>
                 {showSwipeHint && <SwipeHint />}
                 {!isMobile && neighbors.nextId && (

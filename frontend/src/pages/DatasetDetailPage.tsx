@@ -27,6 +27,8 @@ import FileDownloadIcon from "@mui/icons-material/FileDownload";
 import { useNavigate, useParams } from "react-router-dom";
 import ImageEditorDialog from "../components/ImageEditorDialog";
 import BatchCropDialog from "../components/BatchCropDialog";
+import RepairDialog from "../components/RepairDialog";
+import config from "../config";
 import { API } from "../config";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 import MediaCard from "../components/MediaCard";
@@ -74,6 +76,7 @@ export default function DatasetDetailPage() {
   const [regularizationCount, setRegularizationCount] = useState(100);
   const [regularizationGender, setRegularizationGender] = useState("");
   const [batchCropOpen, setBatchCropOpen] = useState(false);
+  const [repairOpen, setRepairOpen] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
   const selection = useSelection();
   const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
@@ -180,7 +183,7 @@ export default function DatasetDetailPage() {
           <Stack direction="row" spacing={1} alignItems="center" mb={2} flexWrap="wrap" useFlexGap>
             <Button variant="outlined" onClick={selection.toggleSelecting}>{selection.isSelecting ? "Cancel selection" : "Select items"}</Button>
             {selection.isSelecting && <Typography color="text.secondary">{selection.selectedIds.size} selected</Typography>}
-            {selection.isSelecting && <><Button disabled={!selectedItems.length} onClick={() => void bulkExcluded(true)}>Exclude</Button><Button disabled={!selectedItems.length} onClick={() => void bulkExcluded(false)}>Include</Button><Button color="error" disabled={!selectedItems.length} onClick={() => void remove(selectedItems)}>Remove</Button></>}
+            {selection.isSelecting && <><Button disabled={!selectedItems.length} onClick={() => void bulkExcluded(true)}>Exclude</Button><Button disabled={!selectedItems.length} onClick={() => void bulkExcluded(false)}>Include</Button><Button disabled={!selectedItems.length || !config.REPAIRS_ENABLED} onClick={() => setRepairOpen(true)}>Repair…</Button><Button color="error" disabled={!selectedItems.length} onClick={() => void remove(selectedItems)}>Remove</Button></>}
             <Button variant="outlined" disabled={dataset.person_id == null || items.length === 0} onClick={() => setBatchCropOpen(true)}>Batch crop…</Button>
             <FormControl size="small" sx={{ minWidth: 180, ml: "auto" }}><InputLabel>Sort</InputLabel><Select label="Sort" value={sort} onChange={(event) => setSort(event.target.value)}><MenuItem value="position">Position</MenuItem><MenuItem value="sharpness">Sharpness</MenuItem><MenuItem value="frontality">Frontality</MenuItem><MenuItem value="face_ratio">Face ratio</MenuItem><MenuItem value="identity_distance">Identity distance</MenuItem><MenuItem value="brightness">Brightness</MenuItem></Select></FormControl>
           </Stack>
@@ -218,6 +221,13 @@ export default function DatasetDetailPage() {
           </>}
         </Stack>
       )}
+      <RepairDialog
+        open={repairOpen}
+        mediaIds={selectedItems.map((item) => item.media_id)}
+        personId={dataset.person_id ?? undefined}
+        onClose={() => setRepairOpen(false)}
+        onStarted={() => selection.clear()}
+      />
 
       {tab === 2 && (
         <Stack spacing={2}>

@@ -16,6 +16,8 @@ import PersonRemoveIcon from "@mui/icons-material/PersonRemove";
 import DriveFileMoveIcon from "@mui/icons-material/DriveFileMove";
 import DatasetIcon from "@mui/icons-material/Dataset";
 import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
+import BuildIcon from "@mui/icons-material/Build";
+import config from "../config";
 import { matchPath, useLocation } from "react-router-dom";
 import { useSelection } from "../context/SelectionContext";
 import { RerunProcessorsDialog } from "./RerunProcessorsDialog";
@@ -28,6 +30,7 @@ import { useListStore } from "../stores/useListStore";
 import AddToDatasetDialog from "./AddToDatasetDialog";
 import { useLastEditStore } from "../stores/useLastEditStore";
 import { describeEditOps } from "../utils/editorOps";
+import RepairDialog from "./RepairDialog";
 
 export const SelectionActionBar: React.FC = () => {
   const { selectedIds, clear } = useSelection();
@@ -38,6 +41,7 @@ export const SelectionActionBar: React.FC = () => {
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [datasetDialogOpen, setDatasetDialogOpen] = useState(false);
+  const [repairDialogOpen, setRepairDialogOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const location = useLocation();
   const personMatch = matchPath({ path: "/person/:id/*", end: false }, location.pathname)
@@ -86,6 +90,20 @@ export const SelectionActionBar: React.FC = () => {
           >
             Add to dataset
           </Button>
+          <Tooltip title={config.REPAIRS_ENABLED ? "Repair selected images" : "Image repairs are disabled"}>
+            <span>
+              <Button
+                size="small"
+                startIcon={<BuildIcon fontSize="small" />}
+                onClick={() => setRepairDialogOpen(true)}
+                variant="contained"
+                disabled={!config.REPAIRS_ENABLED}
+                disableElevation
+              >
+                Repair…
+              </Button>
+            </span>
+          </Tooltip>
           <Button
             size="small"
             startIcon={<PhotoAlbumIcon fontSize="small" />}
@@ -285,6 +303,17 @@ export const SelectionActionBar: React.FC = () => {
           setSnackbar({ open: true, message: `Added ${added} item(s) to ${dataset.name}.`, severity: "success" });
           clear();
         }}
+      />
+      <RepairDialog
+        open={repairDialogOpen}
+        mediaIds={Array.from(selectedIds)}
+        personId={personId ?? undefined}
+        onClose={() => setRepairDialogOpen(false)}
+        onStarted={(started) => setSnackbar({
+          open: true,
+          message: `${started} repair job${started === 1 ? "" : "s"} started.`,
+          severity: "success",
+        })}
       />
 
       <Snackbar

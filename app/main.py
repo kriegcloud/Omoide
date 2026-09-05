@@ -97,6 +97,7 @@ from app.api import (
     nopersons,
     person,
     places,
+    repairs,
     search,
     shortvideos,
     stats,
@@ -601,6 +602,7 @@ app.include_router(events, prefix="/api/events", tags=["events"])
 app.include_router(places, prefix="/api/places", tags=["places"])
 app.include_router(exports.router, prefix="/api/export", tags=["export"])
 app.include_router(datasets.router, prefix="/api/datasets", tags=["datasets"])
+app.include_router(repairs.router, prefix="/api/repairs", tags=["repairs"])
 
 
 @app.get("/thumbnails/{file_path:path}", include_in_schema=False)
@@ -768,6 +770,7 @@ async def spa_catch_all(full_path: str):
         ),
         "VITE_API_MEME_MODE": _bool_to_js(bool(settings.general.meme_mode)),
         "VITE_API_IS_DOCKER": _bool_to_js(bool(settings.general.is_docker)),
+        "VITE_API_REPAIRS_ENABLED": _bool_to_js(bool(settings.repairs.enabled)),
         "VITE_API_EVENTS_ENABLED": _bool_to_js(
             bool(settings.events.events_enabled)
         ),

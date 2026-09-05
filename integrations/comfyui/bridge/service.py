@@ -13,10 +13,13 @@ import socket
 import stat
 import threading
 import time
+import io
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable
 from uuid import UUID
+
+from PIL import Image
 
 from .comfy_http import ComfyHttpClient, ComfyTransportError
 from .config import BridgeConfig, Profile, STAGING_SUBFOLDER
@@ -27,6 +30,8 @@ from .protocol import PROTOCOL_VERSION, read_message, write_message
 LOGGER = logging.getLogger(__name__)
 METADATA_KEY = "omoide_annotation"
 MAX_RESULT_TEXT_BYTES = 2 * 1024 * 1024
+MAX_RESULT_IMAGE_BYTES = 64 * 1024 * 1024
+MAX_PARAMS_BYTES = 8 * 1024
 MAX_CANCELLED_CACHE = 256
 MAX_CONNECTION_WORKERS = 4
 _TRANSIENT_READ_CODES = frozenset(
@@ -305,6 +310,8 @@ class BridgeService:
         if not isinstance(node_output, dict) or profile.output_key not in node_output:
             raise KeyError(profile.output_key)
         value = self._single_output_value(node_output[profile.output_key])
+        if profile.result_kind == "image":
+            return self._decode_image_output(value)
         if not isinstance(value, str):
             raise BridgeError("output-invalid", "annotation output must be text")
         if len(value.encode("utf-8")) > MAX_RESULT_TEXT_BYTES:
@@ -324,6 +331,56 @@ class BridgeService:
                 "structured annotation output must be an object or array",
             )
         return decoded
+
+    def _decode_image_output(self, value: object) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise BridgeError("output-invalid", "image output descriptor is invalid")
+        filename = value.get("filename")
+        subfolder = value.get("subfolder", "")
+        if (
+            not isinstance(filename, str)
+            or not filename
+            or Path(filename).name != filename
+            or not isinstance(subfolder, str)
+            or value.get("type") != "output"
+        ):
+            raise BridgeError("output-invalid", "image output identity is invalid")
+        output_directory = self.config.output_directory
+        if output_directory is None:
+            raise BridgeError("configuration-error", "output directory is unavailable")
+        relative_subfolder = Path(subfolder)
+        if relative_subfolder.is_absolute() or ".." in relative_subfolder.parts:
+            raise BridgeError("output-invalid", "image output escaped its directory")
+        candidate = output_directory.joinpath(relative_subfolder, filename)
+        try:
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(output_directory)
+            metadata = resolved.stat()
+            if not resolved.is_file() or metadata.st_size <= 0:
+                raise BridgeError("output-invalid", "image output is not a file")
+            if metadata.st_size > MAX_RESULT_IMAGE_BYTES:
+                raise BridgeError("output-limit-exceeded", "image output is too large")
+            data = resolved.read_bytes()
+            with Image.open(io.BytesIO(data)) as opened:
+                opened.verify()
+            with Image.open(io.BytesIO(data)) as opened:
+                if opened.format not in {"PNG", "JPEG"}:
+                    raise BridgeError(
+                        "output-invalid", "image output must be PNG or JPEG"
+                    )
+                width, height = opened.size
+                media_type = "image/png" if opened.format == "PNG" else "image/jpeg"
+        except BridgeError:
+            raise
+        except (OSError, ValueError, Image.DecompressionBombError) as error:
+            raise BridgeError("output-invalid", "image output could not be read") from error
+        return {
+            "image": base64.b64encode(data).decode("ascii"),
+            "media_type": media_type,
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "width": width,
+            "height": height,
+        }
 
     def _result_payload(
         self,
@@ -510,6 +567,10 @@ class BridgeService:
             "ready": bool(ready_profiles),
             "profiles": ready_profiles,
             "configured_profiles": sorted(self.config.profiles),
+            "profile_result_kinds": {
+                profile_id: profile.result_kind
+                for profile_id, profile in sorted(self.config.profiles.items())
+            },
             "unavailable_profiles": unavailable_profiles,
             "active_attempt_id": self._active(),
             "comfy_url": self.config.comfy_base_url,
@@ -704,17 +765,25 @@ class BridgeService:
             time.sleep(profile.poll_interval_seconds)
             state = None
 
-    def annotate(self, request: dict[str, Any]) -> dict[str, Any]:
+    def _execute_image_request(
+        self,
+        request: dict[str, Any],
+        *,
+        action: str,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         attempt_id = _canonical_attempt_id(request.get("attempt_id"))
         profile_id = request.get("profile_id")
         if not isinstance(profile_id, str) or profile_id not in self.config.profiles:
-            raise BridgeError("unknown-profile", "annotation profile is not allowlisted")
+            raise BridgeError("unknown-profile", f"{action} profile is not allowlisted")
         profile = self.config.profiles[profile_id]
+        if (action == "repair") != (profile.result_kind == "image"):
+            raise BridgeError("unknown-profile", f"profile does not support {action}")
         profile_ready, reason = self._profile_ready(profile)
         if not profile_ready:
             raise BridgeError(
                 "profile-unavailable",
-                f"annotation profile is not ready: {reason or 'unknown'}",
+                f"{action} profile is not ready: {reason or 'unknown'}",
                 retryable=True,
             )
         image = self._decode_request_image(request)
@@ -749,7 +818,7 @@ class BridgeService:
             self._verify_upload(upload_response, staged_name)
             if cancel_event.is_set():
                 raise BridgeError("cancelled", "annotation was cancelled")
-            prompt = profile.make_prompt(staged_name)
+            prompt = profile.make_prompt(staged_name, params)
             initial_state: dict[str, Any] | None = None
             try:
                 submission = self.http.submit(
@@ -771,12 +840,14 @@ class BridgeService:
                 except BridgeError:
                     pass
                 raise BridgeError("cancelled", "annotation was cancelled")
-            return self._poll_result(
+            result = self._poll_result(
                 attempt_id,
                 profile,
                 cancel_event,
                 initial_state=initial_state,
             )
+            result["action"] = action
+            return result
         finally:
             try:
                 if cleanup_required:
@@ -784,6 +855,31 @@ class BridgeService:
             finally:
                 self._clear_active(attempt_id)
                 self._annotation_lock.release()
+
+    def annotate(self, request: dict[str, Any]) -> dict[str, Any]:
+        return self._execute_image_request(request, action="annotate")
+
+    def repair(self, request: dict[str, Any]) -> dict[str, Any]:
+        raw_params = request.get("params")
+        if raw_params is not None and not isinstance(raw_params, dict):
+            raise BridgeError("protocol-error", "params must be an object")
+        try:
+            encoded = json.dumps(
+                raw_params or {},
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        except (TypeError, ValueError) as error:
+            raise BridgeError("protocol-error", "params must be JSON-compatible") from error
+        if len(encoded) > MAX_PARAMS_BYTES:
+            raise BridgeError("input-limit-exceeded", "params exceeds its byte limit")
+        profile_id = request.get("profile_id")
+        profile = self.config.profiles.get(profile_id) if isinstance(profile_id, str) else None
+        params = raw_params if raw_params else None
+        if params is not None and profile is not None and profile.input_json_node_id is None:
+            raise BridgeError("invalid-params", "repair profile does not accept params")
+        return self._execute_image_request(request, action="repair", params=params)
 
     def cancel(self, attempt_id: str) -> dict[str, Any]:
         if self._active() == attempt_id:
@@ -875,6 +971,30 @@ class BridgeService:
                 },
             )
             return self.annotate(request)
+        if action == "repair":
+            _require_request_keys(
+                request,
+                allowed={
+                    "protocol",
+                    "action",
+                    "attempt_id",
+                    "profile_id",
+                    "image",
+                    "media_type",
+                    "image_sha256",
+                    "params",
+                },
+                required={
+                    "protocol",
+                    "action",
+                    "attempt_id",
+                    "profile_id",
+                    "image",
+                    "media_type",
+                    "image_sha256",
+                },
+            )
+            return self.repair(request)
         raise BridgeError("protocol-error", "unsupported action")
 
 

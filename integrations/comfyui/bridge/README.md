@@ -4,13 +4,15 @@ This service is the narrow host boundary between the Omoide container and the
 local ComfyUI server. Omoide sends normalized JPEG or PNG bytes over a private
 Unix socket. It never sends a media-library path or a workflow.
 
-The bridge accepts only the compiled-in `omoide-caption-v1` and
-`omoide-tags-v1` profile IDs. At startup it reads each API workflow once,
+The bridge accepts only the built-in annotation IDs and the three repair IDs
+documented below. At startup it reads each API workflow once,
 verifies the configured SHA-256, validates the fixed input/output node binding,
 and retains that immutable snapshot. Before admitting each attempt it also
 verifies the exact Comfy node files, Omoide custom-node executor files, model
 artifacts, and declared Comfy version recorded in profile provenance. A request can replace only the declared
-`LoadImage.image` value with an opaque `input/omoide/<attempt UUID>` name.
+`LoadImage.image` value with an opaque `input/omoide/<attempt UUID>` name. A
+repair profile may additionally replace one declared node input with a bounded,
+canonical JSON parameters string.
 
 ## Workstation setup
 
@@ -62,6 +64,9 @@ Every request includes `protocol: "omoide-comfy/v1"` and one action:
 - `annotate` accepts a canonical attempt UUID, allowlisted profile ID, base64
   image bytes, MIME type, and SHA-256. It is synchronous and returns a typed
   result only after the expected history UI output exists.
+- `repair` has the same image/provenance request fields as `annotate`, plus an
+  optional `params` object whose encoded JSON is at most 8 KiB. It accepts only
+  a profile with `result_kind: "image"`.
 - `get_attempt` reads `/history/<UUID>` and `/queue` by exact UUID. It never
   submits or changes a prompt, so Omoide startup can recover a completed result
   or classify an absent prompt as unknown/lost.
@@ -104,6 +109,29 @@ failed Comfy history bounded without making it the system of record.
 Media deletion uses the same database write lease as annotation admission and
 refuses to cascade any definitive Comfy attempt while this acknowledgement
 timestamp is null, preserving the durable cleanup receipt across crashes.
+
+### Image result profiles
+
+An image profile binds one `LoadImage` node and one selected `SaveImage` node.
+Its fixed output contract is `output_node_class: "SaveImage"`,
+`output_key: "images"`, and `result_kind: "image"`. If it accepts parameters,
+both `input_json_node_id` and `input_json_input` identify the string input that
+receives canonical JSON. Comfy history must report exactly one descriptor from
+the selected SaveImage node: `{filename, subfolder, type: "output"}`.
+
+The top-level `output_directory` is ComfyUI's absolute host output directory.
+The bridge resolves the descriptor beneath it, rejects traversal and non-output
+descriptors, reads at most 64 MiB, and accepts only a verified PNG or JPEG. It
+returns base64 bytes with media type, SHA-256, width, and height; no output path
+crosses the socket. `health` includes a `profile_result_kinds` mapping.
+
+The repair allowlist and node contracts are:
+
+- `omoide-remove-text-v1`: LoadImage to OCR/mask/inpaint to SaveImage.
+- `omoide-upscale-v1`: LoadImage to 2x restoration to SaveImage.
+- `omoide-remove-people-v1`: LoadImage plus a JSON `subject_box` input to
+  segmentation/inpainting to SaveImage. A second SaveImage may save the mask;
+  the bridge ignores every output node except the configured one.
 
 The bounded media-state endpoint intentionally remains non-paginated for wire
 compatibility. The separate cursor endpoints planned for long-lived history are

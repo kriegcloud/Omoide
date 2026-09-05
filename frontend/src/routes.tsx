@@ -39,6 +39,7 @@ const PlacesPage = lazy(() => import("./pages/PlacesPage"));
 const PlaceMediaPage = lazy(() => import("./pages/PlaceMediaPage"));
 const DatasetsPage = lazy(() => import("./pages/DatasetsPage"));
 const DatasetDetailPage = lazy(() => import("./pages/DatasetDetailPage"));
+const RepairsPage = lazy(() => import("./pages/RepairsPage"));
 
 const RouteFallback = () => (
   <Box
@@ -99,6 +100,7 @@ export const AppRoutes = () => {
           <Route path="/places/media" element={<PlaceMediaPage />} />
           <Route path="/datasets" element={<DatasetsPage />} />
           <Route path="/dataset/:id" element={<DatasetDetailPage />} />
+          <Route path="/repairs" element={<RepairsPage />} />
           <Route
             path="/blur"
             element={

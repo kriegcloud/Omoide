@@ -19,8 +19,12 @@ PROTOCOL_VERSION = "omoide-comfy/v1"
 CAPTION_PROFILE_ID = "omoide-caption-v1"
 TAGS_PROFILE_ID = "omoide-tags-v1"
 SUPPORTED_PROFILE_IDS = frozenset({CAPTION_PROFILE_ID, TAGS_PROFILE_ID})
+KNOWN_PROFILE_IDS = SUPPORTED_PROFILE_IDS | frozenset(
+    {"omoide-remove-text-v1", "omoide-upscale-v1", "omoide-remove-people-v1"}
+)
 MAX_REQUEST_BYTES = 32 * 1024 * 1024
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+MAX_IMAGE_RESPONSE_BYTES = 96 * 1024 * 1024
 MAX_IMAGE_BYTES = 16 * 1024 * 1024
 MAX_IMAGE_DIMENSION = 16_384
 MAX_IMAGE_PIXELS = 40_000_000
@@ -70,6 +74,7 @@ class ComfyBridgeHealth:
     unavailable_profiles: dict[str, str]
     active_attempt_id: UUID | None
     comfy_url: str
+    profile_result_kinds: dict[str, str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,6 +228,8 @@ def _parse_uuid(value: object, field: str) -> UUID:
 class ComfyAnnotationClient:
     """Synchronous typed client used from Omoide's durable task boundary."""
 
+    supported_health_profiles = SUPPORTED_PROFILE_IDS
+
     def __init__(self, socket_path: Path, timeout_seconds: float = 900.0) -> None:
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
@@ -252,7 +259,12 @@ class ComfyAnnotationClient:
                 connection.connect(str(self.socket_path))
                 connection.sendall(struct.pack("!I", len(encoded)) + encoded)
                 size = struct.unpack("!I", _read_exact(connection, 4))[0]
-                if size == 0 or size > MAX_RESPONSE_BYTES:
+                response_limit = (
+                    MAX_IMAGE_RESPONSE_BYTES
+                    if payload.get("action") == "repair"
+                    else MAX_RESPONSE_BYTES
+                )
+                if size == 0 or size > response_limit:
                     raise ComfyAnnotationError(
                         "protocol-error",
                         f"bridge response size {size} is not allowed",
@@ -364,24 +376,31 @@ class ComfyAnnotationClient:
         unavailable_profiles = response.get("unavailable_profiles")
         active_attempt_id = response.get("active_attempt_id")
         comfy_url = response.get("comfy_url")
+        profile_result_kinds = response.get("profile_result_kinds", {})
         if (
             not isinstance(response.get("ready"), bool)
             or not isinstance(profiles, list)
             or not isinstance(configured_profiles, list)
             or not isinstance(unavailable_profiles, dict)
             or any(
-                not isinstance(profile, str) or profile not in SUPPORTED_PROFILE_IDS
+                not isinstance(profile, str) or profile not in KNOWN_PROFILE_IDS
                 for profile in profiles
             )
             or any(
-                not isinstance(profile, str) or profile not in SUPPORTED_PROFILE_IDS
+                not isinstance(profile, str) or profile not in KNOWN_PROFILE_IDS
                 for profile in configured_profiles
             )
             or any(
                 not isinstance(profile, str)
-                or profile not in SUPPORTED_PROFILE_IDS
+                or profile not in KNOWN_PROFILE_IDS
                 or not isinstance(reason, str)
                 for profile, reason in unavailable_profiles.items()
+            )
+            or not isinstance(profile_result_kinds, dict)
+            or any(
+                not isinstance(profile, str)
+                or kind not in {"text", "json", "image"}
+                for profile, kind in profile_result_kinds.items()
             )
             or not isinstance(comfy_url, str)
         ):
@@ -389,17 +408,30 @@ class ComfyAnnotationClient:
                 "protocol-error",
                 "bridge health response is invalid",
             )
+        supported = self.supported_health_profiles
+        filtered_profiles = tuple(profile for profile in profiles if profile in supported)
         return ComfyBridgeHealth(
-            ready=response["ready"],
-            profiles=tuple(profiles),
-            configured_profiles=tuple(configured_profiles),
-            unavailable_profiles=dict(unavailable_profiles),
+            ready=bool(filtered_profiles),
+            profiles=filtered_profiles,
+            configured_profiles=tuple(
+                profile for profile in configured_profiles if profile in supported
+            ),
+            unavailable_profiles={
+                profile: reason
+                for profile, reason in unavailable_profiles.items()
+                if profile in supported
+            },
             active_attempt_id=(
                 _parse_uuid(active_attempt_id, "active_attempt_id")
                 if active_attempt_id is not None
                 else None
             ),
             comfy_url=comfy_url,
+            profile_result_kinds={
+                profile: kind
+                for profile, kind in profile_result_kinds.items()
+                if profile in supported
+            },
         )
 
     def annotate(

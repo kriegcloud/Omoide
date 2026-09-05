@@ -68,6 +68,15 @@ class DatasetExportStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class ImageRepairStatus(StrEnum):
+    CREATED = "created"
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class TimelineEvent(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     title: str = Field(index=True)
@@ -374,6 +383,42 @@ class MediaAnnotation(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     approved_at: datetime | None = Field(default=None)
     approved_key: str | None = Field(default=None, unique=True)
+
+    class Config:
+        from_attributes = True
+
+
+class ImageRepairJob(SQLModel, table=True):
+    """Durable state for one ComfyUI image repair and its derived media."""
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    media_id: int = Field(foreign_key="media.id", ondelete="CASCADE", index=True)
+    profile: str = Field(index=True)
+    params: dict[str, Any] = Field(
+        default_factory=dict, sa_column=Column(JSON, nullable=False)
+    )
+    status: ImageRepairStatus = Field(
+        sa_column=sa.Column(
+            sa.Enum(
+                ImageRepairStatus,
+                values_callable=lambda obj: [item.value for item in obj],
+            ),
+            nullable=False,
+            default=ImageRepairStatus.CREATED,
+            index=True,
+        )
+    )
+    external_prompt_id: str | None = Field(default=None, unique=True, index=True)
+    result_media_id: int | None = Field(
+        default=None, foreign_key="media.id", ondelete="SET NULL", index=True
+    )
+    mask_path: str | None = Field(default=None)
+    error_code: str | None = Field(default=None, index=True)
+    error_message: str | None = Field(default=None)
+    retryable: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    started_at: datetime | None = Field(default=None)
+    finished_at: datetime | None = Field(default=None)
 
     class Config:
         from_attributes = True

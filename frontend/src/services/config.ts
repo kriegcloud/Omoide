@@ -72,16 +72,17 @@ export const reloadConfig = async (): Promise<AppConfig> => {
       VITE_API_PRESENTATION_MODE: ro,
       VITE_API_ENABLE_PEOPLE: people,
       VITE_API_MEME_MODE: meme,
+      VITE_API_REPAIRS_ENABLED: String(!!latest.repairs.enabled),
       PERSON_RELATIONSHIP_MAX_NODES: String(
         latest.general.person_relationship_max_nodes ?? 100
       ),
-    } as any;
+    };
 
     // Emit a lightweight event that components can listen to if they need
     // to react to config changes proactively (e.g., force a re-render).
     try {
       window.dispatchEvent(new Event("runtime-config-updated"));
-    } catch (_) {
+    } catch {
       // no-op: dispatchEvent can fail in some test environments
     }
   }

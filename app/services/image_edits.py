@@ -116,6 +116,31 @@ def write_edited(
     return original
 
 
+def write_repaired(
+    original_path: str | Path,
+    image: Image.Image,
+    profile: str,
+    *,
+    media_roots: list[MediaRoot],
+) -> Path:
+    """Write a repair copy beside its source with a stable, collision-safe name."""
+    original = require_writable_media_file(original_path, media_roots)
+    short_profile = profile.removeprefix("omoide-").removesuffix("-v1")
+    if not short_profile or any(char not in "abcdefghijklmnopqrstuvwxyz0123456789-" for char in short_profile):
+        raise ValueError("Invalid repair profile name")
+    target = original.with_name(
+        f"{original.stem}_repaired-{short_profile}{original.suffix}"
+    )
+    index = 2
+    while target.exists():
+        target = original.with_name(
+            f"{original.stem}_repaired-{short_profile}-{index}{original.suffix}"
+        )
+        index += 1
+    _save_image(image, target, original, rotated=True)
+    return target
+
+
 def edit_media_record(
     session: Session,
     media: Media,

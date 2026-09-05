@@ -3,6 +3,7 @@ interface RuntimeConfig {
   VITE_API_ENABLE_PEOPLE: string;
   VITE_API_MEME_MODE: string;
   VITE_API_IS_DOCKER: string;
+  VITE_API_REPAIRS_ENABLED: string;
   PERSON_RELATIONSHIP_MAX_NODES?: string;
   APP_VERSION: string;
 }

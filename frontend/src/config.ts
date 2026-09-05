@@ -56,6 +56,13 @@ const config = {
     return getBooleanEnv(window.runtimeConfig?.VITE_API_IS_DOCKER);
   },
 
+  get REPAIRS_ENABLED(): boolean {
+    if (import.meta.env.DEV) {
+      return getBooleanEnv(import.meta.env.VITE_API_REPAIRS_ENABLED);
+    }
+    return getBooleanEnv(window.runtimeConfig?.VITE_API_REPAIRS_ENABLED);
+  },
+
   /**
    * Checks if the Events tab/feature is enabled.
    * Accesses the correct source based on the environment (dev vs. prod).

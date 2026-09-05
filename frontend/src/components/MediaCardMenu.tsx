@@ -20,6 +20,7 @@ import PersonAddIcon from "@mui/icons-material/PersonAdd";
 import DatasetIcon from "@mui/icons-material/Dataset";
 import DeleteIcon from "@mui/icons-material/Delete";
 import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
+import BuildIcon from "@mui/icons-material/Build";
 import config from "../config";
 import { Media, MediaPreview } from "../types";
 import { getMedia } from "../services/media";
@@ -38,6 +39,8 @@ import FolderPickerDialog from "./FolderPickerDialog";
 import RenameMediaDialog from "./RenameMediaDialog";
 import ImageEditorDialog from "./ImageEditorDialog";
 import AddToDatasetDialog from "./AddToDatasetDialog";
+import { startRepair } from "../services/repairs";
+import type { RepairProfile } from "../types";
 
 export interface MediaPersonContext {
   personId: number;
@@ -61,6 +64,7 @@ export default function MediaCardMenu({
   onDeleted,
 }: MediaCardMenuProps) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  const [repairAnchorEl, setRepairAnchorEl] = useState<HTMLElement | null>(null);
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [busy, setBusy] = useState(false);
   const [dialogError, setDialogError] = useState<string | null>(null);
@@ -101,6 +105,20 @@ export default function MediaCardMenu({
     } catch (error) {
       setFavorite(!next);
       fail(error, "Failed to update favorite");
+    }
+  };
+
+  const beginRepair = async (profile: RepairProfile) => {
+    setRepairAnchorEl(null);
+    closeMenu();
+    setBusy(true);
+    try {
+      await startRepair(media.id, profile, personContext?.personId);
+      setSnackbar({ message: "Repair started", severity: "success" });
+    } catch (error) {
+      fail(error, "Failed to start repair");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -222,6 +240,20 @@ export default function MediaCardMenu({
             Edit…
           </MenuItem>
         )}
+        <Tooltip
+          title={config.REPAIRS_ENABLED ? "Choose an image repair" : "Image repairs are disabled"}
+          placement="left"
+        >
+          <span>
+            <MenuItem
+              disabled={!config.REPAIRS_ENABLED || typeof media.duration === "number"}
+              onClick={(event) => setRepairAnchorEl(event.currentTarget)}
+            >
+              <ListItemIcon><BuildIcon /></ListItemIcon>
+              Repair ▸
+            </MenuItem>
+          </span>
+        </Tooltip>
         <MenuItem onClick={() => openDialog("rename")}>
           <ListItemIcon><DriveFileRenameOutlineIcon /></ListItemIcon>
           Rename…
@@ -254,6 +286,17 @@ export default function MediaCardMenu({
           <ListItemIcon><DeleteForeverIcon color="error" /></ListItemIcon>
           Delete file…
         </MenuItem>
+      </Menu>
+      <Menu
+        anchorEl={repairAnchorEl}
+        open={Boolean(repairAnchorEl)}
+        onClose={() => setRepairAnchorEl(null)}
+        anchorOrigin={{ vertical: "top", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "left" }}
+      >
+        <MenuItem disabled={busy} onClick={() => void beginRepair("omoide-remove-text-v1")}>Remove overlays</MenuItem>
+        <MenuItem disabled={busy} onClick={() => void beginRepair("omoide-upscale-v1")}>Upscale</MenuItem>
+        {personContext && <MenuItem disabled={busy} onClick={() => void beginRepair("omoide-remove-people-v1")}>Remove other people</MenuItem>}
       </Menu>
 
       <RenameMediaDialog
