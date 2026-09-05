@@ -565,3 +565,84 @@ TrainingRun
   route under the data dir.
 - UI: **Runs** tab on the dataset detail with progress, loss sparkline, sample
   gallery per step, and the resulting `.safetensors` path.
+
+## Phase 14 — Base-model presets and launcher health  (branch `feat/training-presets`)
+
+Host reality (2026-09-05): FLUX.1-dev is gated (HTTP 401 without a Hugging Face
+token). Z-Image, Z-Image-Turbo and the `ostris/zimage_turbo_training_adapter`
+are ungated, ai-toolkit ships the `zimage` arch, and both bf16 transformers
+already live under `~/ai/ComfyUI/models/diffusion_models/`. On ROCm the
+`bitsandbytes` 8-bit optimizer and torchao `float8` weight-only quantization
+work; `optimum.quanto` (`qfloat8`) does not. Presets therefore never emit
+`qfloat8`.
+
+### Schema
+
+```
+TrainingRun.base_model: str  (default "flux-dev" for existing rows; migration chained on f2a3b4c5d6e7)
+
+TrainingPreset  (code registry, app/services/training_presets.py — not a table)
+  id: "flux-dev" | "z-image" | "z-image-turbo"
+  label, description
+  requires_hf_token: bool
+  local_file_setting: str | None      # name of the TrainingSettings field holding a host path
+  hub_id: str                          # used when the local file setting is empty
+  model_block: dict                    # replaces process.model wholesale
+  train_overrides: dict                # merged into process.train
+  sample_overrides: dict               # merged into process.sample
+
+TrainingSettings (settings.training, env prefix OMOIDE_TRAINING__)
+  default_base_model: str = "z-image"
+  z_image_path: str | None = None            # host path to a single-file .safetensors (bf16)
+  z_image_turbo_path: str | None = None
+  launcher_stale_after_seconds: int = 120
+```
+
+Presets (ai-toolkit config fragments, host paths only — the container never
+validates them):
+
+- `flux-dev` — `model: {name_or_path: black-forest-labs/FLUX.1-dev, is_flux: true, quantize: true}`;
+  `sample: {guidance_scale: 4, sample_steps: 20}`; `requires_hf_token`.
+- `z-image` (default) — `model: {arch: zimage, name_or_path: <z_image_path or Tongyi-MAI/Z-Image>,
+  extras_name_or_path: Tongyi-MAI/Z-Image, quantize: false, quantize_te: false, low_vram: false}`;
+  `train: {timestep_type: weighted}`; `sample: {guidance_scale: 4, sample_steps: 30}`.
+- `z-image-turbo` — same shape with `Tongyi-MAI/Z-Image-Turbo` for both ids,
+  `assistant_lora_path: ostris/zimage_turbo_training_adapter/zimage_turbo_training_adapter_v2.safetensors`,
+  `sample: {guidance_scale: 1, sample_steps: 9}`.
+
+The template keeps `optimizer: adamw8bit` (verified on ROCm).
+
+### Launcher heartbeat
+
+`packaging/omoide-train-launcher` writes `<DATASETS_ROOT>/.launcher/heartbeat.json`
+at the start of every invocation (the timer fires every 30 s):
+
+```
+{ "seen_at": iso8601, "hostname": str, "launcher_version": 2,
+  "ai_toolkit_dir": str, "toolkit_ok": bool,      # run.py present and python executable
+  "hf_token_configured": bool }                   # non-empty HF_TOKEN; never the value
+```
+
+The heartbeat is written before the early `exit 0` paths so a misconfigured host
+still reports in. The app reads the file under `settings.general.resolved_datasets_dir()`.
+
+### API (declare before the `/{dataset_id}` routes)
+
+| Route | Notes |
+| --- | --- |
+| `GET /api/datasets/training/health` | `{ launcher_seen_at, launcher_ok, hf_token_configured: bool \| null, stale_after_seconds }`; `launcher_ok` = seen within `launcher_stale_after_seconds`. Never 5xx when the file is missing. |
+| `GET /api/datasets/training/presets` | `[{ id, label, description, requires_hf_token, is_default, available }]`; `available` = `not requires_hf_token or hf_token_configured is True`. |
+| `POST /api/datasets/{id}/train` | body gains `base_model?: str` (None → default). Unknown id → 422. Preset requires a token and the heartbeat says none → 409 with an actionable message. |
+
+`TrainingRunRead` gains `base_model`.
+
+### Frontend
+
+- Runs tab: an `Alert severity="warning"` when `launcher_ok` is false — last seen
+  time or "never", and the fix (`systemctl --user enable --now omoide-train.timer`,
+  see `packaging/README-training.md`). Health is fetched on tab open and with the
+  5 s poll while a run is active.
+- Train dialog: **Base model** select fed by the presets endpoint, defaulting to
+  `is_default`; unavailable presets are disabled with a "needs a Hugging Face
+  token on the host" note.
+- Run rows show a small base-model chip.
