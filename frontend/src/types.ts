@@ -54,6 +54,32 @@ export interface ProfileFace {
   media_id?: number;
 }
 
+export type SocialPlatform =
+  | "instagram"
+  | "tiktok"
+  | "x"
+  | "youtube"
+  | "onlyfans"
+  | "threads"
+  | "facebook"
+  | "snapchat"
+  | "other";
+
+export interface SocialLink {
+  id: number;
+  platform: SocialPlatform;
+  handle: string;
+  url: string;
+  created_at: string;
+}
+
+export interface SocialLinkSuggestion {
+  platform: SocialPlatform | null;
+  handle: string;
+  source_folder: string;
+  media_count: number;
+}
+
 export interface PersonReadSimple {
   id: number;
   name?: string;
@@ -91,6 +117,7 @@ export interface Person {
   gender_confidence?: number | null;
   gender_manual: boolean;
   age?: number | null;
+  social_links: SocialLink[];
 }
 
 export interface PersonIndex {

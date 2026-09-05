@@ -1,5 +1,11 @@
 import { API } from "../config";
-import { Person, PersonRelationshipGraph } from "../types";
+import {
+  Person,
+  PersonRelationshipGraph,
+  SocialLink,
+  SocialLinkSuggestion,
+  SocialPlatform,
+} from "../types";
 
 export interface MergeResult {
   merged_ids: number[];
@@ -32,6 +38,76 @@ export interface PersonMediaBulkResult {
   detached_ids?: number[];
   skipped_ids: number[];
 }
+
+export interface SocialLinkCreate {
+  platform: SocialPlatform;
+  handle: string;
+  url?: string;
+}
+
+const socialLinkError = async (response: Response, fallback: string) => {
+  try {
+    const body = await response.json();
+    return new Error(body.detail || fallback);
+  } catch {
+    return new Error(fallback);
+  }
+};
+
+export const getSocialLinks = async (
+  personId: number,
+  signal?: AbortSignal,
+): Promise<SocialLink[]> => {
+  const response = await fetch(`${API}/api/person/${personId}/social-links`, {
+    signal,
+  });
+  if (!response.ok) {
+    throw await socialLinkError(response, "Failed to load social links");
+  }
+  return response.json();
+};
+
+export const addSocialLink = async (
+  personId: number,
+  data: SocialLinkCreate,
+): Promise<SocialLink> => {
+  const response = await fetch(`${API}/api/person/${personId}/social-links`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    throw await socialLinkError(response, "Failed to add social link");
+  }
+  return response.json();
+};
+
+export const deleteSocialLink = async (
+  personId: number,
+  linkId: number,
+): Promise<void> => {
+  const response = await fetch(
+    `${API}/api/person/${personId}/social-links/${linkId}`,
+    { method: "DELETE" },
+  );
+  if (!response.ok) {
+    throw await socialLinkError(response, "Failed to delete social link");
+  }
+};
+
+export const getSocialLinkSuggestions = async (
+  personId: number,
+  signal?: AbortSignal,
+): Promise<SocialLinkSuggestion[]> => {
+  const response = await fetch(
+    `${API}/api/person/${personId}/social-links/suggestions`,
+    { signal },
+  );
+  if (!response.ok) {
+    throw await socialLinkError(response, "Failed to load link suggestions");
+  }
+  return response.json();
+};
 
 export const updatePerson = async (
   personId: number,

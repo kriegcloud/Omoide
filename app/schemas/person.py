@@ -19,6 +19,42 @@ class TagSimple(SQLModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+SocialPlatform = Literal[
+    "instagram",
+    "tiktok",
+    "x",
+    "youtube",
+    "onlyfans",
+    "threads",
+    "facebook",
+    "snapchat",
+    "other",
+]
+
+
+class SocialLinkCreate(BaseModel):
+    platform: SocialPlatform
+    handle: str
+    url: str | None = None
+
+
+class SocialLinkRead(BaseModel):
+    id: int
+    platform: SocialPlatform
+    handle: str
+    url: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SocialLinkSuggestion(BaseModel):
+    platform: SocialPlatform | None
+    handle: str
+    source_folder: str
+    media_count: int
+
+
 class PersonDetail(BaseModel):
     id: int
     name: str | None
@@ -31,6 +67,7 @@ class PersonDetail(BaseModel):
     gender_confidence: float | None = None
     gender_manual: bool = False
     age: int | None = None
+    social_links: list[SocialLinkRead]
 
 
 class PersonUpdate(BaseModel):

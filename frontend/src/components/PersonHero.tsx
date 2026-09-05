@@ -19,6 +19,7 @@ import { Person } from "../types";
 import { PersonEditForm } from "./PersonEditForm";
 import config, { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
+import { PersonSocialLinks } from "./PersonSocialLinks";
 
 interface PersonHeroProps {
   person: Person;
@@ -140,6 +141,10 @@ export function PersonHero({
               ? `${person.appearance_count} appearances found`
               : "No appearances"}
           </Typography>
+          <PersonSocialLinks
+            personId={person.id}
+            initialLinks={person.social_links ?? []}
+          />
 
           {!config.PRESENTATION_MODE && (
             <Stack

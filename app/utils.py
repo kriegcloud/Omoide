@@ -49,6 +49,7 @@ from app.models import (
     Person,
     PersonMediaLink,
     PersonRelationship,
+    PersonSocialLink,
     PersonTagLink,
     ProcessingTask,
     Scene,
@@ -1680,6 +1681,9 @@ def remove_person(person_id, session):
     )
     session.exec(
         delete(PersonMediaLink).where(PersonMediaLink.person_id == person_id)
+    )
+    session.exec(
+        delete(PersonSocialLink).where(PersonSocialLink.person_id == person_id)
     )
     session.delete(person)
     safe_commit(session)

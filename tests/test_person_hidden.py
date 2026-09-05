@@ -15,6 +15,7 @@ from app.models import (  # noqa: E402
     Media,
     Person,
     PersonMediaLink,
+    PersonSocialLink,
     PersonTagLink,
     Tag,
 )
@@ -34,6 +35,7 @@ class PersonHiddenTests(unittest.TestCase):
                 Face.__table__,
                 Tag.__table__,
                 PersonMediaLink.__table__,
+                PersonSocialLink.__table__,
                 PersonTagLink.__table__,
             ],
         )

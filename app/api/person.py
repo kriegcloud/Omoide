@@ -18,6 +18,7 @@ from sqlalchemy import (
     tuple_,
     union_all,
 )
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, delete, distinct, select, text, update
 
 from app.config import settings
@@ -29,6 +30,7 @@ from app.models import (
     Person,
     PersonMediaLink,
     PersonRelationship,
+    PersonSocialLink,
     PersonTagLink,
     Tag,
     TimelineEvent,
@@ -60,12 +62,16 @@ from app.schemas.person import (
     RelationshipGraph,
     RelationshipNode,
     SimilarPerson,
+    SocialLinkCreate,
+    SocialLinkRead,
+    SocialLinkSuggestion,
 )
 from app.schemas.timeline import (
     TimelineEventCreate,
     TimelineEventUpdate,
     TimelinePage,
 )
+from app.services.social_links import derive_url, normalize_handle, suggest_from_paths
 from app.utils import (
     _distance_to_similarity,
     auto_select_profile_face,
@@ -77,6 +83,21 @@ from app.utils import (
 )
 
 router = APIRouter()
+
+
+def _require_person(person_id: int, session: Session) -> Person:
+    person = session.get(Person, person_id)
+    if person is None:
+        raise HTTPException(status_code=404, detail="Person not found")
+    return person
+
+
+def _require_mutations_enabled() -> None:
+    if settings.general.presentation_mode:
+        raise HTTPException(
+            status_code=403,
+            detail="Not allowed in settings.general.presentation_mode mode.",
+        )
 
 
 # Timeline events
@@ -835,6 +856,116 @@ def add_media_appearance(
     return {"person_id": person_id, "media_id": media_id, "added": True}
 
 
+@router.get(
+    "/{person_id}/social-links",
+    response_model=list[SocialLinkRead],
+)
+def get_social_links(
+    person_id: int,
+    session: Session = Depends(get_session),
+) -> list[PersonSocialLink]:
+    _require_person(person_id, session)
+    return list(
+        session.exec(
+            select(PersonSocialLink)
+            .where(PersonSocialLink.person_id == person_id)
+            .order_by(PersonSocialLink.created_at, PersonSocialLink.id)
+        ).all()
+    )
+
+
+@router.post(
+    "/{person_id}/social-links",
+    response_model=SocialLinkRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_social_link(
+    person_id: int,
+    data: SocialLinkCreate,
+    session: Session = Depends(get_session),
+) -> PersonSocialLink:
+    _require_mutations_enabled()
+    _require_person(person_id, session)
+    handle = normalize_handle(data.platform, data.handle)
+    if not handle:
+        raise HTTPException(status_code=400, detail="Handle is required")
+    explicit_url = data.url.strip() if data.url else ""
+    if data.platform == "other" and not explicit_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Platform 'other' requires an explicit URL",
+        )
+    url = explicit_url or derive_url(data.platform, handle)
+    duplicate = session.exec(
+        select(PersonSocialLink.id).where(
+            PersonSocialLink.person_id == person_id,
+            PersonSocialLink.platform == data.platform,
+            PersonSocialLink.handle == handle,
+        )
+    ).first()
+    if duplicate is not None:
+        raise HTTPException(status_code=409, detail="Social link already exists")
+
+    link = PersonSocialLink(
+        person_id=person_id,
+        platform=data.platform,
+        handle=handle,
+        url=url,
+    )
+    session.add(link)
+    try:
+        safe_commit(session)
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Social link already exists",
+        ) from exc
+    session.refresh(link)
+    return link
+
+
+@router.delete(
+    "/{person_id}/social-links/{link_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_social_link(
+    person_id: int,
+    link_id: int,
+    session: Session = Depends(get_session),
+) -> None:
+    _require_mutations_enabled()
+    _require_person(person_id, session)
+    link = session.get(PersonSocialLink, link_id)
+    if link is None or link.person_id != person_id:
+        raise HTTPException(status_code=404, detail="Social link not found")
+    session.delete(link)
+    safe_commit(session)
+
+
+@router.get(
+    "/{person_id}/social-links/suggestions",
+    response_model=list[SocialLinkSuggestion],
+)
+def get_social_link_suggestions(
+    person_id: int,
+    session: Session = Depends(get_session),
+) -> list[SocialLinkSuggestion]:
+    _require_person(person_id, session)
+    media_ids = union_all(
+        select(Face.media_id.label("media_id")).where(Face.person_id == person_id),
+        select(PersonMediaLink.media_id.label("media_id")).where(
+            PersonMediaLink.person_id == person_id
+        ),
+    ).subquery()
+    paths = session.exec(
+        select(Media.path).where(
+            Media.id.in_(select(media_ids.c.media_id).distinct())
+        )
+    ).all()
+    return suggest_from_paths(paths)
+
+
 @router.get("/{person_id}", response_model=PersonDetail)
 def get_person(person_id: int, session: Session = Depends(get_session)):
     person = session.get(Person, person_id)
@@ -874,6 +1005,14 @@ def get_person(person_id: int, session: Session = Depends(get_session)):
         gender_confidence=person.gender_confidence,
         gender_manual=person.gender_manual,
         age=person.age,
+        social_links=[
+            SocialLinkRead.model_validate(link)
+            for link in session.exec(
+                select(PersonSocialLink)
+                .where(PersonSocialLink.person_id == person_id)
+                .order_by(PersonSocialLink.created_at, PersonSocialLink.id)
+            ).all()
+        ],
     )
 
 

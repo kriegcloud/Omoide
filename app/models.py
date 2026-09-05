@@ -52,6 +52,26 @@ class PersonMediaLink(SQLModel, table=True):
     media: "Media" = Relationship(back_populates="person_links")
 
 
+class PersonSocialLink(SQLModel, table=True):
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "person_id",
+            "platform",
+            "handle",
+            name="uq_person_social_link",
+        ),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    person_id: int = Field(foreign_key="person.id", index=True)
+    platform: str
+    handle: str
+    url: str
+    created_at: datetime = Field(default_factory=datetime.now)
+
+    person: "Person" = Relationship(back_populates="social_links")
+
+
 class Blacklist(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
     path: str = Field(unique=True, index=True)
@@ -215,6 +235,10 @@ class Person(SQLModel, table=True):
         back_populates="person"
     )
     media_links: list[PersonMediaLink] = Relationship(back_populates="person")
+    social_links: list[PersonSocialLink] = Relationship(
+        back_populates="person",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
 
     class Config:
         from_attributes = True
