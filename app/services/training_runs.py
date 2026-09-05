@@ -185,7 +185,21 @@ def _register_samples(session: Session, run: TrainingRun) -> None:
         if path.is_file()
         and path.suffix.lower() in _SAMPLE_SUFFIXES
         and "samples" in path.parts
+        # ai-toolkit keeps 300 px previews in samples/.thumbs and scratch files
+        # in samples/.tmp; only the full-size renders are samples.
+        and not any(part.startswith(".") for part in path.relative_to(samples_root).parts)
     )
+    stale = [
+        sample
+        for sample in session.exec(
+            select(TrainingSample).where(TrainingSample.run_id == run.id)
+        ).all()
+        if any(part.startswith(".") for part in Path(sample.path).parts)
+    ]
+    for sample in stale:
+        session.delete(sample)
+    if stale:
+        session.flush()
     existing = set(
         session.exec(
             select(TrainingSample.path).where(TrainingSample.run_id == run.id)

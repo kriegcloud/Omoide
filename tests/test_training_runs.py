@@ -18,7 +18,12 @@ from app.models import (
     TrainingSample,
 )
 from app.services.datasets import _ai_toolkit_config
-from app.services.training_runs import cancel_run, create_run, reconcile_runs
+from app.services.training_runs import (
+    _register_samples,
+    cancel_run,
+    create_run,
+    reconcile_runs,
+)
 
 
 class TrainingRunTests(unittest.TestCase):
@@ -142,6 +147,28 @@ class TrainingRunTests(unittest.TestCase):
                 .order_by(TrainingSample.step)
             ).all()
             self.assertEqual([sample.step for sample in rows], [3, 250, 500])
+
+    def test_reconcile_ignores_thumbnail_and_scratch_sample_copies(self):
+        with Session(self.engine) as session:
+            dataset, export = self._dataset_export(session)
+            run = create_run(session, dataset, export, {"steps": 10})
+            samples = Path(run.run_dir) / "output" / "job" / "samples"
+            (samples / ".thumbs").mkdir(parents=True)
+            (samples / ".tmp").mkdir()
+            (samples / "1700000000000__000000250_0.jpg").write_bytes(b"jpg")
+            (samples / ".thumbs" / "1700000000000__000000250_0.jpg").write_bytes(b"jpg")
+            (samples / ".tmp" / "partial.jpg").write_bytes(b"jpg")
+            stale = TrainingSample(
+                run_id=run.id, step=250, path=str(samples / ".thumbs" / "old.jpg")
+            )
+            session.add(stale)
+            session.commit()
+            _register_samples(session, run)
+            session.commit()
+            rows = session.exec(
+                select(TrainingSample).where(TrainingSample.run_id == run.id)
+            ).all()
+            self.assertEqual([Path(row.path).name for row in rows], ["1700000000000__000000250_0.jpg"])
 
     def test_cancel_marks_cancelled_on_next_reconcile_without_new_status(self):
         with Session(self.engine) as session:
