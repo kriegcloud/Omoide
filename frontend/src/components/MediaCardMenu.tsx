@@ -39,6 +39,7 @@ import FolderPickerDialog from "./FolderPickerDialog";
 import RenameMediaDialog from "./RenameMediaDialog";
 import ImageEditorDialog from "./ImageEditorDialog";
 import AddToDatasetDialog from "./AddToDatasetDialog";
+import RepairDialog from "./RepairDialog";
 import { startRepair } from "../services/repairs";
 import type { RepairProfile } from "../types";
 
@@ -54,7 +55,7 @@ interface MediaCardMenuProps {
   onDeleted?: () => void;
 }
 
-type DialogKind = "edit" | "rename" | "move" | "assign" | "dataset" | "deleteRecord" | "deleteFile" | null;
+type DialogKind = "edit" | "rename" | "move" | "assign" | "dataset" | "backgroundSwap" | "deleteRecord" | "deleteFile" | null;
 
 export default function MediaCardMenu({
   media,
@@ -113,7 +114,7 @@ export default function MediaCardMenu({
     closeMenu();
     setBusy(true);
     try {
-      await startRepair(media.id, profile, personContext?.personId);
+      await startRepair(media.id, profile, { personId: personContext?.personId });
       setSnackbar({ message: "Repair started", severity: "success" });
     } catch (error) {
       fail(error, "Failed to start repair");
@@ -297,7 +298,17 @@ export default function MediaCardMenu({
         <MenuItem disabled={busy} onClick={() => void beginRepair("omoide-remove-text-v1")}>Remove overlays</MenuItem>
         <MenuItem disabled={busy} onClick={() => void beginRepair("omoide-upscale-v1")}>Upscale</MenuItem>
         {personContext && <MenuItem disabled={busy} onClick={() => void beginRepair("omoide-remove-people-v1")}>Remove other people</MenuItem>}
+        {personContext && <MenuItem disabled={busy} onClick={() => { setRepairAnchorEl(null); closeMenu(); setDialog("backgroundSwap"); }}>Swap background…</MenuItem>}
       </Menu>
+
+      <RepairDialog
+        open={dialog === "backgroundSwap"}
+        mediaIds={[media.id]}
+        personId={personContext?.personId}
+        initialProfile="omoide-background-swap-v1"
+        onClose={() => setDialog(null)}
+        onStarted={() => setSnackbar({ message: "Background swap started", severity: "success" })}
+      />
 
       <RenameMediaDialog
         open={dialog === "rename"}

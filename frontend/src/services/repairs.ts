@@ -1,6 +1,13 @@
 import { API } from "../config";
 import type { ImageRepairJob, RepairProfile } from "../types";
 
+export interface RepairOptions {
+  personId?: number;
+  prompt?: string;
+  seed?: number;
+  randomizePrompts?: boolean;
+}
+
 async function json<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => null);
@@ -10,19 +17,43 @@ async function json<T>(response: Response): Promise<T> {
   return response.json();
 }
 
-export const startRepair = (mediaId: number, profile: RepairProfile, personId?: number) =>
+const repairBody = (profile: RepairProfile, options: RepairOptions) => ({
+  profile,
+  ...(options.personId ? { person_id: options.personId } : {}),
+  params: {
+    ...(options.prompt ? { prompt: options.prompt } : {}),
+    ...(options.seed !== undefined ? { seed: options.seed } : {}),
+  },
+});
+
+export const startRepair = (
+  mediaId: number,
+  profile: RepairProfile,
+  options: RepairOptions = {},
+) =>
   fetch(`${API}/api/repairs/media/${mediaId}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ profile, ...(personId ? { person_id: personId } : {}) }),
+    body: JSON.stringify(repairBody(profile, options)),
   }).then(json<ImageRepairJob>);
 
-export const startBulkRepair = (mediaIds: number[], profile: RepairProfile, personId?: number) =>
+export const startBulkRepair = (
+  mediaIds: number[],
+  profile: RepairProfile,
+  options: RepairOptions = {},
+) =>
   fetch(`${API}/api/repairs/bulk`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ media_ids: mediaIds, profile, ...(personId ? { person_id: personId } : {}) }),
+    body: JSON.stringify({
+      media_ids: mediaIds,
+      ...repairBody(profile, options),
+      ...(options.randomizePrompts ? { randomize_prompts: true } : {}),
+    }),
   }).then(json<ImageRepairJob[]>);
+
+export const listBackgroundPrompts = () =>
+  fetch(`${API}/api/repairs/background-prompts`).then(json<string[]>);
 
 export const listRepairs = (options: { resultMediaId?: number; limit?: number } = {}) => {
   const params = new URLSearchParams({ limit: String(options.limit ?? 50) });

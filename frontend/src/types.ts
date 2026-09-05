@@ -57,7 +57,8 @@ export interface ProfileFace {
 export type RepairProfile =
   | "omoide-remove-text-v1"
   | "omoide-upscale-v1"
-  | "omoide-remove-people-v1";
+  | "omoide-remove-people-v1"
+  | "omoide-background-swap-v1";
 
 export type ImageRepairStatus =
   | "created"

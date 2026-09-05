@@ -372,7 +372,7 @@ export default function DatasetTriagePage() {
     setRepairAnchor(null);
     setBusy(true);
     try {
-      await startRepair(current.media.id, profile, personId ?? undefined);
+      await startRepair(current.media.id, profile, { personId: personId ?? undefined });
       setNotice("Repair started");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Failed to start repair");

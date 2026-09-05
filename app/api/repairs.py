@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import random
+import secrets
 from datetime import datetime
 from uuid import UUID
 
@@ -17,9 +19,11 @@ from app.schemas.repair import (
     ImageRepairJobRead,
     RepairHealthRead,
     RepairJobPage,
+    RepairParams,
     RepairRequest,
 )
 from app.services.comfy_annotation import ComfyAnnotationError
+from app.services.background_prompts import load_prompts
 from app.services.comfy_repair import SUPPORTED_REPAIR_PROFILES
 from app.tasks.image_repair import repair_client, run_repair_job
 
@@ -38,6 +42,7 @@ def _configured_profiles() -> set[str]:
         settings.repairs.remove_text_profile_id,
         settings.repairs.upscale_profile_id,
         settings.repairs.remove_people_profile_id,
+        settings.repairs.background_swap_profile_id,
     }
 
 
@@ -68,13 +73,23 @@ def _params_size(params: dict) -> None:
         raise HTTPException(status_code=422, detail="Repair params exceed 8 KB")
 
 
+def _randomized_background_params(media_id: int, params: RepairParams) -> RepairParams:
+    prompts = list(load_prompts())
+    random.Random(media_id).shuffle(prompts)
+    return params.model_copy(update={"prompt": prompts[0], "seed": secrets.randbits(63)})
+
+
 def _params_for_media(
     session: Session,
     media: Media,
     request: RepairRequest,
 ) -> dict:
-    params = dict(request.params)
-    if request.profile != settings.repairs.remove_people_profile_id:
+    params = request.params.model_dump(exclude_none=True)
+    subject_profiles = {
+        settings.repairs.remove_people_profile_id,
+        settings.repairs.background_swap_profile_id,
+    }
+    if request.profile not in subject_profiles:
         _params_size(params)
         return params
     person_id = request.person_id
@@ -84,7 +99,7 @@ def _params_for_media(
         if person_id is None:
             raise HTTPException(
                 status_code=422,
-                detail="Remove other people requires a person_id or subject_box.",
+                detail="This repair requires a person_id or subject_box.",
             )
         face = session.exec(
             select(Face)
@@ -103,6 +118,12 @@ def _params_for_media(
             "width": round(width * scale),
             "height": round(height * scale),
         }
+    if request.profile == settings.repairs.background_swap_profile_id:
+        prompt = params.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise HTTPException(status_code=422, detail="Background swap requires a prompt")
+        params["prompt"] = prompt.strip()
+        params.setdefault("seed", secrets.randbits(63))
     _params_size(params)
     return params
 
@@ -175,9 +196,6 @@ def start_bulk_repair(
     _validate_profile(request.profile)
     _bridge_ready(request.profile)
     jobs: list[ImageRepairJob] = []
-    repair_request = RepairRequest(
-        profile=request.profile, params=request.params, person_id=request.person_id
-    )
     prepared: list[tuple[Media, dict]] = []
     for media_id in dict.fromkeys(request.media_ids):
         media = session.get(Media, media_id)
@@ -185,7 +203,18 @@ def start_bulk_repair(
             continue
         if media.duration is not None:
             continue
-        prepared.append((media, _params_for_media(session, media, repair_request)))
+        media_request: RepairRequest = request
+        if (
+            request.profile == settings.repairs.background_swap_profile_id
+            and request.randomize_prompts
+        ):
+            randomized_params = _randomized_background_params(int(media.id), request.params)
+            media_request = RepairRequest(
+                profile=request.profile,
+                params=randomized_params,
+                person_id=request.person_id,
+            )
+        prepared.append((media, _params_for_media(session, media, media_request)))
     for media, params in prepared:
         job = ImageRepairJob(
             media_id=int(media.id),
@@ -200,6 +229,11 @@ def start_bulk_repair(
         session.refresh(job)
         background_tasks.add_task(run_repair_job, job.id)
     return jobs
+
+
+@router.get("/background-prompts", response_model=list[str])
+def background_prompts() -> list[str]:
+    return list(load_prompts())
 
 
 @router.get("/", response_model=RepairJobPage)

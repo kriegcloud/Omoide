@@ -30,6 +30,12 @@ def _intersects(a: tuple[float, float, float, float], b: tuple[float, float, flo
     return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
 
 
+def _area(bbox) -> float:
+    if bbox is None or len(bbox) < 4:
+        return 0.0
+    return max(0.0, float(bbox[2]) - float(bbox[0])) * max(0.0, float(bbox[3]) - float(bbox[1]))
+
+
 class OmoideSegsOutsideBox:
     """Keep only the SEGS whose bounding box does not touch the subject box.
 
@@ -46,7 +52,13 @@ class OmoideSegsOutsideBox:
                 "segs": ("SEGS",),
                 "params_json": ("STRING", {"default": "{}", "multiline": True}),
                 "margin": ("INT", {"default": 32, "min": 0, "max": 4096, "step": 1}),
-            }
+            },
+            "optional": {
+                # False: keep the segments OUTSIDE the subject box (remove other
+                # people). True: keep only the segments touching the subject box
+                # (isolate the subject, e.g. to repaint the background).
+                "keep_inside": ("BOOLEAN", {"default": False}),
+            },
         }
 
     RETURN_TYPES = ("SEGS", "INT", "INT")
@@ -54,10 +66,19 @@ class OmoideSegsOutsideBox:
     FUNCTION = "filter"
     CATEGORY = "Omoide/repair"
 
-    def filter(self, segs, params_json: str, margin: int):
+    def filter(self, segs, params_json: str, margin: int, keep_inside: bool = False):
         shape, items = segs[0], list(segs[1])
         subject = _parse_subject_box(params_json)
         if subject is None:
+            if keep_inside:
+                # Without a subject box keep the largest segment as the subject.
+                largest = max(
+                    items,
+                    key=lambda seg: _area(getattr(seg, "bbox", None)),
+                    default=None,
+                )
+                kept_items = [largest] if largest is not None else []
+                return ((shape, kept_items), len(kept_items), len(items) - len(kept_items))
             # Without a subject every person is a candidate for removal.
             return (segs, len(items), 0)
         expanded = (
@@ -74,12 +95,57 @@ class OmoideSegsOutsideBox:
                 kept.append(seg)
                 continue
             seg_box = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
-            if _intersects(seg_box, expanded):
+            touches = _intersects(seg_box, expanded)
+            if touches != keep_inside:
                 dropped += 1
                 continue
             kept.append(seg)
         return ((shape, kept), len(kept), dropped)
 
 
-NODE_CLASS_MAPPINGS = {"OmoideSegsOutsideBox": OmoideSegsOutsideBox}
-NODE_DISPLAY_NAME_MAPPINGS = {"OmoideSegsOutsideBox": "Omoide: SEGS outside subject box"}
+class OmoideRepairParams:
+    """Fan the repair params JSON out into a prompt, a seed and a passthrough.
+
+    ``prompt`` is bounded to 2000 characters; ``seed`` defaults to 1. The
+    passthrough lets one bridge-injected ``params_json`` feed several nodes.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "params_json": ("STRING", {"default": "{}", "multiline": True}),
+                "default_prompt": ("STRING", {"default": "", "multiline": True}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING", "INT", "STRING")
+    RETURN_NAMES = ("prompt", "seed", "params_json")
+    FUNCTION = "expand"
+    CATEGORY = "Omoide/repair"
+
+    def expand(self, params_json: str, default_prompt: str):
+        try:
+            payload = json.loads(params_json or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        prompt = payload.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            prompt = default_prompt
+        try:
+            seed = int(payload.get("seed", 1))
+        except (TypeError, ValueError):
+            seed = 1
+        return (prompt[:2000], max(0, min(seed, 2**53 - 1)), params_json or "{}")
+
+
+NODE_CLASS_MAPPINGS = {
+    "OmoideSegsOutsideBox": OmoideSegsOutsideBox,
+    "OmoideRepairParams": OmoideRepairParams,
+}
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "OmoideSegsOutsideBox": "Omoide: SEGS outside subject box",
+    "OmoideRepairParams": "Omoide: repair params",
+}

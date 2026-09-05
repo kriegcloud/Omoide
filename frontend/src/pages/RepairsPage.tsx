@@ -8,6 +8,7 @@ const labels: Record<string, string> = {
   "omoide-remove-text-v1": "Remove overlays",
   "omoide-upscale-v1": "Upscale",
   "omoide-remove-people-v1": "Remove other people",
+  "omoide-background-swap-v1": "Swap background",
 };
 
 export default function RepairsPage() {

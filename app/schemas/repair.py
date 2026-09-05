@@ -3,19 +3,37 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models import ImageRepairStatus
 
 
+class RepairParams(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    prompt: str | None = Field(default=None, max_length=2000)
+    seed: int | None = Field(default=None, ge=0)
+
+
 class RepairRequest(BaseModel):
     profile: str
-    params: dict[str, Any] = Field(default_factory=dict)
+    params: RepairParams = Field(default_factory=RepairParams)
     person_id: int | None = None
+
+    @model_validator(mode="after")
+    def validate_background_prompt(self):
+        if (
+            self.profile == "omoide-background-swap-v1"
+            and not getattr(self, "randomize_prompts", False)
+            and not (self.params.prompt or "").strip()
+        ):
+            raise ValueError("Background swap requires a prompt unless prompts are randomised")
+        return self
 
 
 class BulkRepairRequest(RepairRequest):
     media_ids: list[int] = Field(min_length=1, max_length=1000)
+    randomize_prompts: bool = False
 
 
 class ImageRepairJobRead(BaseModel):

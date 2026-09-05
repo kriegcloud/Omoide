@@ -23,6 +23,7 @@ SUPPORTED_REPAIR_PROFILES = frozenset(
         "omoide-remove-text-v1",
         "omoide-upscale-v1",
         "omoide-remove-people-v1",
+        "omoide-background-swap-v1",
     }
 )
 
