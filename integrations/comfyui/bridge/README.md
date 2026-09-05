@@ -4,8 +4,8 @@ This service is the narrow host boundary between the Omoide container and the
 local ComfyUI server. Omoide sends normalized JPEG or PNG bytes over a private
 Unix socket. It never sends a media-library path or a workflow.
 
-The bridge accepts only the built-in annotation IDs and the three repair IDs
-documented below. At startup it reads each API workflow once,
+The bridge accepts only the built-in annotation IDs, the three repair IDs, and
+the evaluation generation ID documented below. At startup it reads each API workflow once,
 verifies the configured SHA-256, validates the fixed input/output node binding,
 and retains that immutable snapshot. Before admitting each attempt it also
 verifies the exact Comfy node files, Omoide custom-node executor files, model
@@ -93,6 +93,10 @@ Every request includes `protocol: "omoide-comfy/v1"` and one action:
 - `repair` has the same image/provenance request fields as `annotate`, plus an
   optional `params` object whose encoded JSON is at most 8 KiB. It accepts only
   a profile with `result_kind: "image"`.
+- `generate` accepts a canonical attempt UUID, the allowlisted
+  `omoide-eval-zimage-v1` params profile, and a bounded `params` object. It
+  submits no image; the immutable workflow receives canonical params JSON and
+  returns the same verified image result shape as `repair`.
 - `get_attempt` reads `/history/<UUID>` and `/queue` by exact UUID. It never
   submits or changes a prompt, so Omoide startup can recover a completed result
   or classify an absent prompt as unknown/lost.
@@ -158,6 +162,14 @@ The repair allowlist and node contracts are:
 - `omoide-remove-people-v1`: LoadImage plus a JSON `subject_box` input to
   segmentation/inpainting to SaveImage. A second SaveImage may save the mask;
   the bridge ignores every output node except the configured one.
+
+The generate allowlist contains `omoide-eval-zimage-v1`. It uses
+`input_kind: "params"`, requires `input_json_node_id` and
+`input_json_input`, and has no image-node fields. `OmoideEvalParams` receives
+the canonical JSON while `OmoideEvalLoraLoader` reads the absolute
+`lora_path`; the bridge only admits `.safetensors` paths contained by the
+top-level `lora_root` (the datasets host root). No LoRA is copied or staged.
+Health reports every profile's input mode in `profile_input_kinds`.
 
 The bounded media-state endpoint intentionally remains non-paginated for wire
 compatibility. The separate cursor endpoints planned for long-lived history are

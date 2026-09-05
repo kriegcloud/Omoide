@@ -517,6 +517,7 @@ class RepairSettings(BaseModel):
     upscale_profile_id: str = "omoide-upscale-v1"
     remove_people_profile_id: str = "omoide-remove-people-v1"
     background_swap_profile_id: str = "omoide-background-swap-v1"
+    eval_profile_id: str = "omoide-eval-zimage-v1"
 
 
 class ScanSettings(BaseModel):

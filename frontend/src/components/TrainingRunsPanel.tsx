@@ -29,16 +29,21 @@ import StopIcon from "@mui/icons-material/Stop";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
 import {
   cancelTrainingRun,
+  cancelEvalBatch,
+  createEvalBatch,
   createTrainingRun,
   getDatasetRunLikeness,
   getTrainingHealth,
   getTrainingPresets,
   getTrainingRuns,
   getTrainingSamples,
+  getEvalBatch,
+  getEvalBatches,
   rescoreTrainingRun,
   trainingSampleImageUrl,
+  evalSampleImageUrl,
 } from "../services/datasets";
-import type { DatasetExport, RunLikeness, TrainingHealth, TrainingPreset, TrainingRun, TrainingSample } from "../types";
+import type { DatasetExport, EvalBatch, RunLikeness, TrainingHealth, TrainingPreset, TrainingRun, TrainingSample } from "../types";
 import LikenessSparkline from "./LikenessSparkline";
 
 interface TrainingRunsPanelProps {
@@ -53,7 +58,7 @@ interface TrainingRunsPanelProps {
 const activeStatuses = new Set<TrainingRun["status"]>(["requested", "running"]);
 const curveColors = ["#7c3aed", "#0891b2", "#dc2626", "#16a34a", "#ea580c", "#2563eb"];
 
-function statusColor(status: TrainingRun["status"]): "default" | "info" | "success" | "error" | "warning" {
+function statusColor(status: TrainingRun["status"] | EvalBatch["status"]): "default" | "info" | "success" | "error" | "warning" {
   if (status === "completed") return "success";
   if (status === "failed") return "error";
   if (status === "cancelled") return "warning";
@@ -69,6 +74,36 @@ function elapsed(run: TrainingRun): string {
   const minutes = Math.floor((seconds % 3600) / 60);
   if (hours) return `${hours}h ${minutes}m`;
   return `${minutes}m ${seconds % 60}s`;
+}
+
+function EvalGrid({ batch }: { batch: EvalBatch }) {
+  const cells = new Map(batch.samples.map((sample) => [`${sample.prompt_index}:${sample.seed}`, sample]));
+  return (
+    <Box sx={{ overflowX: "auto" }}>
+      <Box sx={{ display: "grid", gridTemplateColumns: `minmax(160px, 1fr) repeat(${batch.seeds.length}, minmax(120px, 1fr))`, gap: 1, minWidth: 400 }}>
+        <Box />
+        {batch.seeds.map((seed) => <Typography key={seed} variant="caption" textAlign="center">Seed {seed}</Typography>)}
+        {batch.prompts.flatMap((prompt, promptIndex) => [
+          <Typography key={`prompt-${promptIndex}`} variant="caption" sx={{ alignSelf: "center" }}>{prompt}</Typography>,
+          ...batch.seeds.map((seed) => {
+            const sample = cells.get(`${promptIndex}:${seed}`);
+            return (
+              <Box key={`${promptIndex}:${seed}`} sx={{ position: "relative", minHeight: 120, bgcolor: "action.hover", borderRadius: 2, overflow: "hidden" }}>
+                {sample && !sample.error ? (
+                  <Box component="img" src={evalSampleImageUrl(batch.id, sample.id)} alt={`Evaluation for prompt ${promptIndex + 1}, seed ${seed}`} loading="lazy" sx={{ width: "100%", height: "100%", aspectRatio: "1 / 1", objectFit: "cover", display: "block" }} />
+                ) : (
+                  <Typography variant="caption" color={sample?.error ? "error" : "text.secondary"} sx={{ p: 1, display: "block" }}>{sample?.error ?? "Pending"}</Typography>
+                )}
+                {sample && (
+                  <Chip size="small" label={sample.likeness == null ? sample.face_count === 0 ? "No face" : "—" : sample.likeness.toFixed(3)} sx={{ position: "absolute", left: 6, bottom: 6, bgcolor: "background.paper" }} />
+                )}
+              </Box>
+            );
+          }),
+        ])}
+      </Box>
+    </Box>
+  );
 }
 
 export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChange, health, onHealthChange }: TrainingRunsPanelProps) {
@@ -94,6 +129,15 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
   const [compareRuns, setCompareRuns] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [menuRunId, setMenuRunId] = useState<number | null>(null);
+  const [evalBatches, setEvalBatches] = useState<Record<number, EvalBatch[]>>({});
+  const [evalDetails, setEvalDetails] = useState<Record<number, EvalBatch>>({});
+  const [evalDialogRun, setEvalDialogRun] = useState<TrainingRun | null>(null);
+  const [evalCheckpoint, setEvalCheckpoint] = useState("");
+  const [evalPrompts, setEvalPrompts] = useState("");
+  const [evalSeeds, setEvalSeeds] = useState("1, 2, 3, 4");
+  const [evalStrength, setEvalStrength] = useState(1);
+  const [evalSubmitting, setEvalSubmitting] = useState(false);
+  const [compareBatches, setCompareBatches] = useState<Record<number, number[]>>({});
 
   useEffect(() => {
     void Promise.all([getTrainingHealth(), getTrainingPresets()])
@@ -145,6 +189,29 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
     return () => window.clearInterval(timer);
   }, [datasetId, expanded, likeness, onRunsChange]);
 
+  useEffect(() => {
+    const active = Object.values(evalBatches).flat().filter((batch) => batch.status === "pending" || batch.status === "running");
+    if (active.length === 0) return;
+    const timer = window.setInterval(() => {
+      void Promise.all([...new Set(active.map((batch) => batch.run_id))].map(async (runId) => [runId, await getEvalBatches(runId)] as const))
+        .then(async (entries) => {
+          setEvalBatches((current) => ({ ...current, ...Object.fromEntries(entries) }));
+          const details = await Promise.all(active.map((batch) => getEvalBatch(batch.id)));
+          setEvalDetails((current) => ({ ...current, ...Object.fromEntries(details.map((batch) => [batch.id, batch])) }));
+        })
+        .catch((reason) => setError(reason instanceof Error ? reason.message : "Could not refresh evaluations"));
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [evalBatches]);
+
+  useEffect(() => {
+    const missing = Object.values(compareBatches).flat().filter((batchId) => !evalDetails[batchId]);
+    if (missing.length === 0) return;
+    void Promise.all([...new Set(missing)].map(getEvalBatch))
+      .then((details) => setEvalDetails((current) => ({ ...current, ...Object.fromEntries(details.map((batch) => [batch.id, batch])) })))
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load comparison"));
+  }, [compareBatches, evalDetails]);
+
   const openDialog = () => {
     setExportId(latestExportId ?? "");
     setBaseModel(presets.find((preset) => preset.is_default)?.id ?? presets[0]?.id ?? "");
@@ -162,11 +229,12 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
       return;
     }
     setExpanded((current) => new Set(current).add(run.id));
-    if (samples[run.id]) return;
+    if (samples[run.id] && evalBatches[run.id]) return;
     setLoadingSamples((current) => new Set(current).add(run.id));
     try {
-      const next = await getTrainingSamples(run.id);
+      const [next, batches] = await Promise.all([getTrainingSamples(run.id), getEvalBatches(run.id)]);
       setSamples((current) => ({ ...current, [run.id]: next }));
+      setEvalBatches((current) => ({ ...current, [run.id]: batches }));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load training samples");
     } finally {
@@ -176,6 +244,22 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
         return next;
       });
     }
+  };
+
+  const openEvalDialog = (run: TrainingRun) => {
+    const finalCheckpoint = run.checkpoints.find((path) => {
+      const stem = (path.split("/").pop() ?? path).replace(/\.safetensors$/i, "");
+      return !/(?:^|[_-])\d+$/.test(stem);
+    });
+    const highestStepCheckpoint = [...run.checkpoints].sort((left, right) => {
+      const step = (path: string) => Number((path.match(/(?:^|[_-])(\d+)\.safetensors$/i) ?? [])[1] ?? 0);
+      return step(right) - step(left);
+    })[0];
+    setEvalDialogRun(run);
+    setEvalCheckpoint(finalCheckpoint ?? highestStepCheckpoint ?? "");
+    setEvalPrompts(run.sample_prompts.join("\n"));
+    setEvalSeeds("1, 2, 3, 4");
+    setEvalStrength(1);
   };
 
   return (
@@ -348,6 +432,75 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
                     </Stack>
                   </Box>
                 )}
+                <Box sx={{ mb: 3 }}>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center" gap={1} sx={{ mb: 1 }}>
+                    <Typography variant="subtitle2">Eval</Typography>
+                    <Button size="small" disabled={run.status !== "completed" || run.checkpoints.length === 0} onClick={() => openEvalDialog(run)}>
+                      Evaluate checkpoint…
+                    </Button>
+                  </Stack>
+                  {(evalBatches[run.id] ?? []).length === 0 ? (
+                    <Typography variant="body2" color="text.secondary">No checkpoint evaluations yet.</Typography>
+                  ) : (
+                    <Stack spacing={1.5}>
+                      {(evalBatches[run.id] ?? []).map((batch) => (
+                        <Paper key={batch.id} variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
+                          <Stack direction={{ xs: "column", sm: "row" }} gap={1} alignItems={{ sm: "center" }}>
+                            <Box sx={{ minWidth: 0, flex: 1 }}>
+                              <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                                <Typography variant="body2" fontWeight={700}>Batch #{batch.id}</Typography>
+                                <Chip size="small" label={batch.status} color={statusColor(batch.status)} />
+                                <Typography variant="caption" color="text.secondary">Mean {batch.mean_likeness == null ? "—" : batch.mean_likeness.toFixed(3)}</Typography>
+                              </Stack>
+                              <Typography component="code" variant="caption" sx={{ display: "block", overflowWrap: "anywhere", mt: 0.5 }}>{batch.checkpoint_path}</Typography>
+                            </Box>
+                            <Stack direction="row" spacing={0.5}>
+                              {(batch.status === "pending" || batch.status === "running") && (
+                                <Button size="small" color="error" onClick={async () => {
+                                  try {
+                                    const updated = await cancelEvalBatch(batch.id);
+                                    setEvalBatches((current) => ({ ...current, [run.id]: (current[run.id] ?? []).map((entry) => entry.id === updated.id ? updated : entry) }));
+                                  } catch (reason) {
+                                    setError(reason instanceof Error ? reason.message : "Could not cancel evaluation");
+                                  }
+                                }}>Cancel</Button>
+                              )}
+                              <Button size="small" onClick={async () => {
+                                try {
+                                  const detail = await getEvalBatch(batch.id);
+                                  setEvalDetails((current) => ({ ...current, [batch.id]: detail }));
+                                } catch (reason) {
+                                  setError(reason instanceof Error ? reason.message : "Could not load evaluation");
+                                }
+                              }}>View grid</Button>
+                              <Button
+                                size="small"
+                                variant={(compareBatches[run.id] ?? []).includes(batch.id) ? "contained" : "text"}
+                                onClick={() => setCompareBatches((current) => {
+                                  const selected = current[run.id] ?? [];
+                                  const next = selected.includes(batch.id) ? selected.filter((id) => id !== batch.id) : [...selected.slice(-1), batch.id];
+                                  return { ...current, [run.id]: next };
+                                })}
+                              >Compare</Button>
+                            </Stack>
+                          </Stack>
+                          {evalDetails[batch.id] && !(compareBatches[run.id] ?? []).includes(batch.id) && <Box sx={{ mt: 1.5 }}><EvalGrid batch={evalDetails[batch.id]} /></Box>}
+                        </Paper>
+                      ))}
+                      {(compareBatches[run.id] ?? []).length === 2 && (
+                        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "1fr 1fr" }, gap: 2 }}>
+                          {(compareBatches[run.id] ?? []).map((batchId) => {
+                            const detail = evalDetails[batchId];
+                            if (!detail) {
+                              return <CircularProgress key={batchId} size={24} />;
+                            }
+                            return <Paper key={batchId} variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}><Typography variant="subtitle2" sx={{ mb: 1 }}>Batch #{batchId}</Typography><EvalGrid batch={detail} /></Paper>;
+                          })}
+                        </Box>
+                      )}
+                    </Stack>
+                  )}
+                </Box>
                 <Typography variant="subtitle2" gutterBottom>Training samples</Typography>
                 {loadingSamples.has(run.id) ? <CircularProgress size={24} /> : grouped.size === 0 ? (
                   <Typography variant="body2" color="text.secondary">No sample images have been generated yet.</Typography>
@@ -490,6 +643,50 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
           >
             Start training
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={evalDialogRun !== null} onClose={() => !evalSubmitting && setEvalDialogRun(null)} fullWidth maxWidth="sm">
+        <DialogTitle>Evaluate checkpoint</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <FormControl fullWidth>
+              <InputLabel>Checkpoint</InputLabel>
+              <Select label="Checkpoint" value={evalCheckpoint} onChange={(event) => setEvalCheckpoint(event.target.value)}>
+                {(evalDialogRun?.checkpoints ?? []).map((checkpoint) => <MenuItem key={checkpoint} value={checkpoint}>{checkpoint}</MenuItem>)}
+              </Select>
+            </FormControl>
+            <TextField multiline minRows={4} label="Prompts" value={evalPrompts} onChange={(event) => setEvalPrompts(event.target.value)} helperText="One prompt per line" />
+            <TextField label="Seeds" value={evalSeeds} onChange={(event) => setEvalSeeds(event.target.value)} helperText="Comma-separated non-negative integers" />
+            <TextField type="number" label="LoRA strength" value={evalStrength} onChange={(event) => setEvalStrength(Number(event.target.value))} inputProps={{ min: 0, max: 2, step: 0.05 }} />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button disabled={evalSubmitting} onClick={() => setEvalDialogRun(null)}>Cancel</Button>
+          <Button variant="contained" disabled={evalSubmitting || !evalCheckpoint || !evalPrompts.trim() || evalStrength < 0 || evalStrength > 2} onClick={async () => {
+            if (!evalDialogRun) return;
+            const runId = evalDialogRun.id;
+            const parsedSeeds = evalSeeds.split(",").map((value) => Number(value.trim())).filter((value) => Number.isInteger(value) && value >= 0);
+            if (parsedSeeds.length === 0) {
+              setError("Enter at least one non-negative integer seed");
+              return;
+            }
+            setEvalSubmitting(true);
+            try {
+              const created = await createEvalBatch(runId, {
+                checkpoint: evalCheckpoint,
+                prompts: evalPrompts.split("\n").map((value) => value.trim()).filter(Boolean),
+                seeds: [...new Set(parsedSeeds)],
+                lora_strength: evalStrength,
+              });
+              setEvalBatches((current) => ({ ...current, [runId]: [created, ...(current[runId] ?? [])] }));
+              setEvalDialogRun(null);
+            } catch (reason) {
+              setError(reason instanceof Error ? reason.message : "Could not start evaluation");
+            } finally {
+              setEvalSubmitting(false);
+            }
+          }}>{evalSubmitting ? <CircularProgress size={18} color="inherit" /> : "Evaluate"}</Button>
         </DialogActions>
       </Dialog>
     </Stack>

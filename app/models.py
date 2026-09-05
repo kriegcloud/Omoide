@@ -580,6 +580,33 @@ class TrainingSample(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.now, index=True)
 
 
+class EvalBatch(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    run_id: int = Field(foreign_key="trainingrun.id", ondelete="CASCADE", index=True)
+    checkpoint_path: str
+    lora_path: str
+    prompts: list[str] = Field(sa_column=Column(JSON, nullable=False))
+    seeds: list[int] = Field(sa_column=Column(JSON, nullable=False))
+    lora_strength: float = Field(default=1.0)
+    status: Status = Field(default=Status.PENDING, index=True)
+    created_at: datetime = Field(default_factory=datetime.now, index=True)
+    finished_at: datetime | None = Field(default=None)
+    error: str | None = Field(default=None)
+
+
+class EvalSample(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    batch_id: int = Field(foreign_key="evalbatch.id", ondelete="CASCADE", index=True)
+    prompt_index: int
+    seed: int
+    path: str
+    attempt_id: str = Field(unique=True, index=True)
+    likeness: float | None = Field(default=None)
+    face_count: int | None = Field(default=None)
+    scored_at: datetime | None = Field(default=None)
+    error: str | None = Field(default=None)
+
+
 class Scene(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
     media_id: int = Field(foreign_key="media.id", index=True)

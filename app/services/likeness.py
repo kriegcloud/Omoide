@@ -82,6 +82,18 @@ def _get_scorer() -> LikenessScorer:
     return _scorer
 
 
+def score_path(
+    session: Session, dataset: TrainingDataset, path: str | Path
+) -> tuple[float | None, int | None, list[int] | None]:
+    """Score one image against the dataset person's current centroid."""
+    if dataset.person_id is None:
+        return None, None, None
+    centroid = person_centroid(session, dataset.person_id)
+    if centroid is None:
+        return None, None, None
+    return _get_scorer().score_image(path, centroid)
+
+
 def refresh_run_summary(session: Session, run_id: int) -> None:
     run = session.get(TrainingRun, run_id)
     if run is None:

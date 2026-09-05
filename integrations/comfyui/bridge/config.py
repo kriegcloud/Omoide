@@ -21,7 +21,7 @@ NODE_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 INPUT_NAME_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,128}\Z")
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 CONFIG_KEYS = frozenset(
-    {"schema", "comfy_base_url", "staging_directory", "output_directory", "profiles"}
+    {"schema", "comfy_base_url", "staging_directory", "output_directory", "lora_root", "profiles"}
 )
 PROFILE_KEYS = frozenset(
     {
@@ -34,6 +34,7 @@ PROFILE_KEYS = frozenset(
         "output_node_class",
         "output_key",
         "result_kind",
+        "input_kind",
         "input_json_node_id",
         "input_json_input",
         "timeout_seconds",
@@ -49,6 +50,8 @@ REPAIR_PROFILE_IDS = frozenset(
         "omoide-background-swap-v1",
     }
 )
+GENERATE_PROFILE_IDS = frozenset({"omoide-eval-zimage-v1"})
+DEFAULT_LORA_ROOT = Path("/home/elpresidank/.local/share/omoide-portal/datasets")
 
 
 @dataclass(frozen=True)
@@ -84,6 +87,7 @@ class ProfileBinding:
     character_threshold: float | None = None
     input_json_node_id: str | None = None
     input_json_input: str | None = None
+    input_kind: str = "image"
 
 
 _COMFY_NODES = ArtifactBinding(
@@ -283,9 +287,9 @@ class Profile:
     profile_id: str
     workflow_path: Path
     workflow_sha256: str
-    image_node_id: str
-    image_node_class: str
-    image_input: str
+    image_node_id: str | None
+    image_node_class: str | None
+    image_input: str | None
     output_node_id: str
     output_node_class: str
     output_key: str
@@ -307,6 +311,7 @@ class Profile:
     _workflow: dict[str, Any]
     input_json_node_id: str | None = None
     input_json_input: str | None = None
+    input_kind: str = "image"
 
     def provenance(self) -> dict[str, Any]:
         provenance: dict[str, Any] = {
@@ -359,15 +364,21 @@ class Profile:
 
     def make_prompt(
         self,
-        staged_name: str,
+        staged_name: str | None,
         params: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        if Path(staged_name).name != staged_name or not staged_name:
-            raise BridgeError("invalid-staging-name", "staged filename is invalid")
         prompt = copy.deepcopy(self._workflow)
-        prompt[self.image_node_id]["inputs"][self.image_input] = (
-            f"{STAGING_SUBFOLDER}/{staged_name}"
-        )
+        if self.input_kind == "image":
+            if (
+                not staged_name
+                or Path(staged_name).name != staged_name
+                or self.image_node_id is None
+                or self.image_input is None
+            ):
+                raise BridgeError("invalid-staging-name", "staged filename is invalid")
+            prompt[self.image_node_id]["inputs"][self.image_input] = f"{STAGING_SUBFOLDER}/{staged_name}"
+        elif staged_name is not None:
+            raise BridgeError("invalid-staging-name", "params profile cannot stage an image")
         if params is not None:
             if self.input_json_node_id is None or self.input_json_input is None:
                 raise BridgeError(
@@ -389,6 +400,7 @@ class BridgeConfig:
     staging_directory: Path
     profiles: Mapping[str, Profile]
     output_directory: Path | None = None
+    lora_root: Path = DEFAULT_LORA_ROOT
 
 
 def _require_mapping(value: object, name: str) -> dict[str, Any]:
@@ -506,7 +518,7 @@ def _load_profile(profile_id: str, value: object) -> Profile:
     workflow_path, digest, workflow = _load_workflow(profile_id, data)
     binding = PROFILE_BINDINGS.get(profile_id)
     if binding is None:
-        if profile_id not in REPAIR_PROFILE_IDS:
+        if profile_id not in REPAIR_PROFILE_IDS | GENERATE_PROFILE_IDS:
             raise BridgeError(
                 "configuration-error",
                 f"profile {profile_id} is not in the built-in v1 allowlist",
@@ -519,8 +531,15 @@ def _load_profile(profile_id: str, value: object) -> Profile:
                 "configuration-error",
                 f"profile {profile_id} workflow path is not the built-in trust root",
             )
-        image_node_id = _require_string(data, "image_node_id", pattern=NODE_ID_PATTERN)
-        image_input = _require_string(data, "image_input", pattern=INPUT_NAME_PATTERN)
+        input_kind = data.get("input_kind", "image")
+        if input_kind not in {"image", "params"}:
+            raise BridgeError("configuration-error", "profile input_kind is unsupported")
+        if profile_id in REPAIR_PROFILE_IDS and input_kind != "image":
+            raise BridgeError("configuration-error", "repair profile input_kind must be image")
+        if profile_id in GENERATE_PROFILE_IDS and input_kind != "params":
+            raise BridgeError("configuration-error", "generate profile input_kind must be params")
+        image_node_id = _require_string(data, "image_node_id", pattern=NODE_ID_PATTERN) if input_kind == "image" else None
+        image_input = _require_string(data, "image_input", pattern=INPUT_NAME_PATTERN) if input_kind == "image" else None
         output_node_id = _require_string(data, "output_node_id", pattern=NODE_ID_PATTERN)
         input_json_node_id = data.get("input_json_node_id")
         input_json_input = data.get("input_json_input")
@@ -534,38 +553,36 @@ def _load_profile(profile_id: str, value: object) -> Profile:
             or INPUT_NAME_PATTERN.fullmatch(input_json_input) is None
         ):
             raise BridgeError("configuration-error", "input_json_input is invalid")
-        if profile_id == "omoide-remove-people-v1" and (
+        if (profile_id == "omoide-remove-people-v1" or input_kind == "params") and (
             input_json_node_id is None or input_json_input is None
         ):
             raise BridgeError(
                 "configuration-error",
-                "remove-people profile requires a JSON input node",
+                "profile requires a JSON input node",
             )
         binding = ProfileBinding(
             workflow_path=expected_path,
             workflow_sha256=digest,
             image_node_id=image_node_id,
-            image_node_class="LoadImage",
+            image_node_class="LoadImage" if input_kind == "image" else None,
             image_input=image_input,
             output_node_id=output_node_id,
             output_node_class="SaveImage",
             output_key="images",
             result_kind="image",
-            required_node_classes=("LoadImage", "SaveImage"),
-            required_workflow_nodes=(
-                (image_node_id, "LoadImage"),
-                (output_node_id, "SaveImage"),
-            ),
+            required_node_classes=(("LoadImage", "SaveImage") if input_kind == "image" else ("OmoideEvalParams", "OmoideEvalLoraLoader", "SaveImage")),
+            required_workflow_nodes=(((image_node_id, "LoadImage"), (output_node_id, "SaveImage")) if input_kind == "image" else ((input_json_node_id, "OmoideEvalParams"), (output_node_id, "SaveImage"))),
             required_combo_values=(),
             artifacts=(),
             executor_artifacts=(_COMFY_GIT_HEAD, _COMFY_NODES),
-            model_repo_id="host-managed-repair-workflow",
+            model_repo_id=("host-managed-repair-workflow" if input_kind == "image" else "host-managed-generate-workflow"),
             model_revision=digest,
             model_license="host-managed",
             comfy_version="0.34.0",
             comfy_core_commit="250b2e9551a7bc7a8ebb5beb07e0fecd2983e04a",
             input_json_node_id=input_json_node_id,
             input_json_input=input_json_input,
+            input_kind=input_kind,
         )
     if workflow_path != binding.workflow_path.resolve():
         raise BridgeError(
@@ -585,6 +602,7 @@ def _load_profile(profile_id: str, value: object) -> Profile:
         ("output_node_class", binding.output_node_class),
         ("output_key", binding.output_key),
         ("result_kind", binding.result_kind),
+        ("input_kind", binding.input_kind),
         ("input_json_node_id", binding.input_json_node_id),
         ("input_json_input", binding.input_json_input),
     ):
@@ -600,6 +618,7 @@ def _load_profile(profile_id: str, value: object) -> Profile:
     output_node_class = binding.output_node_class
     output_key = binding.output_key
     result_kind = binding.result_kind
+    input_kind = binding.input_kind
     if result_kind not in {"text", "json", "image"}:
         raise BridgeError("configuration-error", "profile result_kind is unsupported")
     if result_kind == "image" and (
@@ -616,24 +635,13 @@ def _load_profile(profile_id: str, value: object) -> Profile:
             "configuration-error",
             f"profile {profile_id} JSON node fields must be supplied together",
         )
-    image_node = _require_mapping(
-        workflow.get(image_node_id),
-        f"profile {profile_id} image node",
-    )
-    if image_node.get("class_type") != image_node_class:
-        raise BridgeError(
-            "configuration-error",
-            f"profile {profile_id} image node class does not match",
-        )
-    image_inputs = _require_mapping(
-        image_node.get("inputs"),
-        f"profile {profile_id} image node inputs",
-    )
-    if image_input not in image_inputs:
-        raise BridgeError(
-            "configuration-error",
-            f"profile {profile_id} image input does not exist",
-        )
+    if input_kind == "image":
+        image_node = _require_mapping(workflow.get(image_node_id), f"profile {profile_id} image node")
+        if image_node.get("class_type") != image_node_class:
+            raise BridgeError("configuration-error", f"profile {profile_id} image node class does not match")
+        image_inputs = _require_mapping(image_node.get("inputs"), f"profile {profile_id} image node inputs")
+        if image_input not in image_inputs:
+            raise BridgeError("configuration-error", f"profile {profile_id} image input does not exist")
     output_node = _require_mapping(
         workflow.get(output_node_id),
         f"profile {profile_id} output node",
@@ -657,6 +665,14 @@ def _load_profile(profile_id: str, value: object) -> Profile:
                 "configuration-error",
                 f"profile {profile_id} JSON input does not exist",
             )
+    if input_kind == "params" and not any(
+        isinstance(node, dict) and node.get("class_type") == "OmoideEvalLoraLoader"
+        for node in workflow.values()
+    ):
+        raise BridgeError(
+            "configuration-error",
+            f"profile {profile_id} requires an OmoideEvalLoraLoader node",
+        )
     for node_id, node_class in binding.required_workflow_nodes:
         node = _require_mapping(
             workflow.get(node_id),
@@ -700,6 +716,7 @@ def _load_profile(profile_id: str, value: object) -> Profile:
         character_threshold=binding.character_threshold,
         input_json_node_id=input_json_node_id,
         input_json_input=input_json_input,
+        input_kind=input_kind,
         _workflow=workflow,
     )
 
@@ -754,9 +771,16 @@ def load_config(path: Path) -> BridgeConfig:
             "configuration-error",
             "output_directory is required for image result profiles",
         )
+    lora_root_value = data.get("lora_root", str(DEFAULT_LORA_ROOT))
+    if not isinstance(lora_root_value, str) or not lora_root_value:
+        raise BridgeError("configuration-error", "lora_root must be a string")
+    lora_root = Path(lora_root_value)
+    if not lora_root.is_absolute() or ".." in lora_root.parts:
+        raise BridgeError("configuration-error", "lora_root must be absolute")
     return BridgeConfig(
         comfy_base_url=comfy_base_url,
         staging_directory=staging_directory.resolve(),
         output_directory=(output_directory.resolve() if output_directory else None),
         profiles=MappingProxyType(profiles),
+        lora_root=lora_root.resolve(),
     )

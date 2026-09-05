@@ -14,6 +14,7 @@ import stat
 import threading
 import time
 import io
+import math
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable
@@ -571,6 +572,10 @@ class BridgeService:
                 profile_id: profile.result_kind
                 for profile_id, profile in sorted(self.config.profiles.items())
             },
+            "profile_input_kinds": {
+                profile_id: profile.input_kind
+                for profile_id, profile in sorted(self.config.profiles.items())
+            },
             "unavailable_profiles": unavailable_profiles,
             "active_attempt_id": self._active(),
             "comfy_url": self.config.comfy_base_url,
@@ -881,6 +886,102 @@ class BridgeService:
             raise BridgeError("invalid-params", "repair profile does not accept params")
         return self._execute_image_request(request, action="repair", params=params)
 
+    def _validate_generate_params(self, value: object) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise BridgeError("protocol-error", "params must be an object")
+        required = {"prompt", "seed", "steps", "cfg", "width", "height", "lora_path", "lora_strength"}
+        allowed = required | {"negative"}
+        if set(value) != required and (set(value) - allowed or required - set(value)):
+            raise BridgeError("invalid-params", "generate params fields are invalid")
+        prompt = value.get("prompt")
+        negative = value.get("negative", "")
+        if not isinstance(prompt, str) or not prompt or len(prompt) > 2000:
+            raise BridgeError("invalid-params", "prompt must be 1 to 2000 characters")
+        if not isinstance(negative, str) or len(negative) > 2000:
+            raise BridgeError("invalid-params", "negative must be at most 2000 characters")
+        seed = value.get("seed")
+        steps = value.get("steps")
+        width = value.get("width")
+        height = value.get("height")
+        if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
+            raise BridgeError("invalid-params", "seed must be a non-negative integer")
+        if isinstance(steps, bool) or not isinstance(steps, int) or not 1 <= steps <= 60:
+            raise BridgeError("invalid-params", "steps must be an integer from 1 to 60")
+        for name, dimension in (("width", width), ("height", height)):
+            if isinstance(dimension, bool) or not isinstance(dimension, int) or not 512 <= dimension <= 1536 or dimension % 16:
+                raise BridgeError("invalid-params", f"{name} must be a multiple of 16 from 512 to 1536")
+        for name, maximum in (("cfg", 15.0), ("lora_strength", 2.0)):
+            number = value.get(name)
+            if isinstance(number, bool) or not isinstance(number, (int, float)) or not math.isfinite(float(number)) or not 0 <= float(number) <= maximum:
+                raise BridgeError("invalid-params", f"{name} is outside its limit")
+        lora_value = value.get("lora_path")
+        if not isinstance(lora_value, str) or not lora_value:
+            raise BridgeError("invalid-params", "lora_path must be an absolute path")
+        lora_path = Path(lora_value)
+        if not lora_path.is_absolute() or ".." in lora_path.parts or lora_path.suffix.lower() != ".safetensors":
+            raise BridgeError("invalid-params", "lora_path must be an absolute .safetensors path without traversal")
+        resolved = lora_path.resolve(strict=False)
+        if not resolved.is_relative_to(self.config.lora_root):
+            raise BridgeError("invalid-params", "lora_path is outside the configured datasets root")
+        params = dict(value)
+        params.setdefault("negative", "")
+        return params
+
+    def generate(self, request: dict[str, Any]) -> dict[str, Any]:
+        attempt_id = _canonical_attempt_id(request.get("attempt_id"))
+        profile_id = request.get("profile_id")
+        if not isinstance(profile_id, str) or profile_id not in self.config.profiles:
+            raise BridgeError("unknown-profile", "generate profile is not allowlisted")
+        profile = self.config.profiles[profile_id]
+        if profile.input_kind != "params" or profile.result_kind != "image":
+            raise BridgeError("unknown-profile", "profile does not support generate")
+        params = self._validate_generate_params(request.get("params"))
+        try:
+            encoded = json.dumps(params, allow_nan=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        except (TypeError, ValueError) as error:
+            raise BridgeError("protocol-error", "params must be JSON-compatible") from error
+        if len(encoded) > MAX_PARAMS_BYTES:
+            raise BridgeError("input-limit-exceeded", "params exceeds its byte limit")
+        profile_ready, reason = self._profile_ready(profile)
+        if not profile_ready:
+            raise BridgeError("profile-unavailable", f"generate profile is not ready: {reason or 'unknown'}", retryable=True)
+        if not self._annotation_lock.acquire(blocking=False):
+            raise BridgeError("busy", "another annotation is active", retryable=True)
+        cancel_event = self._set_active(attempt_id)
+        params_sha256 = hashlib.sha256(encoded).hexdigest()
+        try:
+            existing = self.get_attempt(attempt_id)
+            if existing.get("kind") == "result" or existing.get("status") != "unknown":
+                raise BridgeError("attempt-exists", "attempt UUID already exists in Comfy; use get_attempt")
+            self._ensure_empty_queue()
+            if cancel_event.is_set():
+                raise BridgeError("cancelled", "annotation was cancelled")
+            prompt = profile.make_prompt(None, params)
+            metadata = {
+                METADATA_KEY: {
+                    "protocol": PROTOCOL_VERSION,
+                    "attempt_id": attempt_id,
+                    "profile_id": profile.profile_id,
+                    "image_sha256": params_sha256,
+                    "workflow_sha256": profile.workflow_sha256,
+                    "profile_provenance_sha256": profile.provenance_sha256(),
+                }
+            }
+            initial_state: dict[str, Any] | None = None
+            try:
+                submission = self.http.submit(prompt_id=attempt_id, prompt=prompt, extra_data=metadata)
+            except ComfyTransportError:
+                initial_state = self._reconcile_ambiguous_submit(attempt_id, profile)
+            else:
+                if submission.get("prompt_id") != attempt_id:
+                    initial_state = self._reconcile_ambiguous_submit(attempt_id, profile)
+            result = self._poll_result(attempt_id, profile, cancel_event, initial_state=initial_state)
+            result["action"] = "generate"
+            return result
+        finally:
+            self._clear_active(attempt_id)
+            self._annotation_lock.release()
+
     def cancel(self, attempt_id: str) -> dict[str, Any]:
         if self._active() == attempt_id:
             self._remember_cancelled(attempt_id)
@@ -995,6 +1096,13 @@ class BridgeService:
                 },
             )
             return self.repair(request)
+        if action == "generate":
+            _require_request_keys(
+                request,
+                allowed={"protocol", "action", "attempt_id", "profile_id", "params"},
+                required={"protocol", "action", "attempt_id", "profile_id", "params"},
+            )
+            return self.generate(request)
         raise BridgeError("protocol-error", "unsupported action")
 
 

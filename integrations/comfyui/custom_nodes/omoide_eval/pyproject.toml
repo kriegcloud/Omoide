@@ -1,0 +1,9 @@
+[project]
+name = "omoide_eval"
+description = "Omoide LoRA evaluation helpers: params fan-out and path-bound LoRA loading."
+version = "0.1.0"
+license = { text = "MIT" }
+
+[tool.comfy]
+PublisherId = "omoide"
+DisplayName = "Omoide Eval"

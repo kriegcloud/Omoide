@@ -9,6 +9,7 @@ from app.models import (
     DatasetExportLayout,
     DatasetExportStatus,
     TrainingRunStatus,
+    Status,
     TrainingDatasetKind,
 )
 from app.schemas.media import EditOp, MediaPreview
@@ -327,6 +328,7 @@ class TrainingRunRead(BaseModel):
     lr: float | None = None
     rank: int | None = None
     checkpoints: list[str] = Field(default_factory=list)
+    sample_prompts: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -361,6 +363,46 @@ class TrainingPresetRead(BaseModel):
     requires_hf_token: bool
     is_default: bool
     available: bool
+
+
+class EvalBatchRequest(BaseModel):
+    checkpoint: str | None = None
+    prompts: list[str] | None = None
+    seeds: list[int] | None = None
+    lora_strength: float = Field(default=1.0, ge=0, le=2)
+
+
+class EvalSampleRead(BaseModel):
+    id: int
+    batch_id: int
+    prompt_index: int
+    seed: int
+    path: str
+    attempt_id: str
+    likeness: float | None
+    face_count: int | None
+    scored_at: datetime | None
+    error: str | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EvalBatchRead(BaseModel):
+    id: int
+    run_id: int
+    checkpoint_path: str
+    lora_path: str
+    prompts: list[str]
+    seeds: list[int]
+    lora_strength: float
+    status: Status
+    created_at: datetime
+    finished_at: datetime | None
+    error: str | None
+    mean_likeness: float | None = None
+    samples: list[EvalSampleRead] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AutoSelectRequest(BaseModel):

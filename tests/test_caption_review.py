@@ -253,7 +253,7 @@ class CaptionReviewTests(unittest.TestCase):
 
     def test_migration_head_is_single(self):
         script = ScriptDirectory.from_config(Config("alembic.ini"))
-        self.assertEqual(script.get_heads(), ["e8f9a0b1c2d4"])
+        self.assertEqual(script.get_heads(), ["f9a0b1c2d3e5"])
 
 
 if __name__ == "__main__":

@@ -495,6 +495,7 @@ export interface TrainingRun {
   lr?: number | null;
   rank?: number | null;
   checkpoints: string[];
+  sample_prompts: string[];
 }
 
 export interface TrainingSample {
@@ -545,6 +546,44 @@ export interface TrainingPreset {
   requires_hf_token: boolean;
   is_default: boolean;
   available: boolean;
+}
+
+export type EvalBatchStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+
+export interface EvalSample {
+  id: number;
+  batch_id: number;
+  prompt_index: number;
+  seed: number;
+  path: string;
+  attempt_id: string;
+  likeness?: number | null;
+  face_count?: number | null;
+  scored_at?: string | null;
+  error?: string | null;
+}
+
+export interface EvalBatch {
+  id: number;
+  run_id: number;
+  checkpoint_path: string;
+  lora_path: string;
+  prompts: string[];
+  seeds: number[];
+  lora_strength: number;
+  status: EvalBatchStatus;
+  created_at: string;
+  finished_at?: string | null;
+  error?: string | null;
+  mean_likeness?: number | null;
+  samples: EvalSample[];
+}
+
+export interface EvalBatchInput {
+  checkpoint?: string;
+  prompts?: string[];
+  seeds?: number[];
+  lora_strength: number;
 }
 
 export interface TrainingDataset {

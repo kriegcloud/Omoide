@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from functools import partial
 from pathlib import Path
+import re
 from urllib.parse import quote
 
 import yaml
@@ -21,6 +22,8 @@ from app.models import (
     DatasetExportLayout,
     DatasetExportStatus,
     DatasetItem,
+    EvalBatch,
+    EvalSample,
     Face,
     Media,
     MediaAnnotation,
@@ -30,6 +33,7 @@ from app.models import (
     Status,
     TrainingDataset,
     TrainingRun,
+    TrainingRunStatus,
     TrainingSample,
 )
 from app.schemas.dataset import (
@@ -62,6 +66,8 @@ from app.schemas.dataset import (
     DatasetReincludeResult,
     DatasetUpdate,
     FaceSummary,
+    EvalBatchRead,
+    EvalBatchRequest,
     FillGapsRequest,
     FillGapsResult,
     FrameMiningCandidatesRead,
@@ -94,6 +100,8 @@ from app.services.training_presets import (
     get_preset,
     launcher_health,
 )
+from app.services.comfy_annotation import ComfyAnnotationError
+from app.services.comfy_eval import ComfyEvalClient
 from app.services.face_crops import bbox_to_source_pixels, suggest_crop
 from app.services.curation import (
     auto_select_dataset,
@@ -112,6 +120,7 @@ from app.tasks.dataset_export import export_dataset
 from app.tasks.dataset_caption_generation import generate_dataset_captions
 from app.tasks.backfill import run_pose_backfill
 from app.tasks.dataset_frame_mining import mine_dataset_frames
+from app.tasks.eval_batch import run_eval_batch
 
 
 router = APIRouter()
@@ -162,7 +171,7 @@ def _run_read(run: TrainingRun) -> TrainingRunRead:
     except (KeyError, IndexError, TypeError, ValueError, yaml.YAMLError):
         pass
     return TrainingRunRead.model_validate(run).model_copy(
-        update={"checkpoints": run_checkpoints(run), "lr": lr, "rank": rank}
+        update={"checkpoints": run_checkpoints(run), "sample_prompts": _run_sample_prompts(run), "lr": lr, "rank": rank}
     )
 
 
@@ -211,6 +220,53 @@ def _dataset_read(session: Session, dataset: TrainingDataset) -> DatasetRead:
         cover=_media_preview(cover) if cover else None,
         last_export=_export_read(last_export) if last_export else None,
     )
+
+
+def eval_client() -> ComfyEvalClient:
+    return ComfyEvalClient(settings.repairs.inference_socket_path, settings.repairs.timeout_seconds)
+
+
+def _eval_read(session: Session, batch: EvalBatch, *, include_samples: bool = False) -> EvalBatchRead:
+    samples = list(session.exec(
+        select(EvalSample).where(EvalSample.batch_id == batch.id).order_by(EvalSample.prompt_index, EvalSample.seed, EvalSample.id)
+    ).all())
+    scores = [sample.likeness for sample in samples if sample.likeness is not None]
+    return EvalBatchRead.model_validate(batch).model_copy(update={
+        "mean_likeness": sum(scores) / len(scores) if scores else None,
+        "samples": samples if include_samples else [],
+    })
+
+
+def _run_sample_prompts(run: TrainingRun) -> list[str]:
+    try:
+        config = yaml.safe_load(run.config_yaml)
+        prompts = config["config"]["process"][0]["sample"]["prompts"]
+    except (KeyError, IndexError, TypeError, yaml.YAMLError):
+        return []
+    return [str(prompt).strip() for prompt in prompts if str(prompt).strip()] if isinstance(prompts, list) else []
+
+
+def _default_eval_checkpoint(run: TrainingRun) -> str | None:
+    checkpoints = run_checkpoints(run)
+    unstepped = [path for path in checkpoints if re.search(r"(?:^|[_-])\d+$", Path(path).stem) is None]
+    if unstepped:
+        return sorted(unstepped)[-1]
+    stepped: list[tuple[int, str]] = []
+    for path in checkpoints:
+        match = re.search(r"(?:^|[_-])(\d+)$", Path(path).stem)
+        if match:
+            stepped.append((int(match.group(1)), path))
+    return max(stepped, default=(0, None))[1]
+
+
+def _eval_lora_path(checkpoint: Path) -> str:
+    datasets_dir = settings.general.resolved_datasets_dir().resolve()
+    if settings.general.datasets_host_root is not None:
+        try:
+            return str(settings.general.datasets_host_root.resolve() / checkpoint.relative_to(datasets_dir))
+        except ValueError:
+            pass
+    return str(checkpoint)
 
 
 def _unique_slug(session: Session, base: str) -> str:
@@ -272,6 +328,104 @@ def list_training_presets() -> list[TrainingPresetRead]:
         )
         for preset in PRESETS.values()
     ]
+
+
+@router.post("/runs/{run_id}/eval", response_model=EvalBatchRead)
+def start_eval_batch(
+    run_id: int,
+    payload: EvalBatchRequest,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+) -> EvalBatchRead:
+    _mutating()
+    if not settings.repairs.enabled:
+        raise HTTPException(status_code=503, detail="ComfyUI evaluation is disabled")
+    try:
+        health = eval_client().health()
+    except ComfyAnnotationError as exc:
+        raise HTTPException(status_code=503, detail=exc.message) from exc
+    if settings.repairs.eval_profile_id not in health.profiles:
+        raise HTTPException(status_code=503, detail="ComfyUI evaluation profile is unavailable")
+    run = session.get(TrainingRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Training run not found")
+    if run.status != TrainingRunStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="Training run must be completed before evaluation")
+    checkpoint_value = payload.checkpoint or _default_eval_checkpoint(run)
+    if not checkpoint_value:
+        raise HTTPException(status_code=409, detail="Training run has no checkpoint")
+    checkpoint = Path(checkpoint_value).resolve()
+    run_dir = Path(run.run_dir).resolve()
+    available = {str(Path(path).resolve()) for path in run_checkpoints(run)}
+    if str(checkpoint) not in available or not checkpoint.is_relative_to(run_dir) or checkpoint.suffix.lower() != ".safetensors" or not checkpoint.is_file():
+        raise HTTPException(status_code=409, detail="Checkpoint is not a valid file for this run")
+    prompts = payload.prompts if payload.prompts is not None else _run_sample_prompts(run)
+    prompts = [prompt.strip() for prompt in prompts if prompt.strip()]
+    if not prompts or any(len(prompt) > 2000 for prompt in prompts):
+        raise HTTPException(status_code=422, detail="Evaluation requires prompts up to 2000 characters")
+    seeds = payload.seeds if payload.seeds is not None else [1, 2, 3, 4]
+    if not seeds or any(isinstance(seed, bool) or seed < 0 for seed in seeds):
+        raise HTTPException(status_code=422, detail="Evaluation seeds must be non-negative integers")
+    batch = EvalBatch(
+        run_id=run.id,
+        checkpoint_path=str(checkpoint),
+        lora_path=_eval_lora_path(checkpoint),
+        prompts=prompts,
+        seeds=list(dict.fromkeys(seeds)),
+        lora_strength=payload.lora_strength,
+    )
+    session.add(batch)
+    session.commit()
+    session.refresh(batch)
+    background_tasks.add_task(run_eval_batch, batch.id)
+    return _eval_read(session, batch)
+
+
+@router.get("/runs/{run_id}/evals", response_model=list[EvalBatchRead])
+def list_eval_batches(run_id: int, session: Session = Depends(get_session)) -> list[EvalBatchRead]:
+    if session.get(TrainingRun, run_id) is None:
+        raise HTTPException(status_code=404, detail="Training run not found")
+    batches = session.exec(select(EvalBatch).where(EvalBatch.run_id == run_id).order_by(EvalBatch.created_at.desc(), EvalBatch.id.desc())).all()
+    return [_eval_read(session, batch) for batch in batches]
+
+
+@router.get("/evals/{batch_id}", response_model=EvalBatchRead)
+def get_eval_batch(batch_id: int, session: Session = Depends(get_session)) -> EvalBatchRead:
+    batch = session.get(EvalBatch, batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="Evaluation batch not found")
+    return _eval_read(session, batch, include_samples=True)
+
+
+@router.get("/evals/{batch_id}/samples/{sample_id}/image", response_class=FileResponse)
+def get_eval_sample_image(batch_id: int, sample_id: int, session: Session = Depends(get_session)) -> FileResponse:
+    batch = session.get(EvalBatch, batch_id)
+    sample = session.get(EvalSample, sample_id)
+    if batch is None or sample is None or sample.batch_id != batch_id:
+        raise HTTPException(status_code=404, detail="Evaluation sample not found")
+    run = session.get(TrainingRun, batch.run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Training run not found")
+    run_dir = Path(run.run_dir).resolve()
+    sample_path = Path(sample.path).resolve()
+    if not sample_path.is_relative_to(run_dir) or not sample_path.is_file():
+        raise HTTPException(status_code=404, detail="Evaluation sample image not found")
+    return FileResponse(sample_path)
+
+
+@router.post("/evals/{batch_id}/cancel", response_model=EvalBatchRead)
+def cancel_eval_batch(batch_id: int, session: Session = Depends(get_session)) -> EvalBatchRead:
+    _mutating()
+    batch = session.get(EvalBatch, batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="Evaluation batch not found")
+    if batch.status in {Status.PENDING, Status.RUNNING}:
+        batch.status = Status.CANCELLED
+        batch.finished_at = datetime.now()
+        session.add(batch)
+        session.commit()
+        session.refresh(batch)
+    return _eval_read(session, batch)
 
 
 @router.get("", response_model=list[DatasetRead])

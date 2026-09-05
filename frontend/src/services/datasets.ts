@@ -26,6 +26,8 @@ import type {
   FrameMiningCandidates,
   DatasetDedupeInput,
   DatasetDedupeResult,
+  EvalBatch,
+  EvalBatchInput,
 } from "../types";
 import type { EditOp, FilerobotDesignState } from "../utils/editorOps";
 
@@ -105,6 +107,13 @@ export const rescoreTrainingRun = (runId: number) => fetch(`${API}/api/datasets/
   method: "POST",
 }).then(json<{ queued: number }>);
 export const trainingSampleImageUrl = (runId: number, sampleId: number) => `${API}/api/datasets/runs/${runId}/samples/${sampleId}/image`;
+export const createEvalBatch = (runId: number, input: EvalBatchInput) => fetch(`${API}/api/datasets/runs/${runId}/eval`, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+}).then(json<EvalBatch>);
+export const getEvalBatches = (runId: number) => fetch(`${API}/api/datasets/runs/${runId}/evals`).then(json<EvalBatch[]>);
+export const getEvalBatch = (batchId: number) => fetch(`${API}/api/datasets/evals/${batchId}`).then(json<EvalBatch>);
+export const cancelEvalBatch = (batchId: number) => fetch(`${API}/api/datasets/evals/${batchId}/cancel`, { method: "POST" }).then(json<EvalBatch>);
+export const evalSampleImageUrl = (batchId: number, sampleId: number) => `${API}/api/datasets/evals/${batchId}/samples/${sampleId}/image`;
 export const createDatasetFromPerson = (personId: number) => fetch(`${API}/api/datasets/from-person/${personId}`, { method: "POST" }).then(json<TrainingDataset>);
 export const datasetManifestUrl = (exportId: number) => `${API}/api/datasets/exports/${exportId}/manifest`;
 export const getDatasetAnalysis = (id: number) => fetch(`${API}/api/datasets/${id}/analysis`).then(json<DatasetAnalysis>);
