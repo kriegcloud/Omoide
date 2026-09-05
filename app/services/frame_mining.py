@@ -75,15 +75,42 @@ class FrameCandidate:
         }
 
 
-def _dedupe_timestamps(values: Iterable[float], limit: int) -> list[float]:
+def _dedupe_timestamps(values: Iterable[float], limit: int | None) -> list[float]:
     result: list[float] = []
     for value in sorted(max(0.0, float(item)) for item in values):
         if result and value - result[-1] < TIMESTAMP_DEDUPE_SECONDS:
             continue
         result.append(value)
-        if len(result) >= limit:
+        if limit is not None and len(result) >= limit:
             break
     return result
+
+
+def _spread_timestamps(
+    values: list[float], priority: Iterable[float], limit: int
+) -> list[float]:
+    """Cap candidates while keeping every priority moment and spreading the rest.
+
+    Truncating a sorted list would sample only the start of a long scene and
+    drop later sightings of the subject; instead the known face moments are
+    kept and the remaining grid samples are picked evenly across the video.
+    """
+    if len(values) <= limit:
+        return values
+    anchors = [float(item) for item in priority]
+    kept = [
+        value
+        for value in values
+        if any(abs(value - anchor) <= TIMESTAMP_DEDUPE_SECONDS for anchor in anchors)
+    ][:limit]
+    kept_set = set(kept)
+    rest = [value for value in values if value not in kept_set]
+    room = limit - len(kept)
+    if room > 0 and rest:
+        positions = np.linspace(0, len(rest) - 1, num=min(room, len(rest)))
+        indices = sorted({int(round(position)) for position in positions})
+        kept.extend(rest[index] for index in indices)
+    return sorted(kept)
 
 
 def candidate_timestamps(
@@ -127,7 +154,8 @@ def candidate_timestamps(
             value += interval
     if duration:
         samples = [min(value, duration) for value in samples]
-    return _dedupe_timestamps(samples, max_candidates)
+    merged = _dedupe_timestamps(samples, None)
+    return _spread_timestamps(merged, face_times, max_candidates)
 
 
 def _phash(frame: np.ndarray) -> str:

@@ -144,6 +144,29 @@ class FrameMiningTests(unittest.TestCase):
             self.assertEqual(values, [0.0, 0.5, 1.0, 1.5])
             self.assertTrue(all(right - left >= 0.25 for left, right in zip(values, values[1:])))
 
+    def test_candidate_timestamps_keep_face_moments_and_spread_across_long_scenes(self):
+        with Session(self.engine) as session:
+            person, _, video = self.records(session, self.video())
+            video.duration = 100.0
+            session.add(video)
+            session.add_all(
+                [
+                    Scene(media_id=video.id, start_time=0.0, end_time=100.0),
+                    Face(media_id=video.id, person_id=person.id, bbox=[0, 0, 10, 10], timestamp=17.2),
+                    Face(media_id=video.id, person_id=person.id, bbox=[0, 0, 10, 10], timestamp=90.0),
+                ]
+            )
+            session.commit()
+            values = candidate_timestamps(
+                session, video, person.id, fps=2.0, max_candidates=48
+            )
+            self.assertEqual(len(values), 48)
+            self.assertTrue(any(abs(value - 17.2) <= 0.25 for value in values))
+            self.assertIn(90.0, values)
+            self.assertGreater(max(values), 95.0)
+            self.assertLess(min(values), 1.0)
+            self.assertEqual(values, sorted(values))
+
     def test_identity_filter_keeps_only_matching_faces(self):
         miner = FrameMiner.__new__(FrameMiner)
         miner.processor = SimpleNamespace(
