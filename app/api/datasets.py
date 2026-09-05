@@ -4,8 +4,9 @@ from datetime import datetime
 from functools import partial
 from pathlib import Path
 
+import yaml
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
@@ -16,11 +17,14 @@ from app.database import get_session
 from app.models import (
     DatasetExport,
     DatasetExportLayout,
+    DatasetExportStatus,
     DatasetItem,
     Face,
     Media,
     Person,
     TrainingDataset,
+    TrainingRun,
+    TrainingSample,
 )
 from app.schemas.dataset import (
     AutoSelectRequest,
@@ -40,9 +44,18 @@ from app.schemas.dataset import (
     DatasetUpdate,
     FaceSummary,
     RegularizationRequest,
+    TrainingRunRead,
+    TrainingRunRequest,
+    TrainingSampleRead,
 )
 from app.schemas.media import MediaPreview
 from app.services.datasets import resolve_caption, slugify
+from app.services.training_runs import (
+    cancel_run,
+    create_run,
+    reconcile_runs,
+    run_checkpoints,
+)
 from app.services.face_crops import bbox_to_source_pixels, suggest_crop
 from app.services.curation import (
     auto_select_dataset,
@@ -87,6 +100,12 @@ def _export_read(export: DatasetExport) -> DatasetExportRead:
         **export.model_dump(),
         host_output_dir=_host_output_dir(export.output_dir),
         launch_command=("python run.py config.yaml" if export.layout == DatasetExportLayout.AI_TOOLKIT else None),
+    )
+
+
+def _run_read(run: TrainingRun) -> TrainingRunRead:
+    return TrainingRunRead.model_validate(run).model_copy(
+        update={"checkpoints": run_checkpoints(run)}
     )
 
 
@@ -484,3 +503,112 @@ def list_exports(dataset_id: int, session: Session = Depends(get_session)) -> li
         .order_by(DatasetExport.created_at.desc())
     ).all()
     return [_export_read(export) for export in exports]
+
+
+@router.post("/{dataset_id}/train", response_model=TrainingRunRead)
+def start_training_run(
+    dataset_id: int,
+    payload: TrainingRunRequest,
+    session: Session = Depends(get_session),
+) -> TrainingRunRead:
+    _mutating()
+    dataset = _dataset_or_404(session, dataset_id)
+    if payload.export_id is not None:
+        export = session.get(DatasetExport, payload.export_id)
+        if export is None or export.dataset_id != dataset_id:
+            raise HTTPException(status_code=404, detail="Dataset export not found")
+        if export.status != DatasetExportStatus.COMPLETED:
+            raise HTTPException(status_code=409, detail="Dataset export is not completed")
+    else:
+        export = session.exec(
+            select(DatasetExport)
+            .where(
+                DatasetExport.dataset_id == dataset_id,
+                DatasetExport.status == DatasetExportStatus.COMPLETED,
+            )
+            .order_by(DatasetExport.created_at.desc(), DatasetExport.id.desc())
+        ).first()
+        if export is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Complete a dataset export before starting training",
+            )
+    try:
+        run = create_run(session, dataset, export, payload.model_dump())
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _run_read(run)
+
+
+@router.get("/{dataset_id}/runs", response_model=list[TrainingRunRead])
+def list_training_runs(
+    dataset_id: int, session: Session = Depends(get_session)
+) -> list[TrainingRunRead]:
+    _dataset_or_404(session, dataset_id)
+    reconcile_runs(session)
+    runs = session.exec(
+        select(TrainingRun)
+        .where(TrainingRun.dataset_id == dataset_id)
+        .order_by(TrainingRun.created_at.desc(), TrainingRun.id.desc())
+    ).all()
+    return [_run_read(run) for run in runs]
+
+
+@router.get("/runs/{run_id}", response_model=TrainingRunRead)
+def get_training_run(
+    run_id: int, session: Session = Depends(get_session)
+) -> TrainingRunRead:
+    reconcile_runs(session)
+    run = session.get(TrainingRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Training run not found")
+    return _run_read(run)
+
+
+@router.post("/runs/{run_id}/cancel", response_model=TrainingRunRead)
+def cancel_training_run(
+    run_id: int, session: Session = Depends(get_session)
+) -> TrainingRunRead:
+    _mutating()
+    run = session.get(TrainingRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Training run not found")
+    try:
+        return _run_read(cancel_run(session, run))
+    except OSError as exc:
+        raise HTTPException(status_code=409, detail=f"Could not request cancellation: {exc}") from exc
+
+
+@router.get("/runs/{run_id}/samples", response_model=list[TrainingSampleRead])
+def list_training_samples(
+    run_id: int, session: Session = Depends(get_session)
+) -> list[TrainingSampleRead]:
+    run = session.get(TrainingRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Training run not found")
+    reconcile_runs(session)
+    return list(
+        session.exec(
+            select(TrainingSample)
+            .where(TrainingSample.run_id == run_id)
+            .order_by(TrainingSample.step, TrainingSample.id)
+        ).all()
+    )
+
+
+@router.get("/runs/{run_id}/samples/{sample_id}/image", response_class=FileResponse)
+def get_training_sample_image(
+    run_id: int,
+    sample_id: int,
+    session: Session = Depends(get_session),
+) -> FileResponse:
+    run = session.get(TrainingRun, run_id)
+    sample = session.get(TrainingSample, sample_id)
+    if run is None or sample is None or sample.run_id != run_id:
+        raise HTTPException(status_code=404, detail="Training sample not found")
+    run_dir = Path(run.run_dir).resolve()
+    sample_path = Path(sample.path).resolve()
+    if not sample_path.is_relative_to(run_dir) or not sample_path.is_file():
+        raise HTTPException(status_code=404, detail="Training sample image not found")
+    return FileResponse(sample_path)

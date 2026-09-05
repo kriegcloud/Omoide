@@ -68,6 +68,14 @@ class DatasetExportStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class TrainingRunStatus(StrEnum):
+    REQUESTED = "requested"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class ImageRepairStatus(StrEnum):
     CREATED = "created"
     QUEUED = "queued"
@@ -506,6 +514,46 @@ class DatasetExport(SQLModel, table=True):
     error: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.now, index=True)
     finished_at: datetime | None = Field(default=None)
+
+
+class TrainingRun(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    dataset_id: int = Field(
+        foreign_key="trainingdataset.id", ondelete="CASCADE", index=True
+    )
+    export_id: int = Field(
+        foreign_key="datasetexport.id", ondelete="CASCADE", index=True
+    )
+    backend: str = Field(default="ai_toolkit")
+    status: TrainingRunStatus = Field(
+        default=TrainingRunStatus.REQUESTED, index=True
+    )
+    run_dir: str
+    config_yaml: str
+    steps: int
+    current_step: int = Field(default=0)
+    total_steps: int = Field(default=0)
+    last_loss: float | None = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.now, index=True)
+    started_at: datetime | None = Field(default=None)
+    finished_at: datetime | None = Field(default=None)
+    status_updated_at: datetime | None = Field(default=None)
+    last_sample_step: int = Field(default=0)
+    error: str | None = Field(default=None)
+
+
+class TrainingSample(SQLModel, table=True):
+    __table_args__ = (
+        sa.UniqueConstraint("run_id", "path", name="uq_trainingsample_run_path"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    run_id: int = Field(
+        foreign_key="trainingrun.id", ondelete="CASCADE", index=True
+    )
+    step: int = Field(index=True)
+    path: str
+    created_at: datetime = Field(default_factory=datetime.now, index=True)
 
 
 class Scene(SQLModel, table=True):

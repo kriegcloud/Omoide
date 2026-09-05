@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly ENV_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/omoide/train-launcher.env"
+readonly DEFAULT_DATASETS_ROOT="$HOME/.local/share/omoide-portal/datasets"
+
+if [[ ! -r "$ENV_FILE" ]]; then
+  printf 'Omoide training environment is missing: %s\n' "$ENV_FILE" >&2
+  exit 1
+fi
+
+set -a
+# This is a private, user-owned systemd environment file (chmod 600).
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
+: "${AI_TOOLKIT_DIR:?AI_TOOLKIT_DIR must be set in $ENV_FILE}"
+: "${AI_TOOLKIT_PYTHON:?AI_TOOLKIT_PYTHON must be set in $ENV_FILE}"
+readonly DATASETS_ROOT="${OMOIDE_DATASETS_ROOT:-$DEFAULT_DATASETS_ROOT}"
+
+if [[ ! -d "$AI_TOOLKIT_DIR" || ! -f "$AI_TOOLKIT_DIR/run.py" ]]; then
+  printf 'AI_TOOLKIT_DIR does not contain run.py: %s\n' "$AI_TOOLKIT_DIR" >&2
+  exit 1
+fi
+if [[ ! -x "$AI_TOOLKIT_PYTHON" ]]; then
+  printf 'AI_TOOLKIT_PYTHON is not executable: %s\n' "$AI_TOOLKIT_PYTHON" >&2
+  exit 1
+fi
+if [[ ! -d "$DATASETS_ROOT" ]]; then
+  exit 0
+fi
+
+# No CUDA variables are synthesized. The ROCm compatibility override is only
+# exported when the user deliberately included it in train-launcher.env.
+if [[ -n "${HSA_OVERRIDE_GFX_VERSION:-}" ]]; then
+  export HSA_OVERRIDE_GFX_VERSION
+else
+  unset HSA_OVERRIDE_GFX_VERSION
+fi
+
+while IFS= read -r -d '' requested; do
+  run_dir="${requested%/REQUESTED}"
+  started="$run_dir/STARTED"
+  if ! mv "$requested" "$started" 2>/dev/null; then
+    continue
+  fi
+
+  "$AI_TOOLKIT_PYTHON" - "$AI_TOOLKIT_DIR" "$run_dir" <<'PY'
+import json
+import os
+import re
+import selectors
+import signal
+import subprocess
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+toolkit_dir = Path(sys.argv[1])
+run_dir = Path(sys.argv[2])
+config_path = run_dir / "config.yaml"
+log_path = run_dir / "train.log"
+status_path = run_dir / "status.json"
+step = 0
+total = 0
+loss = None
+last_write = 0.0
+
+
+def now() -> str:
+    return datetime.now().astimezone().isoformat()
+
+
+def write_status(status: str, *, error=None, checkpoints=None, force=False) -> None:
+    global last_write
+    current = time.monotonic()
+    if not force and current - last_write < 5:
+        return
+    payload = {
+        "status": status,
+        "step": step,
+        "total": total,
+        "loss": loss,
+        "updated_at": now(),
+    }
+    if error:
+        payload["error"] = error
+    if checkpoints is not None:
+        payload["checkpoints"] = checkpoints
+    temporary = status_path.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(status_path)
+    last_write = current
+
+
+def parse_progress(text: str) -> None:
+    global step, total, loss
+    progress = re.search(r"(?<![\d.])(\d+)\s*/\s*(\d+)(?![\d.])", text)
+    if progress:
+        step = max(step, int(progress.group(1)))
+        total = max(total, int(progress.group(2)))
+    loss_match = re.search(
+        r"\bloss\s*[:=]\s*(-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)",
+        text,
+        re.IGNORECASE,
+    )
+    if loss_match:
+        try:
+            loss = float(loss_match.group(1))
+        except ValueError:
+            pass
+
+
+write_status("running", force=True)
+cancelled = False
+return_code = 1
+process = None
+try:
+    with log_path.open("ab", buffering=0) as log:
+        process = subprocess.Popen(
+            [sys.executable, "run.py", str(config_path)],
+            cwd=toolkit_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
+            start_new_session=True,
+        )
+        selector = selectors.DefaultSelector()
+        selector.register(process.stdout, selectors.EVENT_READ)
+        pending = b""
+        while process.poll() is None:
+            if (run_dir / "CANCEL").exists():
+                cancelled = True
+                os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                break
+            for key, _ in selector.select(timeout=1):
+                chunk = os.read(key.fileobj.fileno(), 65536)
+                if not chunk:
+                    continue
+                log.write(chunk)
+                pending += chunk
+                records = re.split(br"[\r\n]+", pending)
+                pending = records.pop()
+                for record in records:
+                    parse_progress(record.decode("utf-8", errors="replace"))
+            write_status("running")
+        if process.stdout is not None:
+            remainder = process.stdout.read() or b""
+            if remainder:
+                log.write(remainder)
+                pending += remainder
+        if pending:
+            parse_progress(pending.decode("utf-8", errors="replace"))
+        return_code = process.wait()
+except Exception as exc:
+    with log_path.open("ab") as log:
+        log.write((f"\nlauncher error: {exc}\n").encode())
+
+if cancelled:
+    write_status("cancelled", force=True)
+    (run_dir / "FAILED").write_text(now() + "\n", encoding="utf-8")
+elif return_code == 0:
+    checkpoints = [
+        str(path) for path in sorted((run_dir / "output").rglob("*.safetensors"))
+    ] if (run_dir / "output").is_dir() else []
+    write_status("completed", checkpoints=checkpoints, force=True)
+    (run_dir / "DONE").write_text(now() + "\n", encoding="utf-8")
+else:
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        error = "\n".join(lines[-20:]) or f"ai-toolkit exited with status {return_code}"
+    except OSError:
+        error = f"ai-toolkit exited with status {return_code}"
+    write_status("failed", error=error, force=True)
+    (run_dir / "FAILED").write_text(now() + "\n", encoding="utf-8")
+PY
+done < <(find "$DATASETS_ROOT" -type f -path '*/runs/*/REQUESTED' -print0)

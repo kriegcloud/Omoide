@@ -11,6 +11,9 @@ import type {
   CropAspect,
   CropFraming,
   DatasetBatchCropResult,
+  TrainingRun,
+  TrainingRunInput,
+  TrainingSample,
 } from "../types";
 import type { EditOp, FilerobotDesignState } from "../utils/editorOps";
 
@@ -55,6 +58,15 @@ export const createDatasetExport = (id: number, layout?: DatasetExportLayout) =>
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ layout }),
 }).then(json<DatasetExport>);
 export const getDatasetExports = (id: number) => fetch(`${API}/api/datasets/${id}/exports`).then(json<DatasetExport[]>);
+export const getTrainingRuns = (id: number) => fetch(`${API}/api/datasets/${id}/runs`).then(json<TrainingRun[]>);
+export const createTrainingRun = (id: number, input: TrainingRunInput) => fetch(`${API}/api/datasets/${id}/train`, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+}).then(json<TrainingRun>);
+export const cancelTrainingRun = (runId: number) => fetch(`${API}/api/datasets/runs/${runId}/cancel`, {
+  method: "POST",
+}).then(json<TrainingRun>);
+export const getTrainingSamples = (runId: number) => fetch(`${API}/api/datasets/runs/${runId}/samples`).then(json<TrainingSample[]>);
+export const trainingSampleImageUrl = (runId: number, sampleId: number) => `${API}/api/datasets/runs/${runId}/samples/${sampleId}/image`;
 export const createDatasetFromPerson = (personId: number) => fetch(`${API}/api/datasets/from-person/${personId}`, { method: "POST" }).then(json<TrainingDataset>);
 export const datasetManifestUrl = (exportId: number) => `${API}/api/datasets/exports/${exportId}/manifest`;
 export const getDatasetAnalysis = (id: number) => fetch(`${API}/api/datasets/${id}/analysis`).then(json<DatasetAnalysis>);

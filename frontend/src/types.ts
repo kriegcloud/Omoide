@@ -467,6 +467,43 @@ export interface DatasetExport {
   launch_command?: string | null;
 }
 
+export type TrainingRunStatus = "requested" | "running" | "completed" | "failed" | "cancelled";
+
+export interface TrainingRun {
+  id: number;
+  dataset_id: number;
+  export_id: number;
+  backend: string;
+  status: TrainingRunStatus;
+  run_dir: string;
+  steps: number;
+  current_step: number;
+  total_steps: number;
+  last_loss?: number | null;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  status_updated_at?: string | null;
+  last_sample_step: number;
+  error?: string | null;
+  checkpoints: string[];
+}
+
+export interface TrainingSample {
+  id: number;
+  run_id: number;
+  step: number;
+  created_at: string;
+}
+
+export interface TrainingRunInput {
+  export_id?: number;
+  steps: number;
+  lr: number;
+  rank: number;
+  sample_prompts?: string[];
+}
+
 export interface TrainingDataset {
   id: number;
   name: string;

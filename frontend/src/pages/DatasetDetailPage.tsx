@@ -29,6 +29,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import ImageEditorDialog from "../components/ImageEditorDialog";
 import BatchCropDialog from "../components/BatchCropDialog";
 import RepairDialog from "../components/RepairDialog";
+import TrainingRunsPanel from "../components/TrainingRunsPanel";
 import config from "../config";
 import { API } from "../config";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
@@ -44,11 +45,12 @@ import {
   getDatasetExports,
   getDatasetAnalysis,
   getDatasetItems,
+  getTrainingRuns,
   removeDatasetItems,
   updateDataset,
   updateDatasetItem,
 } from "../services/datasets";
-import type { AutoSelectInput, DatasetAnalysis, DatasetExport, DatasetExportLayout, DatasetItem, Media, TrainingDataset } from "../types";
+import type { AutoSelectInput, DatasetAnalysis, DatasetExport, DatasetExportLayout, DatasetItem, Media, TrainingDataset, TrainingRun } from "../types";
 import type { FilerobotDesignState } from "../utils/editorOps";
 import { encodeFilePath } from "../urlUtils";
 
@@ -63,6 +65,7 @@ export default function DatasetDetailPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const { ref: loadMoreRef, inView: loadMoreInView } = useInView({ rootMargin: "400px" });
   const [exports, setExports] = useState<DatasetExport[]>([]);
+  const [runs, setRuns] = useState<TrainingRun[]>([]);
   const [analysis, setAnalysis] = useState<DatasetAnalysis | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [sort, setSort] = useState("position");
@@ -108,15 +111,17 @@ export default function DatasetDetailPage() {
 
   const load = useCallback(async () => {
     try {
-      const [nextDataset, page, history] = await Promise.all([
+      const [nextDataset, page, history, runHistory] = await Promise.all([
         getDataset(datasetId),
         getDatasetItems(datasetId, null, sort),
         getDatasetExports(datasetId),
+        getTrainingRuns(datasetId),
       ]);
       setDataset(nextDataset);
       setItems(page.items);
       setNextCursor(page.next_cursor ?? null);
       setExports(history);
+      setRuns(runHistory);
       setExportLayout(nextDataset.export_layout);
       void loadAnalysis();
     } catch (reason) {
@@ -133,6 +138,16 @@ export default function DatasetDetailPage() {
     const timer = window.setInterval(() => void getDatasetExports(datasetId).then(setExports), 3000);
     return () => window.clearInterval(timer);
   }, [datasetId, hasRunning]);
+  const hasActiveRun = runs.some((entry) => entry.status === "requested" || entry.status === "running");
+  useEffect(() => {
+    if (!hasActiveRun) return;
+    const timer = window.setInterval(() => {
+      void getTrainingRuns(datasetId)
+        .then(setRuns)
+        .catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to refresh training runs"));
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [datasetId, hasActiveRun]);
 
   useEffect(() => {
     if (!loadMoreInView || !nextCursor || loadingMore || tab !== 0) return;
@@ -201,7 +216,7 @@ export default function DatasetDetailPage() {
         </Stack>
       </Paper>
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
-      <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ mb: 2 }}><Tab label={`Items (${dataset.item_count ?? items.length})`} /><Tab label="Analysis" /><Tab label={`Exports (${exports.length})`} /></Tabs>
+      <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ mb: 2 }}><Tab label={`Items (${dataset.item_count ?? items.length})`} /><Tab label="Analysis" /><Tab label={`Exports (${exports.length})`} /><Tab label={`Runs (${runs.length})`} /></Tabs>
 
       {tab === 0 && (
         <>
@@ -281,6 +296,15 @@ export default function DatasetDetailPage() {
             </Paper>
           ))}
         </Stack>
+      )}
+
+      {tab === 3 && (
+        <TrainingRunsPanel
+          datasetId={datasetId}
+          exports={exports}
+          runs={runs}
+          onRunsChange={setRuns}
+        />
       )}
 
       <Dialog open={autoOpen} onClose={() => setAutoOpen(false)} fullWidth maxWidth="sm">

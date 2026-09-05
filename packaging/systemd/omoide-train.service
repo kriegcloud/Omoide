@@ -1,0 +1,20 @@
+[Unit]
+Description=Process pending Omoide LoRA training runs
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/elpresidank/.local/bin/omoide-train-launcher
+Nice=5
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=/home/elpresidank/YeeBois/dev/ai-toolkit
+ReadOnlyPaths=-/home/elpresidank/.config/omoide/train-launcher.env
+ReadWritePaths=/home/elpresidank/.local/share/omoide-portal/datasets
+ReadWritePaths=-/home/elpresidank/.cache
+PrivateTmp=true
+LockPersonality=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native

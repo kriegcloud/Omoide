@@ -7,6 +7,7 @@ from app.models import (
     DatasetCaptionSource,
     DatasetExportLayout,
     DatasetExportStatus,
+    TrainingRunStatus,
     TrainingDatasetKind,
 )
 from app.schemas.media import EditOp, MediaPreview
@@ -157,6 +158,45 @@ class DatasetExportRead(BaseModel):
     created_at: datetime
     finished_at: datetime | None
     launch_command: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TrainingRunRequest(BaseModel):
+    export_id: int | None = None
+    steps: int = Field(default=2000, gt=0)
+    lr: float = Field(default=1e-4, gt=0)
+    rank: int = Field(default=16, gt=0)
+    sample_prompts: list[str] | None = None
+
+
+class TrainingSampleRead(BaseModel):
+    id: int
+    run_id: int
+    step: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TrainingRunRead(BaseModel):
+    id: int
+    dataset_id: int
+    export_id: int
+    backend: str
+    status: TrainingRunStatus
+    run_dir: str
+    steps: int
+    current_step: int
+    total_steps: int
+    last_loss: float | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+    status_updated_at: datetime | None
+    last_sample_step: int
+    error: str | None
+    checkpoints: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 

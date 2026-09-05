@@ -121,6 +121,7 @@ logging.getLogger("uvicorn.access").setLevel(logging.INFO)
 
 scheduler = AsyncIOScheduler()
 SCAN_JOB_ID = "scan_job"
+TRAINING_RECONCILE_JOB_ID = "training_run_reconcile"
 APP_VERSION = get_app_version()
 server: uvicorn.Server | None = None
 _migrations_lock = threading.Lock()
@@ -391,6 +392,41 @@ def configure_auto_scan_job() -> None:
         logger.info("Scheduler started for auto scan job management.")
 
 
+def reconcile_training_runs_job() -> None:
+    from app.models import TrainingRun, TrainingRunStatus
+    from app.services.training_runs import reconcile_runs
+
+    with Session(db.engine) as session:
+        active = session.exec(
+            select(TrainingRun.id).where(
+                TrainingRun.status.notin_(
+                    (
+                        TrainingRunStatus.COMPLETED,
+                        TrainingRunStatus.FAILED,
+                        TrainingRunStatus.CANCELLED,
+                    )
+                )
+            )
+        ).first()
+        if active is not None:
+            reconcile_runs(session)
+
+
+def configure_training_reconcile_job() -> None:
+    scheduler.add_job(
+        reconcile_training_runs_job,
+        "interval",
+        seconds=20,
+        id=TRAINING_RECONCILE_JOB_ID,
+        misfire_grace_time=10,
+        coalesce=True,
+        replace_existing=True,
+    )
+    if not scheduler.running:
+        scheduler.start()
+        logger.info("Scheduler started for training run reconciliation.")
+
+
 def _cleanup_tasks_on_startup():
     """Cancel 'running' tasks and delete 'pending' tasks left from a previous run."""
     with Session(db.engine) as session:
@@ -519,6 +555,12 @@ async def lifespan(app: FastAPI):
         logger.info("lifespan: auto-scan job configured")
     except Exception as e:
         logger.warning("Auto-scan job setup failed: %s", e)
+    logger.info("lifespan: configuring training run reconciliation...")
+    try:
+        configure_training_reconcile_job()
+        logger.info("lifespan: training run reconciliation configured")
+    except Exception as e:
+        logger.warning("Training run reconciliation setup failed: %s", e)
     logger.info("lifespan: startup complete, serving requests")
     try:
         yield
