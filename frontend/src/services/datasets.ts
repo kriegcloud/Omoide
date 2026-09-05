@@ -16,6 +16,7 @@ import type {
   TrainingHealth,
   TrainingPreset,
   TrainingSample,
+  RunLikeness,
 } from "../types";
 import type { EditOp, FilerobotDesignState } from "../utils/editorOps";
 
@@ -70,6 +71,14 @@ export const cancelTrainingRun = (runId: number) => fetch(`${API}/api/datasets/r
   method: "POST",
 }).then(json<TrainingRun>);
 export const getTrainingSamples = (runId: number) => fetch(`${API}/api/datasets/runs/${runId}/samples`).then(json<TrainingSample[]>);
+export const getTrainingRunLikeness = (runId: number) => fetch(`${API}/api/datasets/runs/${runId}/likeness`).then(json<RunLikeness>);
+export const getDatasetRunLikeness = (id: number, runIds?: number[]) => {
+  const query = runIds?.length ? `?run_ids=${runIds.join(",")}` : "";
+  return fetch(`${API}/api/datasets/${id}/runs/likeness${query}`).then(json<RunLikeness[]>);
+};
+export const rescoreTrainingRun = (runId: number) => fetch(`${API}/api/datasets/runs/${runId}/rescore`, {
+  method: "POST",
+}).then(json<{ queued: number }>);
 export const trainingSampleImageUrl = (runId: number, sampleId: number) => `${API}/api/datasets/runs/${runId}/samples/${sampleId}/image`;
 export const createDatasetFromPerson = (personId: number) => fetch(`${API}/api/datasets/from-person/${personId}`, { method: "POST" }).then(json<TrainingDataset>);
 export const datasetManifestUrl = (exportId: number) => `${API}/api/datasets/exports/${exportId}/manifest`;

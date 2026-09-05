@@ -25,6 +25,9 @@ from app.utils import (
 )
 
 
+MAX_DET_DIM = 1280
+
+
 class FaceProcessor(MediaProcessor):
     name = "faces"
     order = 20
@@ -369,7 +372,6 @@ class FaceProcessor(MediaProcessor):
             # detection sensitivity — the minimum detectable face size in the original
             # equals 16px × (original_size / det_size) regardless of pre-scaling.
             # We still do it to avoid feeding 4032×3024 images into ONNX directly.
-            MAX_DET_DIM = 1280
             if max(h_orig, w_orig) > MAX_DET_DIM:
                 s = MAX_DET_DIM / max(h_orig, w_orig)
                 scene_det = cv2.resize(

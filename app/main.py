@@ -393,23 +393,32 @@ def configure_auto_scan_job() -> None:
 
 
 def reconcile_training_runs_job() -> None:
-    from app.models import TrainingRun, TrainingRunStatus
+    from app.models import TrainingRun, TrainingRunStatus, TrainingSample
+    from app.services.likeness import score_pending_samples
     from app.services.training_runs import reconcile_runs
 
-    with Session(db.engine) as session:
-        active = session.exec(
-            select(TrainingRun.id).where(
-                TrainingRun.status.notin_(
-                    (
-                        TrainingRunStatus.COMPLETED,
-                        TrainingRunStatus.FAILED,
-                        TrainingRunStatus.CANCELLED,
+    try:
+        with Session(db.engine) as session:
+            active = session.exec(
+                select(TrainingRun.id).where(
+                    TrainingRun.status.notin_(
+                        (
+                            TrainingRunStatus.COMPLETED,
+                            TrainingRunStatus.FAILED,
+                            TrainingRunStatus.CANCELLED,
+                        )
                     )
                 )
-            )
-        ).first()
-        if active is not None:
-            reconcile_runs(session)
+            ).first()
+            pending = session.exec(
+                select(TrainingSample.id).where(TrainingSample.scored_at.is_(None))
+            ).first()
+            if active is not None:
+                reconcile_runs(session)
+            if active is not None or pending is not None:
+                score_pending_samples(session, limit=16)
+    except Exception:
+        logger.exception("Training run reconciliation tick failed")
 
 
 def configure_training_reconcile_job() -> None:

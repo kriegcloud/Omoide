@@ -44,6 +44,7 @@ from app.schemas.dataset import (
     DatasetUpdate,
     FaceSummary,
     RegularizationRequest,
+    RunLikenessRead,
     TrainingRunRead,
     TrainingRunRequest,
     TrainingHealthRead,
@@ -112,8 +113,33 @@ def _export_read(export: DatasetExport) -> DatasetExportRead:
 
 
 def _run_read(run: TrainingRun) -> TrainingRunRead:
+    lr: float | None = None
+    rank: int | None = None
+    try:
+        config = yaml.safe_load(run.config_yaml)
+        process = config["config"]["process"][0]
+        lr = float(process["train"]["lr"])
+        rank = int(process["network"]["linear"])
+    except (KeyError, IndexError, TypeError, ValueError, yaml.YAMLError):
+        pass
     return TrainingRunRead.model_validate(run).model_copy(
-        update={"checkpoints": run_checkpoints(run)}
+        update={"checkpoints": run_checkpoints(run), "lr": lr, "rank": rank}
+    )
+
+
+def _likeness_read(session: Session, run: TrainingRun) -> RunLikenessRead:
+    from app.services.likeness import likeness_counts
+
+    summary = run.likeness_summary or {}
+    steps = summary.get("steps") if isinstance(summary, dict) else []
+    scored, pending = likeness_counts(session, run.id)
+    return RunLikenessRead(
+        run_id=run.id,
+        steps=steps if isinstance(steps, list) else [],
+        best_step=run.likeness_best_step,
+        best=run.likeness_best,
+        scored=scored,
+        pending=pending,
     )
 
 
@@ -606,6 +632,26 @@ def list_training_runs(
     return [_run_read(run) for run in runs]
 
 
+@router.get("/{dataset_id}/runs/likeness", response_model=list[RunLikenessRead])
+def compare_training_run_likeness(
+    dataset_id: int,
+    run_ids: str | None = Query(default=None),
+    session: Session = Depends(get_session),
+) -> list[RunLikenessRead]:
+    _dataset_or_404(session, dataset_id)
+    requested: list[int] | None = None
+    if run_ids:
+        try:
+            requested = list(dict.fromkeys(int(value) for value in run_ids.split(",")))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="run_ids must be comma-separated integers") from exc
+    statement = select(TrainingRun).where(TrainingRun.dataset_id == dataset_id)
+    if requested is not None:
+        statement = statement.where(TrainingRun.id.in_(requested))
+    runs = session.exec(statement.order_by(TrainingRun.created_at, TrainingRun.id)).all()
+    return [_likeness_read(session, run) for run in runs]
+
+
 @router.get("/runs/{run_id}", response_model=TrainingRunRead)
 def get_training_run(
     run_id: int, session: Session = Depends(get_session)
@@ -615,6 +661,41 @@ def get_training_run(
     if run is None:
         raise HTTPException(status_code=404, detail="Training run not found")
     return _run_read(run)
+
+
+@router.get("/runs/{run_id}/likeness", response_model=RunLikenessRead)
+def get_training_run_likeness(
+    run_id: int, session: Session = Depends(get_session)
+) -> RunLikenessRead:
+    run = session.get(TrainingRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Training run not found")
+    return _likeness_read(session, run)
+
+
+@router.post("/runs/{run_id}/rescore", status_code=202)
+def rescore_training_run(
+    run_id: int, session: Session = Depends(get_session)
+) -> dict[str, int]:
+    _mutating()
+    run = session.get(TrainingRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Training run not found")
+    samples = session.exec(
+        select(TrainingSample).where(TrainingSample.run_id == run_id)
+    ).all()
+    for sample in samples:
+        sample.likeness = None
+        sample.face_count = None
+        sample.face_bbox = None
+        sample.scored_at = None
+        session.add(sample)
+    run.likeness_best_step = None
+    run.likeness_best = None
+    run.likeness_summary = None
+    session.add(run)
+    session.commit()
+    return {"queued": len(samples)}
 
 
 @router.post("/runs/{run_id}/cancel", response_model=TrainingRunRead)

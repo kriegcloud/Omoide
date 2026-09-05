@@ -26,7 +26,11 @@ from app.models import (
     TrainingDataset,
     TrainingDatasetKind,
 )
-from app.utils import get_person_embedding
+from app.services.embeddings import (
+    cosine_distance,
+    decode_embedding as _decode_embedding,
+    person_centroid as _person_centroid,
+)
 
 
 def _slugify(value: str) -> str:
@@ -62,15 +66,6 @@ def hamming(phash_a: str, phash_b: str) -> int:
     return (int(phash_a, 16) ^ int(phash_b, 16)).bit_count()
 
 
-def cosine_distance(a: np.ndarray, b: np.ndarray) -> float:
-    left = np.asarray(a, dtype=np.float32)
-    right = np.asarray(b, dtype=np.float32)
-    denominator = float(np.linalg.norm(left) * np.linalg.norm(right))
-    if denominator == 0 or not np.isfinite(denominator):
-        return 1.0
-    return float(1.0 - np.clip(np.dot(left, right) / denominator, -1.0, 1.0))
-
-
 def farthest_point_sample(
     vectors: np.ndarray, quality: np.ndarray, target_count: int
 ) -> list[int]:
@@ -91,16 +86,6 @@ def farthest_point_sample(
     return selected
 
 
-def _decode_embedding(value: object) -> np.ndarray | None:
-    if value is None:
-        return None
-    try:
-        vector = np.frombuffer(bytes(value), dtype=np.float32).copy()
-    except (TypeError, ValueError):
-        return None
-    return vector if vector.size else None
-
-
 def _face_embedding(session: Session, face_id: int) -> np.ndarray | None:
     try:
         row = session.exec(
@@ -111,15 +96,6 @@ def _face_embedding(session: Session, face_id: int) -> np.ndarray | None:
     except OperationalError:
         return None
     return _decode_embedding(row[0]) if row else None
-
-
-def _person_centroid(session: Session, person_id: int | None) -> np.ndarray | None:
-    if person_id is None:
-        return None
-    try:
-        return _decode_embedding(get_person_embedding(session, person_id))
-    except OperationalError:
-        return None
 
 
 def _face_area(face: Face) -> int:

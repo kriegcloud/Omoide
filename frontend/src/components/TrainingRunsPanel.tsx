@@ -10,27 +10,36 @@ import {
   DialogContent,
   DialogTitle,
   FormControl,
+  FormControlLabel,
+  IconButton,
   InputLabel,
   LinearProgress,
+  Menu,
   MenuItem,
   Paper,
   Select,
   Stack,
+  Switch,
   TextField,
   Typography,
 } from "@mui/material";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import StopIcon from "@mui/icons-material/Stop";
+import MoreVertIcon from "@mui/icons-material/MoreVert";
 import {
   cancelTrainingRun,
   createTrainingRun,
+  getDatasetRunLikeness,
   getTrainingHealth,
   getTrainingPresets,
+  getTrainingRuns,
   getTrainingSamples,
+  rescoreTrainingRun,
   trainingSampleImageUrl,
 } from "../services/datasets";
-import type { DatasetExport, TrainingHealth, TrainingPreset, TrainingRun, TrainingSample } from "../types";
+import type { DatasetExport, RunLikeness, TrainingHealth, TrainingPreset, TrainingRun, TrainingSample } from "../types";
+import LikenessSparkline from "./LikenessSparkline";
 
 interface TrainingRunsPanelProps {
   datasetId: number;
@@ -42,6 +51,7 @@ interface TrainingRunsPanelProps {
 }
 
 const activeStatuses = new Set<TrainingRun["status"]>(["requested", "running"]);
+const curveColors = ["#7c3aed", "#0891b2", "#dc2626", "#16a34a", "#ea580c", "#2563eb"];
 
 function statusColor(status: TrainingRun["status"]): "default" | "info" | "success" | "error" | "warning" {
   if (status === "completed") return "success";
@@ -80,6 +90,10 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [samples, setSamples] = useState<Record<number, TrainingSample[]>>({});
   const [loadingSamples, setLoadingSamples] = useState<Set<number>>(new Set());
+  const [likeness, setLikeness] = useState<Record<number, RunLikeness>>({});
+  const [compareRuns, setCompareRuns] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
+  const [menuRunId, setMenuRunId] = useState<number | null>(null);
 
   useEffect(() => {
     void Promise.all([getTrainingHealth(), getTrainingPresets()])
@@ -103,6 +117,33 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
       setError(reason instanceof Error ? reason.message : "Could not refresh training samples");
     });
   }, [expanded, runs]);
+
+  useEffect(() => {
+    void getDatasetRunLikeness(datasetId)
+      .then((entries) => setLikeness(Object.fromEntries(entries.map((entry) => [entry.run_id, entry]))))
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load likeness scores"));
+  }, [datasetId, runs]);
+
+  useEffect(() => {
+    if (!Object.values(likeness).some((entry) => entry.pending > 0)) return;
+    const timer = window.setInterval(() => {
+      void getDatasetRunLikeness(datasetId).then(async (entries) => {
+        setLikeness(Object.fromEntries(entries.map((entry) => [entry.run_id, entry])));
+        const visible = entries.filter((entry) => expanded.has(entry.run_id));
+        if (visible.length > 0) {
+          const refreshed = await Promise.all(visible.map((entry) => getTrainingSamples(entry.run_id)));
+          setSamples((current) => ({
+            ...current,
+            ...Object.fromEntries(visible.map((entry, index) => [entry.run_id, refreshed[index]])),
+          }));
+        }
+        if (entries.every((entry) => entry.pending === 0)) {
+          onRunsChange(await getTrainingRuns(datasetId));
+        }
+      }).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not refresh likeness scores"));
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [datasetId, expanded, likeness, onRunsChange]);
 
   const openDialog = () => {
     setExportId(latestExportId ?? "");
@@ -159,9 +200,43 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
             Complete an export before starting a training run.
           </Typography>
         )}
+        {runs.some((run) => run.status === "completed") && (
+          <FormControlLabel
+            sx={{ ml: { sm: "auto" } }}
+            control={<Switch checked={compareRuns} onChange={(event) => setCompareRuns(event.target.checked)} />}
+            label="Compare runs"
+          />
+        )}
       </Stack>
 
       {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
+
+      {compareRuns && (
+        <Paper elevation={0} sx={{ p: 2, border: 1, borderColor: "divider", borderRadius: 3 }}>
+          <Typography variant="subtitle2">Completed-run likeness</Typography>
+          <Box sx={{ mt: 1, minHeight: 84 }}>
+            <LikenessSparkline
+              height={84}
+              series={runs.filter((run) => run.status === "completed").map((run, index) => ({
+                id: run.id,
+                color: curveColors[index % curveColors.length],
+                points: likeness[run.id]?.steps ?? [],
+              }))}
+              label="Comparison of likeness curves for completed training runs"
+            />
+          </Box>
+          <Stack direction="row" gap={1.5} flexWrap="wrap" useFlexGap sx={{ mt: 1 }}>
+            {runs.filter((run) => run.status === "completed").map((run, index) => (
+              <Stack key={run.id} direction="row" spacing={0.75} alignItems="center">
+                <Box sx={{ width: 10, height: 10, borderRadius: "50%", bgcolor: curveColors[index % curveColors.length] }} />
+                <Typography variant="caption">
+                  #{run.id} · {run.base_model} · rank {run.rank ?? "—"} · lr {run.lr == null ? "—" : run.lr.toPrecision(3)} · {run.steps.toLocaleString()} steps
+                </Typography>
+              </Stack>
+            ))}
+          </Stack>
+        </Paper>
+      )}
 
       {runs.length === 0 ? (
         <Box sx={{ py: 6, textAlign: "center" }}>
@@ -178,6 +253,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
           grouped.set(sample.step, [...(grouped.get(sample.step) ?? []), sample]);
         }
         const isExpanded = expanded.has(run.id);
+        const runLikeness = likeness[run.id];
         return (
           <Paper key={run.id} elevation={0} sx={{ border: 1, borderColor: "divider", borderRadius: 3, overflow: "hidden" }}>
             <Box sx={{ p: { xs: 2, md: 2.5 } }}>
@@ -208,6 +284,18 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
                     aria-label={`Training progress: ${run.current_step} of ${total} steps`}
                     sx={{ mt: 1.25, height: 7, borderRadius: 1 }}
                   />
+                  {runLikeness && (
+                    <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ sm: "center" }} sx={{ mt: 1.25 }}>
+                      <Box sx={{ width: { xs: "100%", sm: 180 } }}>
+                        <LikenessSparkline series={[{ id: run.id, color: curveColors[0], points: runLikeness.steps }]} />
+                      </Box>
+                      <Typography variant="body2" color="text.secondary" sx={{ fontVariantNumeric: "tabular-nums" }}>
+                        {runLikeness.best_step == null
+                          ? runLikeness.pending > 0 ? `${runLikeness.pending} pending` : "No likeness scores"
+                          : `Best step ${runLikeness.best_step.toLocaleString()} · ${runLikeness.best?.toFixed(3)}`}
+                      </Typography>
+                    </Stack>
+                  )}
                   {run.error && <Alert severity="error" sx={{ mt: 1.5 }}>{run.error}</Alert>}
                 </Box>
                 <Stack direction="row" spacing={1} alignItems="flex-start">
@@ -235,6 +323,15 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
                   >
                     {isExpanded ? "Hide details" : "View details"}
                   </Button>
+                  <IconButton
+                    aria-label={`Actions for run ${run.id}`}
+                    onClick={(event) => {
+                      setMenuAnchor(event.currentTarget);
+                      setMenuRunId(run.id);
+                    }}
+                  >
+                    <MoreVertIcon />
+                  </IconButton>
                 </Stack>
               </Stack>
             </Box>
@@ -257,18 +354,28 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
                 ) : (
                   <Stack spacing={2.5}>
                     {[...grouped.entries()].sort(([left], [right]) => right - left).map(([step, stepSamples]) => (
-                      <Box key={step}>
+                      <Box
+                        key={step}
+                        sx={step === run.likeness_best_step ? { p: 1.5, mx: -1.5, border: 2, borderColor: "success.main", borderRadius: 2 } : undefined}
+                      >
                         <Typography variant="body2" fontWeight={700} sx={{ mb: 1 }}>Step {step.toLocaleString()}</Typography>
                         <Box sx={{ display: "grid", gridTemplateColumns: { xs: "repeat(2, minmax(0, 1fr))", sm: "repeat(3, minmax(0, 1fr))", lg: "repeat(4, minmax(0, 1fr))" }, gap: 1.5 }}>
                           {stepSamples.map((sample) => (
-                            <Box
-                              key={sample.id}
-                              component="img"
-                              src={trainingSampleImageUrl(run.id, sample.id)}
-                              alt={`Training sample from step ${step}`}
-                              loading="lazy"
-                              sx={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 2, bgcolor: "action.hover" }}
-                            />
+                            <Box key={sample.id} sx={{ position: "relative" }}>
+                              <Box
+                                component="img"
+                                src={trainingSampleImageUrl(run.id, sample.id)}
+                                alt={`Training sample from step ${step}`}
+                                loading="lazy"
+                                sx={{ display: "block", width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 2, bgcolor: "action.hover" }}
+                              />
+                              <Chip
+                                size="small"
+                                label={sample.likeness == null ? sample.face_count === 0 ? "No face" : "Unscored" : sample.likeness.toFixed(3)}
+                                color={sample.likeness == null ? "default" : "success"}
+                                sx={{ position: "absolute", left: 6, bottom: 6, bgcolor: "background.paper" }}
+                              />
+                            </Box>
                           ))}
                         </Box>
                       </Box>
@@ -280,6 +387,33 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
           </Paper>
         );
       })}
+
+      <Menu anchorEl={menuAnchor} open={menuAnchor !== null} onClose={() => setMenuAnchor(null)}>
+        <MenuItem
+          onClick={async () => {
+            const runId = menuRunId;
+            setMenuAnchor(null);
+            if (runId === null) return;
+            try {
+              const result = await rescoreTrainingRun(runId);
+              setLikeness((current) => ({
+                ...current,
+                [runId]: { run_id: runId, steps: [], best_step: null, best: null, scored: 0, pending: result.queued },
+              }));
+              onRunsChange(runs.map((run) => run.id === runId ? { ...run, likeness_best_step: null, likeness_best: null } : run));
+              setSamples((current) => {
+                const next = { ...current };
+                delete next[runId];
+                return next;
+              });
+            } catch (reason) {
+              setError(reason instanceof Error ? reason.message : "Could not queue likeness rescore");
+            }
+          }}
+        >
+          Rescore likeness
+        </MenuItem>
+      </Menu>
 
       <Dialog open={dialogOpen} onClose={() => !submitting && setDialogOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Train LoRA</DialogTitle>

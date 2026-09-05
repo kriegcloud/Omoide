@@ -540,6 +540,11 @@ class TrainingRun(SQLModel, table=True):
     finished_at: datetime | None = Field(default=None)
     status_updated_at: datetime | None = Field(default=None)
     last_sample_step: int = Field(default=0)
+    likeness_best_step: int | None = Field(default=None)
+    likeness_best: float | None = Field(default=None)
+    likeness_summary: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
     error: str | None = Field(default=None)
 
 
@@ -554,6 +559,12 @@ class TrainingSample(SQLModel, table=True):
     )
     step: int = Field(index=True)
     path: str
+    likeness: float | None = Field(default=None)
+    face_count: int | None = Field(default=None)
+    face_bbox: list[int] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    scored_at: datetime | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=datetime.now, index=True)
 
 

@@ -175,6 +175,8 @@ class TrainingSampleRead(BaseModel):
     id: int
     run_id: int
     step: int
+    likeness: float | None
+    face_count: int | None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -197,10 +199,30 @@ class TrainingRunRead(BaseModel):
     finished_at: datetime | None
     status_updated_at: datetime | None
     last_sample_step: int
+    likeness_best_step: int | None
+    likeness_best: float | None
     error: str | None
+    lr: float | None = None
+    rank: int | None = None
     checkpoints: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class LikenessStepRead(BaseModel):
+    step: int
+    mean: float
+    max: float
+    n: int
+
+
+class RunLikenessRead(BaseModel):
+    run_id: int
+    steps: list[LikenessStepRead]
+    best_step: int | None
+    best: float | None
+    scored: int
+    pending: int
 
 
 class TrainingHealthRead(BaseModel):

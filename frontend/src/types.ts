@@ -486,7 +486,11 @@ export interface TrainingRun {
   finished_at?: string | null;
   status_updated_at?: string | null;
   last_sample_step: number;
+  likeness_best_step?: number | null;
+  likeness_best?: number | null;
   error?: string | null;
+  lr?: number | null;
+  rank?: number | null;
   checkpoints: string[];
 }
 
@@ -494,7 +498,25 @@ export interface TrainingSample {
   id: number;
   run_id: number;
   step: number;
+  likeness?: number | null;
+  face_count?: number | null;
   created_at: string;
+}
+
+export interface LikenessStep {
+  step: number;
+  mean: number;
+  max: number;
+  n: number;
+}
+
+export interface RunLikeness {
+  run_id: number;
+  steps: LikenessStep[];
+  best_step?: number | null;
+  best?: number | null;
+  scored: number;
+  pending: number;
 }
 
 export interface TrainingRunInput {
