@@ -14,6 +14,7 @@ import {
 } from "@mui/material";
 import { API } from "../config";
 import { searchPersonsByName } from "../services/personActions";
+import { getPeople } from "../services/person";
 import { Person, PersonReadSimple } from "../types";
 import { encodeFilePath } from "../urlUtils";
 
@@ -129,20 +130,32 @@ export default function MergePeopleDialog({
 
   useEffect(() => {
     const trimmed = searchTerm.trim();
-    if (!open || !trimmed) {
+    if (!open) {
       setSearchResults([]);
       setSearching(false);
       return;
     }
 
     const controller = new AbortController();
+    // With no search term, suggest the most-seen people (the list endpoint is
+    // ordered by appearance count) so "assign these Unknowns to X" is one
+    // click; a typed term searches by name instead.
     const timeout = window.setTimeout(() => {
       setSearching(true);
-      searchPersonsByName(trimmed, controller.signal)
+      const request = trimmed
+        ? searchPersonsByName(trimmed, controller.signal)
+        : getPeople().then((page) => page.items as unknown as Person[]);
+      request
         .then((people) => {
           if (controller.signal.aborted) return;
           const selected = new Set(selectedPeople.map((person) => person.id));
-          setSearchResults(people.filter((person) => !selected.has(person.id)));
+          const ordered = people
+            .filter((person) => !selected.has(person.id))
+            .sort(
+              (a, b) =>
+                (b.appearance_count ?? 0) - (a.appearance_count ?? 0) || b.id - a.id,
+            );
+          setSearchResults(trimmed ? ordered : ordered.slice(0, 5));
         })
         .catch((error) => {
           if (error instanceof DOMException && error.name === "AbortError") {
@@ -197,6 +210,9 @@ export default function MergePeopleDialog({
         />
         {searchResults.length > 0 && (
           <Stack spacing={1}>
+            <Typography variant="subtitle2">
+              {searchTerm.trim() ? "Search results" : "Most media first"}
+            </Typography>
             {searchResults.map((person) => (
               <CandidateRow
                 key={person.id}
@@ -216,7 +232,12 @@ export default function MergePeopleDialog({
           onClick={() => target && onConfirm(target)}
           color="primary"
           variant="contained"
-          disabled={!target || merging}
+          disabled={
+            !target ||
+            merging ||
+            // Nothing to merge when the only selected person is the target.
+            selectedPeople.every((person) => person.id === target.id)
+          }
         >
           {merging ? "Merging..." : "Confirm Merge"}
         </Button>

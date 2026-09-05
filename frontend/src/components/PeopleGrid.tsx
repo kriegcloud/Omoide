@@ -363,7 +363,7 @@ export default function PeopleGrid({
               variant="contained"
               size="small"
               onClick={() => setMergeOpen(true)}
-              disabled={!selectionMode || selectedCount < 2 || isMerging}
+              disabled={!selectionMode || selectedCount < 1 || isMerging}
             >
               Merge Selected
             </Button>
