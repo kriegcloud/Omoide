@@ -435,6 +435,7 @@ export interface TrainingDataset {
   repeats: number;
   export_layout: DatasetExportLayout;
   cover_media_id?: number | null;
+  regularization_dataset_id?: number | null;
   created_at: string;
   updated_at: string;
   item_count: number;
@@ -464,6 +465,44 @@ export interface DatasetItem {
   effective_caption?: string | null;
   has_ops: boolean;
   face_summary: DatasetFaceSummary;
+  metrics?: DatasetItemMetrics | null;
+}
+
+export interface DatasetItemMetrics {
+  item_id: number;
+  media_id: number;
+  face_ratio?: number | null;
+  framing: "closeup" | "portrait" | "half_body" | "full_body" | "none";
+  other_people: number;
+  frontality?: number | null;
+  det_score?: number | null;
+  sharpness?: number | null;
+  brightness_mean?: number | null;
+  contrast_std?: number | null;
+  aspect: "portrait" | "square" | "landscape";
+  identity_distance?: number | null;
+  duplicate_group?: number | null;
+}
+
+export interface DatasetAnalysis {
+  items: DatasetItemMetrics[];
+  summary: Record<string, Record<string, number>>;
+  outliers: number[];
+  duplicates: Array<{ item_ids: number[]; best_item_id: number }>;
+}
+
+export interface AutoSelectInput {
+  target_count: number;
+  min_frontality?: number;
+  min_sharpness?: number;
+  max_other_people?: number;
+  drop_duplicates: boolean;
+  dry_run: boolean;
+}
+
+export interface AutoSelectResult {
+  selected_item_ids: number[];
+  excluded_item_ids: number[];
 }
 
 export interface DatasetItemPage {

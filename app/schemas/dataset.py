@@ -61,6 +61,7 @@ class DatasetRead(BaseModel):
     repeats: int
     export_layout: DatasetExportLayout
     cover_media_id: int | None
+    regularization_dataset_id: int | None
     created_at: datetime
     updated_at: datetime
     item_count: int = 0
@@ -92,6 +93,7 @@ class DatasetItemRead(BaseModel):
     effective_caption: str | None
     has_ops: bool
     face_summary: FaceSummary
+    metrics: dict | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -139,6 +141,26 @@ class DatasetExportRead(BaseModel):
     launch_command: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class AutoSelectRequest(BaseModel):
+    target_count: int = Field(gt=0)
+    min_frontality: float | None = Field(default=None, ge=0, le=1)
+    min_sharpness: float | None = Field(default=None, ge=0)
+    max_other_people: int | None = Field(default=None, ge=0)
+    drop_duplicates: bool = True
+    dry_run: bool = False
+
+
+class AutoSelectResult(BaseModel):
+    selected_item_ids: list[int]
+    excluded_item_ids: list[int]
+
+
+class RegularizationRequest(BaseModel):
+    target_count: int = Field(gt=0)
+    gender: str | None = None
+    exclude_person_ids: list[int] = Field(default_factory=list)
 
 
 DatasetRead.model_rebuild()

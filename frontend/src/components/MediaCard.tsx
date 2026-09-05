@@ -27,6 +27,10 @@ export interface MediaDatasetContext {
   detScore?: number | null;
   frontality?: number | null;
   faceCount: number;
+  framing?: string;
+  sharpness?: number | null;
+  otherPeople?: number;
+  identityDistance?: number | null;
   onToggleExcluded: () => void;
   onEditCaption: () => void;
   onEditCrop: () => void;
@@ -422,6 +426,10 @@ export default function MediaCard({
           <Box sx={{ display: "flex", gap: 0.5, mt: 0.75, flexWrap: "wrap" }}>
             {datasetContext.detScore != null && <Chip size="small" label={`Face ${Math.round(datasetContext.detScore * 100)}%`} />}
             {datasetContext.frontality != null && <Chip size="small" label={`Front ${Math.round(datasetContext.frontality * 100)}%`} />}
+            {datasetContext.framing && <Chip size="small" label={datasetContext.framing.replace("_", " ")} />}
+            {datasetContext.sharpness != null && <Chip size="small" label={`Sharp ${Math.round(datasetContext.sharpness)}`} />}
+            {(datasetContext.otherPeople ?? 0) > 0 && <Chip size="small" color="warning" label={`+${datasetContext.otherPeople} people`} />}
+            {datasetContext.identityDistance != null && <Chip size="small" label={`ID ${datasetContext.identityDistance.toFixed(2)}`} />}
             {datasetContext.faceCount > 1 && <Chip size="small" color="warning" label={`${datasetContext.faceCount} faces`} />}
             {datasetContext.hasOps && <Chip size="small" color="primary" label="Cropped" />}
             {datasetContext.excluded && <Chip size="small" label="Excluded" />}

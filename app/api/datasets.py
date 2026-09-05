@@ -23,6 +23,8 @@ from app.models import (
     TrainingDataset,
 )
 from app.schemas.dataset import (
+    AutoSelectRequest,
+    AutoSelectResult,
     DatasetCreate,
     DatasetExportRead,
     DatasetExportRequest,
@@ -34,9 +36,15 @@ from app.schemas.dataset import (
     DatasetRead,
     DatasetUpdate,
     FaceSummary,
+    RegularizationRequest,
 )
 from app.schemas.media import MediaPreview
 from app.services.datasets import resolve_caption, slugify
+from app.services.curation import (
+    auto_select_dataset,
+    build_regularization_dataset,
+    compute_dataset_analysis,
+)
 from app.tasks.common import create_and_run_task
 from app.tasks.dataset_export import export_dataset
 
@@ -271,7 +279,12 @@ def update_item(dataset_id: int, item_id: int, payload: DatasetItemUpdate, sessi
     return _item_read(session, dataset, item)
 
 
-def _item_read(session: Session, dataset: TrainingDataset, item: DatasetItem) -> DatasetItemRead:
+def _item_read(
+    session: Session,
+    dataset: TrainingDataset,
+    item: DatasetItem,
+    metrics: dict | None = None,
+) -> DatasetItemRead:
     media = session.get(Media, item.media_id)
     if media is None:
         raise HTTPException(status_code=404, detail="Media not found")
@@ -289,6 +302,7 @@ def _item_read(session: Session, dataset: TrainingDataset, item: DatasetItem) ->
             frontality=max((face.frontality for face in faces if face.frontality is not None), default=None),
             face_count=len(faces),
         ),
+        metrics=metrics,
     )
 
 
@@ -298,20 +312,73 @@ def list_items(
     cursor: str | None = None,
     limit: int = Query(default=100, ge=1, le=500),
     include_excluded: bool = True,
+    sort: str = Query(
+        default="position",
+        pattern="^(position|sharpness|frontality|face_ratio|identity_distance|brightness)$",
+    ),
     session: Session = Depends(get_session),
 ) -> DatasetItemCursorPage:
     dataset = _dataset_or_404(session, dataset_id)
     query = select(DatasetItem).where(DatasetItem.dataset_id == dataset_id)
-    if cursor:
-        query = query.where(DatasetItem.id > int(cursor))
     if not include_excluded:
         query = query.where(DatasetItem.excluded.is_(False))
-    rows = list(session.exec(query.order_by(DatasetItem.id).limit(limit + 1)).all())
+    rows = list(session.exec(query).all())
+    analysis = compute_dataset_analysis(session, dataset)
+    metrics = {entry["item_id"]: entry for entry in analysis["items"]}
+    if sort == "position":
+        rows.sort(key=lambda item: (item.position, item.id))
+    else:
+        metric_name = "brightness_mean" if sort == "brightness" else sort
+        rows.sort(
+            key=lambda item: (
+                metrics.get(item.id, {}).get(metric_name) is not None,
+                metrics.get(item.id, {}).get(metric_name) or 0,
+                -item.id,
+            ),
+            reverse=True,
+        )
+    offset = int(cursor or 0)
+    rows = rows[offset : offset + limit + 1]
     page = rows[:limit]
     return DatasetItemCursorPage(
-        items=[_item_read(session, dataset, item) for item in page],
-        next_cursor=str(page[-1].id) if len(rows) > limit and page else None,
+        items=[_item_read(session, dataset, item, metrics.get(item.id)) for item in page],
+        next_cursor=str(offset + limit) if len(rows) > limit and page else None,
     )
+
+
+@router.get("/{dataset_id}/analysis")
+def get_analysis(dataset_id: int, session: Session = Depends(get_session)) -> dict:
+    return compute_dataset_analysis(session, _dataset_or_404(session, dataset_id))
+
+
+@router.post("/{dataset_id}/auto-select", response_model=AutoSelectResult)
+def auto_select(
+    dataset_id: int,
+    payload: AutoSelectRequest,
+    session: Session = Depends(get_session),
+) -> AutoSelectResult:
+    _mutating()
+    result = auto_select_dataset(
+        session,
+        _dataset_or_404(session, dataset_id),
+        **payload.model_dump(),
+    )
+    return AutoSelectResult(**result)
+
+
+@router.post("/{dataset_id}/regularization", response_model=DatasetRead)
+def create_regularization(
+    dataset_id: int,
+    payload: RegularizationRequest,
+    session: Session = Depends(get_session),
+) -> DatasetRead:
+    _mutating()
+    regularization = build_regularization_dataset(
+        session,
+        _dataset_or_404(session, dataset_id),
+        **payload.model_dump(),
+    )
+    return _dataset_read(session, regularization)
 
 
 @router.post("/{dataset_id}/export", response_model=DatasetExportRead)

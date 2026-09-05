@@ -12,6 +12,7 @@ import {
   DialogTitle,
   FormControl,
   InputLabel,
+  LinearProgress,
   MenuItem,
   Paper,
   Select,
@@ -23,31 +24,39 @@ import {
 } from "@mui/material";
 import SaveIcon from "@mui/icons-material/Save";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import ImageEditorDialog from "../components/ImageEditorDialog";
+import { API } from "../config";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 import MediaCard from "../components/MediaCard";
 import { useSelection } from "../context/SelectionContext";
 import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
 import {
+  autoSelectDataset,
+  buildRegularizationDataset,
   createDatasetExport,
   datasetManifestUrl,
   getDataset,
   getDatasetExports,
+  getDatasetAnalysis,
   getDatasetItems,
   removeDatasetItems,
   updateDataset,
   updateDatasetItem,
 } from "../services/datasets";
-import type { DatasetExport, DatasetExportLayout, DatasetItem, Media, TrainingDataset } from "../types";
+import type { AutoSelectInput, DatasetAnalysis, DatasetExport, DatasetExportLayout, DatasetItem, Media, TrainingDataset } from "../types";
 import type { FilerobotDesignState } from "../utils/editorOps";
+import { encodeFilePath } from "../urlUtils";
 
 export default function DatasetDetailPage() {
   const { id } = useParams();
   const datasetId = Number(id);
+  const navigate = useNavigate();
   const [dataset, setDataset] = useState<TrainingDataset | null>(null);
   const [items, setItems] = useState<DatasetItem[]>([]);
   const [exports, setExports] = useState<DatasetExport[]>([]);
+  const [analysis, setAnalysis] = useState<DatasetAnalysis | null>(null);
+  const [sort, setSort] = useState("position");
   const [tab, setTab] = useState(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -56,6 +65,12 @@ export default function DatasetDetailPage() {
   const [caption, setCaption] = useState("");
   const [cropItem, setCropItem] = useState<DatasetItem | null>(null);
   const [exportLayout, setExportLayout] = useState<DatasetExportLayout>("ai_toolkit");
+  const [autoOpen, setAutoOpen] = useState(false);
+  const [autoInput, setAutoInput] = useState<AutoSelectInput>({ target_count: 30, drop_duplicates: true, dry_run: true });
+  const [previewExcluded, setPreviewExcluded] = useState<number | null>(null);
+  const [regularizationOpen, setRegularizationOpen] = useState(false);
+  const [regularizationCount, setRegularizationCount] = useState(100);
+  const [regularizationGender, setRegularizationGender] = useState("");
   const gridRef = useRef<HTMLDivElement>(null);
   const selection = useSelection();
   const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
@@ -69,21 +84,23 @@ export default function DatasetDetailPage() {
 
   const load = useCallback(async () => {
     try {
-      const [nextDataset, page, history] = await Promise.all([
+      const [nextDataset, page, history, nextAnalysis] = await Promise.all([
         getDataset(datasetId),
-        getDatasetItems(datasetId),
+        getDatasetItems(datasetId, null, sort),
         getDatasetExports(datasetId),
+        getDatasetAnalysis(datasetId),
       ]);
       setDataset(nextDataset);
       setItems(page.items);
       setExports(history);
+      setAnalysis(nextAnalysis);
       setExportLayout(nextDataset.export_layout);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Failed to load dataset");
     } finally {
       setLoading(false);
     }
-  }, [datasetId]);
+  }, [datasetId, sort]);
 
   useEffect(() => { void load(); return () => selection.clear(); }, [load]);
   const hasRunning = exports.some((entry) => entry.status === "pending" || entry.status === "running");
@@ -96,6 +113,14 @@ export default function DatasetDetailPage() {
   const patchItem = async (item: DatasetItem, input: Parameters<typeof updateDatasetItem>[2]) => {
     const updated = await updateDatasetItem(datasetId, item.id, input);
     setItems((current) => current.map((entry) => entry.id === updated.id ? updated : entry));
+  };
+  const refreshCuration = async () => {
+    const [page, nextAnalysis] = await Promise.all([
+      getDatasetItems(datasetId, null, sort),
+      getDatasetAnalysis(datasetId),
+    ]);
+    setItems(page.items);
+    setAnalysis(nextAnalysis);
   };
   const selectedItems = useMemo(() => items.filter((item) => selection.selectedIds.has(item.media_id)), [items, selection.selectedIds]);
   const bulkExcluded = async (excluded: boolean) => {
@@ -135,7 +160,7 @@ export default function DatasetDetailPage() {
         </Stack>
       </Paper>
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
-      <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ mb: 2 }}><Tab label={`Items (${items.length})`} /><Tab label={`Exports (${exports.length})`} /></Tabs>
+      <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ mb: 2 }}><Tab label={`Items (${items.length})`} /><Tab label="Analysis" /><Tab label={`Exports (${exports.length})`} /></Tabs>
 
       {tab === 0 && (
         <>
@@ -143,6 +168,7 @@ export default function DatasetDetailPage() {
             <Button variant="outlined" onClick={selection.toggleSelecting}>{selection.isSelecting ? "Cancel selection" : "Select items"}</Button>
             {selection.isSelecting && <Typography color="text.secondary">{selection.selectedIds.size} selected</Typography>}
             {selection.isSelecting && <><Button disabled={!selectedItems.length} onClick={() => void bulkExcluded(true)}>Exclude</Button><Button disabled={!selectedItems.length} onClick={() => void bulkExcluded(false)}>Include</Button><Button color="error" disabled={!selectedItems.length} onClick={() => void remove(selectedItems)}>Remove</Button></>}
+            <FormControl size="small" sx={{ minWidth: 180, ml: "auto" }}><InputLabel>Sort</InputLabel><Select label="Sort" value={sort} onChange={(event) => setSort(event.target.value)}><MenuItem value="position">Position</MenuItem><MenuItem value="sharpness">Sharpness</MenuItem><MenuItem value="frontality">Frontality</MenuItem><MenuItem value="face_ratio">Face ratio</MenuItem><MenuItem value="identity_distance">Identity distance</MenuItem><MenuItem value="brightness">Brightness</MenuItem></Select></FormControl>
           </Stack>
           {items.length === 0 ? <Typography color="text.secondary">Add images from any media grid to start curating this dataset.</Typography> : (
             <Box ref={gridRef} sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(3, 1fr)", md: "repeat(4, 1fr)", lg: "repeat(5, 1fr)" }, position: "relative" }}>
@@ -150,6 +176,8 @@ export default function DatasetDetailPage() {
                 <MediaCard key={item.id} media={item.media} onSelectionClick={onItemClick} datasetContext={{
                   caption: item.effective_caption, excluded: item.excluded, hasOps: item.has_ops,
                   detScore: item.face_summary.det_score, frontality: item.face_summary.frontality, faceCount: item.face_summary.face_count,
+                  framing: item.metrics?.framing, sharpness: item.metrics?.sharpness, otherPeople: item.metrics?.other_people,
+                  identityDistance: item.metrics?.identity_distance,
                   onToggleExcluded: () => void patchItem(item, { excluded: !item.excluded }),
                   onEditCaption: () => { setCaptionItem(item); setCaption(item.caption_override ?? item.effective_caption ?? ""); },
                   onEditCrop: () => setCropItem(item), onRemove: () => void remove([item]),
@@ -162,6 +190,22 @@ export default function DatasetDetailPage() {
       )}
 
       {tab === 1 && (
+        <Stack spacing={3}>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}><Button variant="contained" onClick={() => { setPreviewExcluded(null); setAutoOpen(true); }}>Auto-select…</Button><Button variant="outlined" onClick={() => setRegularizationOpen(true)}>Build regularization set…</Button></Stack>
+          {!analysis ? <CircularProgress /> : <>
+            <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", md: "repeat(2, 1fr)" } }}>
+              {Object.entries(analysis.summary).map(([section, buckets]) => {
+                const total = Math.max(1, Object.values(buckets).reduce((sum, count) => sum + count, 0));
+                return <Paper key={section} elevation={0} sx={{ p: 2, border: 1, borderColor: "divider", borderRadius: 3 }}><Typography fontWeight={700} mb={1}>{section.replace("_hist", "").replace("_", " ")}</Typography><Stack spacing={1}>{Object.entries(buckets).map(([label, count]) => <Box key={label}><Stack direction="row" justifyContent="space-between"><Typography variant="caption">{label.replace("_", " ")}</Typography><Typography variant="caption">{count}</Typography></Stack><LinearProgress variant="determinate" value={(count / total) * 100} /></Box>)}</Stack></Paper>;
+              })}
+            </Box>
+            <Box><Typography variant="h6" gutterBottom>Identity outliers</Typography>{analysis.outliers.length === 0 ? <Typography color="text.secondary">No identity-distance outliers.</Typography> : <Stack direction="row" spacing={2} sx={{ overflowX: "auto", pb: 1 }}>{analysis.outliers.map((itemId) => { const item = items.find((entry) => entry.id === itemId); const metric = analysis.items.find((entry) => entry.item_id === itemId); return item && <Paper key={itemId} elevation={0} sx={{ p: 1.5, minWidth: 180, border: 1, borderColor: "divider" }}><Box component="img" src={`${API}/thumbnails/${encodeFilePath(item.media.thumbnail_path)}`} sx={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 1 }} /><Typography variant="body2" mt={1}>Distance {metric?.identity_distance?.toFixed(3)}</Typography><Button size="small" onClick={async () => { await patchItem(item, { excluded: true }); await refreshCuration(); }}>Exclude</Button></Paper>; })}</Stack>}</Box>
+            <Box><Typography variant="h6" gutterBottom>Duplicate groups</Typography>{analysis.duplicates.length === 0 ? <Typography color="text.secondary">No likely duplicates.</Typography> : <Stack spacing={1}>{analysis.duplicates.map((group, index) => <Paper key={index} elevation={0} sx={{ p: 2, border: 1, borderColor: "divider" }}><Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ sm: "center" }} gap={1}><Typography>Items {group.item_ids.join(", ")} · best {group.best_item_id}</Typography><Button onClick={async () => { await Promise.all(group.item_ids.filter((itemId) => itemId !== group.best_item_id).map((itemId) => { const item = items.find((entry) => entry.id === itemId); return item ? updateDatasetItem(datasetId, item.id, { excluded: true }) : Promise.resolve(null); })); await refreshCuration(); }}>Keep best</Button></Stack></Paper>)}</Stack>}</Box>
+          </>}
+        </Stack>
+      )}
+
+      {tab === 2 && (
         <Stack spacing={2}>
           <Stack direction="row" spacing={1} alignItems="center">
             <FormControl size="small" sx={{ minWidth: 160 }}><InputLabel>Layout</InputLabel><Select label="Layout" value={exportLayout} onChange={(event) => setExportLayout(event.target.value as DatasetExportLayout)}><MenuItem value="ai_toolkit">ai-toolkit</MenuItem><MenuItem value="kohya">Kohya</MenuItem><MenuItem value="onetrainer">OneTrainer</MenuItem></Select></FormControl>
@@ -184,6 +228,25 @@ export default function DatasetDetailPage() {
           ))}
         </Stack>
       )}
+
+      <Dialog open={autoOpen} onClose={() => setAutoOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Auto-select dataset</DialogTitle>
+        <DialogContent><Stack spacing={2} sx={{ mt: 1 }}>
+          <TextField type="number" label="Target count" value={autoInput.target_count} onChange={(event) => setAutoInput({ ...autoInput, target_count: Number(event.target.value) })} />
+          <TextField type="number" label="Minimum frontality" value={autoInput.min_frontality ?? ""} onChange={(event) => setAutoInput({ ...autoInput, min_frontality: event.target.value === "" ? undefined : Number(event.target.value) })} inputProps={{ min: 0, max: 1, step: 0.05 }} />
+          <TextField type="number" label="Minimum sharpness" value={autoInput.min_sharpness ?? ""} onChange={(event) => setAutoInput({ ...autoInput, min_sharpness: event.target.value === "" ? undefined : Number(event.target.value) })} />
+          <TextField type="number" label="Maximum other people" value={autoInput.max_other_people ?? ""} onChange={(event) => setAutoInput({ ...autoInput, max_other_people: event.target.value === "" ? undefined : Number(event.target.value) })} />
+          <FormControl><InputLabel>Duplicates</InputLabel><Select label="Duplicates" value={autoInput.drop_duplicates ? "drop" : "keep"} onChange={(event) => setAutoInput({ ...autoInput, drop_duplicates: event.target.value === "drop" })}><MenuItem value="drop">Keep only the best</MenuItem><MenuItem value="keep">Allow duplicates</MenuItem></Select></FormControl>
+          {previewExcluded != null && <Alert severity="info">Preview: {autoInput.target_count} requested, {previewExcluded} items would be excluded.</Alert>}
+        </Stack></DialogContent>
+        <DialogActions><Button onClick={() => setAutoOpen(false)}>Cancel</Button><Button onClick={async () => { const result = await autoSelectDataset(datasetId, { ...autoInput, dry_run: true }); setPreviewExcluded(result.excluded_item_ids.length); }}>Preview</Button><Button variant="contained" onClick={async () => { await autoSelectDataset(datasetId, { ...autoInput, dry_run: false }); await refreshCuration(); setAutoOpen(false); }}>Apply</Button></DialogActions>
+      </Dialog>
+
+      <Dialog open={regularizationOpen} onClose={() => setRegularizationOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle>Build regularization set</DialogTitle>
+        <DialogContent><Stack spacing={2} sx={{ mt: 1 }}><TextField type="number" label="Target count" value={regularizationCount} onChange={(event) => setRegularizationCount(Number(event.target.value))} /><FormControl><InputLabel>Gender</InputLabel><Select label="Gender" value={regularizationGender} onChange={(event) => setRegularizationGender(event.target.value)}><MenuItem value="">Subject default</MenuItem><MenuItem value="female">Woman</MenuItem><MenuItem value="male">Man</MenuItem></Select></FormControl></Stack></DialogContent>
+        <DialogActions><Button onClick={() => setRegularizationOpen(false)}>Cancel</Button><Button variant="contained" onClick={async () => { const created = await buildRegularizationDataset(datasetId, { target_count: regularizationCount, ...(regularizationGender ? { gender: regularizationGender } : {}) }); navigate(`/dataset/${created.id}`); }}>Build</Button></DialogActions>
+      </Dialog>
 
       <Dialog open={Boolean(captionItem)} onClose={() => setCaptionItem(null)} fullWidth maxWidth="sm"><DialogTitle>Edit caption</DialogTitle><DialogContent><TextField autoFocus multiline minRows={3} fullWidth value={caption} onChange={(event) => setCaption(event.target.value)} sx={{ mt: 1 }} /></DialogContent><DialogActions><Button onClick={() => setCaptionItem(null)}>Cancel</Button><Button variant="contained" onClick={async () => { if (captionItem) await patchItem(captionItem, { caption_override: caption.trim() || null }); setCaptionItem(null); }}>Save caption</Button></DialogActions></Dialog>
       {cropItem && <ImageEditorDialog

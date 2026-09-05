@@ -4,6 +4,9 @@ import type {
   DatasetExportLayout,
   DatasetItem,
   DatasetItemPage,
+  DatasetAnalysis,
+  AutoSelectInput,
+  AutoSelectResult,
   TrainingDataset,
 } from "../types";
 import type { EditOp, FilerobotDesignState } from "../utils/editorOps";
@@ -33,9 +36,10 @@ export const addDatasetItems = (id: number, mediaIds: number[]) => fetch(`${API}
 export const removeDatasetItems = (id: number, mediaIds: number[]) => fetch(`${API}/api/datasets/${id}/items`, {
   method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ media_ids: mediaIds }),
 }).then(json<{ added_ids: number[]; skipped_ids: number[] }>);
-export const getDatasetItems = (id: number, cursor?: string | null) => {
+export const getDatasetItems = (id: number, cursor?: string | null, sort = "position") => {
   const params = new URLSearchParams({ limit: "500" });
   if (cursor) params.set("cursor", cursor);
+  params.set("sort", sort);
   return fetch(`${API}/api/datasets/${id}/items?${params}`).then(json<DatasetItemPage>);
 };
 export const updateDatasetItem = (datasetId: number, itemId: number, input: {
@@ -50,3 +54,10 @@ export const createDatasetExport = (id: number, layout?: DatasetExportLayout) =>
 export const getDatasetExports = (id: number) => fetch(`${API}/api/datasets/${id}/exports`).then(json<DatasetExport[]>);
 export const createDatasetFromPerson = (personId: number) => fetch(`${API}/api/datasets/from-person/${personId}`, { method: "POST" }).then(json<TrainingDataset>);
 export const datasetManifestUrl = (exportId: number) => `${API}/api/datasets/exports/${exportId}/manifest`;
+export const getDatasetAnalysis = (id: number) => fetch(`${API}/api/datasets/${id}/analysis`).then(json<DatasetAnalysis>);
+export const autoSelectDataset = (id: number, input: AutoSelectInput) => fetch(`${API}/api/datasets/${id}/auto-select`, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+}).then(json<AutoSelectResult>);
+export const buildRegularizationDataset = (id: number, input: { target_count: number; gender?: string }) => fetch(`${API}/api/datasets/${id}/regularization`, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+}).then(json<TrainingDataset>);

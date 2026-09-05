@@ -402,6 +402,9 @@ class TrainingDataset(SQLModel, table=True):
         default=DatasetExportLayout.AI_TOOLKIT
     )
     cover_media_id: int | None = Field(default=None, foreign_key="media.id")
+    regularization_dataset_id: int | None = Field(
+        default=None, foreign_key="trainingdataset.id"
+    )
     created_at: datetime = Field(default_factory=datetime.now, index=True)
     updated_at: datetime = Field(default_factory=datetime.now, index=True)
 
@@ -429,6 +432,13 @@ class DatasetItem(SQLModel, table=True):
     weight: float = Field(default=1.0)
     excluded: bool = Field(default=False, index=True)
     created_at: datetime = Field(default_factory=datetime.now, index=True)
+
+
+class MediaCurationStats(SQLModel, table=True):
+    media_id: int = Field(primary_key=True, foreign_key="media.id")
+    brightness_mean: float
+    contrast_std: float
+    computed_at: datetime = Field(default_factory=datetime.now)
 
 
 class DatasetExport(SQLModel, table=True):

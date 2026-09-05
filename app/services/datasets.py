@@ -169,6 +169,25 @@ def build_export(session: Session, export_id: int, task_id: str) -> dict:
             .order_by(DatasetItem.position, DatasetItem.id)
         ).all()
     )
+    regularization_dataset = (
+        session.get(TrainingDataset, dataset.regularization_dataset_id)
+        if dataset.regularization_dataset_id and export.layout == DatasetExportLayout.KOHYA
+        else None
+    )
+    regularization_items = (
+        list(
+            session.exec(
+                select(DatasetItem)
+                .where(
+                    DatasetItem.dataset_id == regularization_dataset.id,
+                    DatasetItem.excluded.is_(False),
+                )
+                .order_by(DatasetItem.position, DatasetItem.id)
+            ).all()
+        )
+        if regularization_dataset
+        else []
+    )
     root = settings.general.resolved_datasets_dir()
     output_dir = root / dataset.slug / datetime.now().strftime("%Y%m%d-%H%M%S")
     if output_dir.exists():
@@ -176,7 +195,7 @@ def build_export(session: Session, export_id: int, task_id: str) -> dict:
     output_dir.mkdir(parents=True, exist_ok=False)
     export.output_dir = str(output_dir)
     export.item_count = len(items)
-    task.total = len(items)
+    task.total = len(items) + len(regularization_items)
     session.add(export)
     session.add(task)
     session.commit()
@@ -245,6 +264,54 @@ def build_export(session: Session, export_id: int, task_id: str) -> dict:
             current_item=f"{index} of {len(items)}",
         )
 
+    manifest_regularization: list[dict] = []
+    if regularization_dataset and regularization_items:
+        reg_dir = output_dir / "reg" / f"{regularization_dataset.repeats}_{regularization_dataset.class_token}"
+        reg_dir.mkdir(parents=True, exist_ok=True)
+        for index, item in enumerate(regularization_items, start=1):
+            media = session.get(Media, item.media_id)
+            if media is None:
+                continue
+            source_path = Path(media.path)
+            with Image.open(source_path) as opened:
+                image = ImageOps.exif_transpose(opened)
+                if item.edit_ops:
+                    image = apply_edit_ops(image, _EDIT_OPS.validate_python(item.edit_ops))
+                target_longest = pick_bucket(image.width, image.height, regularization_dataset.buckets)
+                if max(image.size) > target_longest:
+                    scale = target_longest / max(image.size)
+                    image = image.resize(
+                        (max(1, round(image.width * scale)), max(1, round(image.height * scale))),
+                        Image.Resampling.LANCZOS,
+                    )
+                is_png = source_path.suffix.lower() == ".png"
+                output_path = reg_dir / f"{index:04d}_{media.id}{'.png' if is_png else '.jpg'}"
+                (image if is_png else image.convert("RGB")).save(
+                    output_path,
+                    format="PNG" if is_png else "JPEG",
+                    **({} if is_png else {"quality": 95}),
+                )
+            caption = resolve_caption(regularization_dataset, item, media, None, session)
+            if caption is not None:
+                output_path.with_suffix(".txt").write_text(caption + "\n", encoding="utf-8")
+            manifest_regularization.append(
+                {
+                    "index": index,
+                    "media_id": media.id,
+                    "source_path": media.path,
+                    "source_sha256": _sha256(source_path),
+                    "output_file": str(output_path.relative_to(output_dir)),
+                    "output_sha256": _sha256(output_path),
+                    "width": image.width,
+                    "height": image.height,
+                    "ops": item.edit_ops or [],
+                    "caption": caption,
+                }
+            )
+            task.processed = len(items) + index
+            session.add(task)
+            session.commit()
+
     manifest = {
         "dataset": {
             "id": dataset.id,
@@ -258,6 +325,7 @@ def build_export(session: Session, export_id: int, task_id: str) -> dict:
         },
         "app_revision": _git_revision(),
         "items": manifest_items,
+        "regularization_items": manifest_regularization,
     }
     (output_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8"
