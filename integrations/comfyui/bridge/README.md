@@ -55,6 +55,32 @@ The service can be healthy while reporting `ready=false` when ComfyUI is
 offline. Omoide must treat that as an unavailable optional backend, not as a
 reason to start ComfyUI from a web request.
 
+## Re-pinning after a ComfyUI update
+
+Every profile pins the ComfyUI git revision, a handful of core files, the Omoide
+custom-node files and the model artifacts by size and SHA-256. Updating ComfyUI
+(or the custom nodes) therefore makes the bridge refuse every attempt with
+`configuration-error` until the pins are refreshed. That is intentional: review
+the upgrade, then re-pin in one step:
+
+```bash
+.venv/bin/python scripts/repin_comfy_bridge.py            # report drift (exit 1 when any)
+.venv/bin/python scripts/repin_comfy_bridge.py --write    # rewrite the pins in config.py
+packaging/omoide-comfy-bridge-launcher --check
+systemctl --user restart omoide-comfy-bridge.service
+```
+
+`--skip-models` leaves the multi-gigabyte model artifacts unhashed when only the
+executor changed. Missing files are reported and never re-pinned. Commit the
+resulting `config.py` change together with the ComfyUI revision it was verified
+against.
+
+ComfyUI itself runs from `packaging/systemd/comfyui.service` (loopback only, no
+filesystem sandbox because it needs the GPU devices and its model directories).
+Enable it once with `systemctl --user enable --now comfyui.service`; comfy-cli's
+`comfy launch --background` must not run at the same time or the two instances
+fight over port 8188.
+
 ## Protocol
 
 The socket uses a four-byte network-order length followed by bounded UTF-8 JSON.

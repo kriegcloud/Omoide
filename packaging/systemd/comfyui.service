@@ -1,0 +1,32 @@
+[Unit]
+Description=ComfyUI (loopback only, ROCm) for Omoide annotations and repairs
+Documentation=file:///home/elpresidank/YeeBois/workstation-apps/Omoide/integrations/comfyui/bridge/README.md
+After=local-fs.target network.target
+ConditionPathExists=/dev/kfd
+ConditionPathExists=/home/elpresidank/ai/ComfyUI/main.py
+# A port clash with a comfy-cli instance must not turn into a restart storm.
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=/home/elpresidank/ai/ComfyUI
+Environment=ROCM_PATH=/opt/rocm
+Environment=PYTHONUNBUFFERED=1
+# Same arguments comfy-cli used interactively; the server stays loopback-only.
+ExecStart=/home/elpresidank/ai/ComfyUI/.venv/bin/python main.py --listen 127.0.0.1 --port 8188 --enable-manager
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=5min
+TimeoutStopSec=45s
+KillSignal=SIGTERM
+Nice=5
+# The GPU worker needs /dev/kfd and /dev/dri plus write access to models,
+# input, output and user directories under the checkout, so the filesystem
+# sandboxing used by the other Omoide units does not apply here.
+NoNewPrivileges=true
+LockPersonality=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=default.target
