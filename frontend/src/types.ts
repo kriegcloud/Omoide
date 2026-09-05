@@ -179,6 +179,80 @@ export interface MediaDetail {
   orphans: Face[];
 }
 
+export type AnnotationKind = "caption" | "tags";
+export type AnnotationAttemptStatus =
+  | "created"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "lost"
+  | "unknown";
+export type AnnotationReviewStatus =
+  | "candidate"
+  | "approved"
+  | "superseded";
+
+export interface AnnotationTagScore {
+  name: string;
+  score: number;
+}
+
+export interface AnnotationAttempt {
+  id: string;
+  media_id: number;
+  kind: AnnotationKind;
+  profile_id: string;
+  backend: "comfy";
+  status: AnnotationAttemptStatus;
+  external_prompt_id: string;
+  predecessor_attempt_id?: string | null;
+  input_sha256?: string | null;
+  workflow_sha256?: string | null;
+  raw_result?: Record<string, unknown> | null;
+  normalized_result?: Record<string, unknown> | null;
+  provenance?: Record<string, unknown> | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  retryable: boolean;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+}
+
+export interface MediaAnnotation {
+  id: string;
+  media_id: number;
+  attempt_id?: string | null;
+  parent_id?: string | null;
+  revision: number;
+  kind: AnnotationKind;
+  author: "machine" | "human";
+  review_status: AnnotationReviewStatus;
+  schema_version: string;
+  content: Record<string, unknown>;
+  provenance?: Record<string, unknown> | null;
+  created_at: string;
+  approved_at?: string | null;
+}
+
+export interface MediaAnnotationState {
+  media_id: number;
+  attempts: AnnotationAttempt[];
+  annotations: MediaAnnotation[];
+}
+
+export interface AnnotationHealth {
+  enabled: boolean;
+  ready: boolean;
+  profiles: string[];
+  configured_profiles: string[];
+  unavailable_profiles: Record<string, string>;
+  active_attempt_id?: string | null;
+  backend: "comfy";
+  detail?: string | null;
+}
+
 export type TaskType =
   | "process_media"
   | "clean_missing_files"
@@ -682,6 +756,13 @@ export interface AppConfig {
     auto_tagging: boolean;
     use_default_tags: boolean;
     custom_tags: string[];
+  };
+  annotations: {
+    enabled: boolean;
+    inference_socket_path: string;
+    inference_timeout_seconds: number;
+    caption_profile_id: string;
+    tags_profile_id: string;
   };
   face_recognition: {
     preset: "strict" | "normal" | "loose" | "custom";

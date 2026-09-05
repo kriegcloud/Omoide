@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Optional
+from typing import Any, Optional
 
 import sqlalchemy as sa
 from sqlalchemy import Column
@@ -15,6 +15,32 @@ class Status(StrEnum):
     CANCELLED = "cancelled"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class AnnotationKind(StrEnum):
+    CAPTION = "caption"
+    TAGS = "tags"
+
+
+class AnnotationAttemptStatus(StrEnum):
+    CREATED = "created"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    LOST = "lost"
+    UNKNOWN = "unknown"
+
+
+class AnnotationAuthor(StrEnum):
+    MACHINE = "machine"
+    HUMAN = "human"
+
+
+class AnnotationReviewStatus(StrEnum):
+    CANDIDATE = "candidate"
+    APPROVED = "approved"
+    SUPERSEDED = "superseded"
 
 
 class TimelineEvent(SQLModel, table=True):
@@ -184,6 +210,148 @@ class Media(SQLModel, table=True):
         if self.id == other.id:
             return True
         return False
+
+
+class AnnotationAttempt(SQLModel, table=True):
+    """Durable record for one immutable annotation backend execution."""
+
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()), primary_key=True
+    )
+    media_id: int = Field(
+        foreign_key="media.id", ondelete="CASCADE", index=True
+    )
+    kind: AnnotationKind = Field(
+        sa_column=sa.Column(
+            sa.Enum(
+                AnnotationKind,
+                values_callable=lambda obj: [item.value for item in obj],
+            ),
+            nullable=False,
+            index=True,
+        )
+    )
+    profile_id: str = Field(index=True)
+    backend: str = Field(default="comfy")
+    status: AnnotationAttemptStatus = Field(
+        sa_column=sa.Column(
+            sa.Enum(
+                AnnotationAttemptStatus,
+                values_callable=lambda obj: [item.value for item in obj],
+            ),
+            nullable=False,
+            default=AnnotationAttemptStatus.CREATED,
+            index=True,
+        )
+    )
+    # A nullable unique lease closes the check-then-insert race across API
+    # workers. Created/running attempts and unresolved unknown/lost outcomes
+    # hold 1; only a proven resolved transition clears it.
+    active_slot: int | None = Field(default=1, unique=True)
+    external_prompt_id: str = Field(index=True, unique=True)
+    predecessor_attempt_id: str | None = Field(
+        default=None,
+        foreign_key="annotationattempt.id",
+        ondelete="SET NULL",
+        index=True,
+    )
+    input_sha256: str | None = Field(default=None, index=True)
+    workflow_sha256: str | None = Field(default=None, index=True)
+    raw_result: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON)
+    )
+    normalized_result: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON)
+    )
+    provenance: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON)
+    )
+    error_code: str | None = Field(default=None, index=True)
+    error_message: str | None = Field(default=None)
+    retryable: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    started_at: datetime | None = Field(default=None)
+    finished_at: datetime | None = Field(default=None)
+    history_acknowledged_at: datetime | None = Field(default=None, index=True)
+
+    class Config:
+        from_attributes = True
+
+
+class MediaAnnotation(SQLModel, table=True):
+    """Immutable annotation content revision with mutable review metadata."""
+
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "media_id",
+            "kind",
+            "revision",
+            name="uq_mediaannotation_revision",
+        ),
+    )
+
+    id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()), primary_key=True
+    )
+    media_id: int = Field(
+        foreign_key="media.id", ondelete="CASCADE", index=True
+    )
+    attempt_id: str | None = Field(
+        default=None,
+        foreign_key="annotationattempt.id",
+        ondelete="SET NULL",
+        index=True,
+        unique=True,
+    )
+    parent_id: str | None = Field(
+        default=None,
+        foreign_key="mediaannotation.id",
+        ondelete="SET NULL",
+        index=True,
+    )
+    revision: int = Field(default=1)
+    kind: AnnotationKind = Field(
+        sa_column=sa.Column(
+            sa.Enum(
+                AnnotationKind,
+                values_callable=lambda obj: [item.value for item in obj],
+            ),
+            nullable=False,
+            index=True,
+        )
+    )
+    author: AnnotationAuthor = Field(
+        sa_column=sa.Column(
+            sa.Enum(
+                AnnotationAuthor,
+                values_callable=lambda obj: [item.value for item in obj],
+            ),
+            nullable=False,
+            index=True,
+        )
+    )
+    review_status: AnnotationReviewStatus = Field(
+        sa_column=sa.Column(
+            sa.Enum(
+                AnnotationReviewStatus,
+                values_callable=lambda obj: [item.value for item in obj],
+            ),
+            nullable=False,
+            default=AnnotationReviewStatus.CANDIDATE,
+            index=True,
+        )
+    )
+    schema_version: str = Field(default="omoide.annotation/v1")
+    content: dict[str, Any] = Field(sa_column=Column(JSON, nullable=False))
+    provenance: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON)
+    )
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    approved_at: datetime | None = Field(default=None)
+    approved_key: str | None = Field(default=None, unique=True)
+
+    class Config:
+        from_attributes = True
 
 
 class Scene(SQLModel, table=True):

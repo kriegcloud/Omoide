@@ -80,6 +80,12 @@ Special Compliance Notes
   - The AdaFace service uses InsightFace's `det_10g.onnx` detector. InsightFace
     pretrained model weights have separate terms documented by the upstream
     InsightFace project.
+  - The optional Omoide ComfyUI annotation integration uses the separately
+    staged `SmilingWolf/wd-eva02-large-tagger-v3` `v1.0` artifacts from revision
+    `c5303bb7139430db980e4c680a778fe79d72b541`. The model card declares
+    Apache-2.0. Exact artifact checksums and source URLs are recorded in the
+    Omoide annotation workflow manifest; redistribution must preserve the
+    upstream license and any accompanying notices.
 
 How to Regenerate a Full License Inventory
 - Python: generate a third‑party license report for the exact environment

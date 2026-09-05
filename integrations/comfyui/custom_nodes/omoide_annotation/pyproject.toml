@@ -1,0 +1,18 @@
+[project]
+name = "comfyui-omoide-annotation"
+version = "0.1.0"
+description = "Pinned, provenance-preserving ComfyUI annotation nodes for Omoide"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "numpy==2.5.2",
+  "onnxruntime==1.29.0",
+  "pillow==12.3.0",
+  "typing-extensions==4.16.0",
+]
+
+[project.license]
+text = "PolyForm-Noncommercial-1.0.0"
+
+[tool.comfy]
+PublisherId = "omoide-local"

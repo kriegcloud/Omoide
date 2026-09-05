@@ -1,0 +1,35 @@
+{
+  "schema": "omoide-comfy-bridge-config/v1",
+  "comfy_base_url": "http://127.0.0.1:8188",
+  "staging_directory": "/home/elpresidank/ai/ComfyUI/input/omoide",
+  "profiles": {
+    "omoide-caption-v1": {
+      "workflow_path": "/home/elpresidank/ai/workflows/comfy/omoide-caption-v1/workflow.api.json",
+      "workflow_sha256": "a120a3a58837248eded8429632d45bbd06d547711d44d93892fdc69e39929a03",
+      "image_node_id": "1111775332128324",
+      "image_node_class": "LoadImage",
+      "image_input": "image",
+      "output_node_id": "3287111284508309",
+      "output_node_class": "PreviewAny",
+      "output_key": "text",
+      "result_kind": "text",
+      "timeout_seconds": 900,
+      "reconcile_seconds": 15,
+      "poll_interval_seconds": 0.5
+    },
+    "omoide-tags-v1": {
+      "workflow_path": "/home/elpresidank/ai/workflows/comfy/omoide-tags-v1/workflow.api.json",
+      "workflow_sha256": "76fdd0daca41ad3bf6e8409a1e98e72bc08a1fdf5f32475e26e7e2296c00a1fc",
+      "image_node_id": "3128925228060849",
+      "image_node_class": "LoadImage",
+      "image_input": "image",
+      "output_node_id": "3436206424550325",
+      "output_node_class": "PreviewAny",
+      "output_key": "text",
+      "result_kind": "json",
+      "timeout_seconds": 900,
+      "reconcile_seconds": 15,
+      "poll_interval_seconds": 0.5
+    }
+  }
+}

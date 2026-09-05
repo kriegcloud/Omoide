@@ -2,7 +2,9 @@ import ctypes
 import ctypes.util
 import os
 import sys
+import threading
 import time
+from enum import Enum
 from pathlib import Path
 
 from sqlalchemy import event
@@ -185,6 +187,31 @@ def _make_engine(url: str):
 engine = _make_engine(settings.general.database_url)
 
 
+class MigrationState(str, Enum):
+    """Process-local readiness state for the currently configured database."""
+
+    NOT_ATTEMPTED = "not_attempted"
+    APPLIED = "applied"
+    FAILED = "failed"
+
+
+_migration_state_lock = threading.Lock()
+_migration_state = MigrationState.NOT_ATTEMPTED
+
+
+def get_migration_state() -> MigrationState:
+    """Return migration readiness without exposing database error details."""
+
+    with _migration_state_lock:
+        return _migration_state
+
+
+def _set_migration_state(state: MigrationState) -> None:
+    global _migration_state
+    with _migration_state_lock:
+        _migration_state = state
+
+
 def reset_engine(new_url: str):
     """Recreate the global engine for a new database URL."""
     global engine
@@ -193,16 +220,17 @@ def reset_engine(new_url: str):
     except Exception:
         pass
     engine = _make_engine(new_url)
+    _set_migration_state(MigrationState.NOT_ATTEMPTED)
 
 
 def run_migrations():
-    """Ensure schema exists for the current database.
+    """Apply the authoritative Alembic schema or fail explicitly.
 
-    Prefer Alembic migrations; if unavailable or failing (e.g., env
-    requires external sqlite-vec path), fall back to creating tables
-    via SQLModel metadata to support fresh/empty databases.
+    ``SQLModel.metadata.create_all`` is not a safe migration fallback: it cannot
+    add missing columns or constraints to an existing or partially migrated
+    database. Callers must therefore treat any Alembic failure as a degraded
+    schema and must not advertise migration success.
     """
-    # Try Alembic first
     try:
         from alembic.config import Config
 
@@ -227,10 +255,13 @@ def run_migrations():
         alembic_cfg.attributes["configure_logger"] = False
 
         command.upgrade(alembic_cfg, "head")
-        logger.info("Alembic migrations applied successfully.")
-        return
     except Exception as e:
-        logger.warning("Alembic upgrade failed: %s ", e)
+        _set_migration_state(MigrationState.FAILED)
+        logger.error("Alembic migration failed; schema is unavailable: %s", e)
+        raise
+
+    _set_migration_state(MigrationState.APPLIED)
+    logger.info("Alembic migrations applied successfully.")
 
 
 def ensure_vec_tables():

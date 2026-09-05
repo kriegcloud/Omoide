@@ -1,0 +1,4 @@
+numpy==2.5.2
+onnxruntime==1.29.0
+pillow==12.3.0
+typing-extensions==4.16.0
