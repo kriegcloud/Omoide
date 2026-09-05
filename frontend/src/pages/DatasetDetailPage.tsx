@@ -45,16 +45,63 @@ import {
   getDataset,
   getDatasetExports,
   getDatasetAnalysis,
+  getDatasetGaps,
   getDatasetItems,
   getTrainingRuns,
   getTrainingHealth,
   removeDatasetItems,
   updateDataset,
   updateDatasetItem,
+  addDatasetItems,
+  backfillDatasetPose,
 } from "../services/datasets";
-import type { AutoSelectInput, DatasetAnalysis, DatasetExport, DatasetExportLayout, DatasetItem, Media, TrainingDataset, TrainingHealth, TrainingRun } from "../types";
+import type { AutoSelectInput, CompositionGap, DatasetAnalysis, DatasetExport, DatasetExportLayout, DatasetItem, Media, TrainingDataset, TrainingHealth, TrainingRun } from "../types";
 import type { FilerobotDesignState } from "../utils/editorOps";
 import { encodeFilePath } from "../urlUtils";
+import { getMedia } from "../services/media";
+import { useTaskCompletionVersion } from "../TaskEventsContext";
+
+const COMPOSITION_COLORS = ["primary.main", "success.main", "warning.main", "secondary.main", "info.main"];
+
+function CompositionPanel({ analysis, gaps, items, onPreview }: {
+  analysis: DatasetAnalysis;
+  gaps: CompositionGap[];
+  items: DatasetItem[];
+  onPreview: (gap: CompositionGap) => void;
+}) {
+  return <Stack spacing={3}>
+    <Box>
+      <Typography variant="h5" gutterBottom>Composition</Typography>
+      <Typography variant="body2" color="text.secondary" mb={2}>Coverage by framing, pose, light, aspect, and source resolution. Target ticks show the desired count.</Typography>
+      <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" } }}>
+        {Object.entries(analysis.composition).map(([dimension, bands]) => {
+          const total = Math.max(1, Object.values(bands).reduce((sum, count) => sum + count, 0));
+          return <Paper key={dimension} elevation={0} sx={{ p: 2, border: 1, borderColor: "divider", borderRadius: 3 }}>
+            <Typography variant="subtitle2" fontWeight={700} mb={1.5} sx={{ textTransform: "capitalize" }}>{dimension}</Typography>
+            <Stack direction="row" sx={{ height: 8, overflow: "hidden", borderRadius: "4px", bgcolor: "action.hover" }}>
+              {Object.entries(bands).map(([band, count], index) => <Box key={band} title={`${band}: ${count}`} sx={{ width: `${(count / total) * 100}%`, bgcolor: COMPOSITION_COLORS[index % COMPOSITION_COLORS.length] }} />)}
+            </Stack>
+            <Stack spacing={1.25} mt={2}>{Object.entries(bands).map(([band, count]) => {
+              const target = analysis.gaps.find((gap) => gap.dimension === dimension && gap.band === band);
+              return <Box key={band}>
+                <Stack direction="row" justifyContent="space-between" gap={1}><Typography variant="caption" noWrap>{band.replaceAll("_", " ")}</Typography><Typography variant="caption" color="text.secondary" sx={{ fontVariantNumeric: "tabular-nums" }}>{count}{target ? ` / ${target.want}` : ""}</Typography></Stack>
+                <Box position="relative"><LinearProgress variant="determinate" value={Math.min(100, (count / total) * 100)} sx={{ height: 6, borderRadius: "3px" }} />{target && <Box title={`Target ${target.want}`} sx={{ position: "absolute", insetBlock: -2, left: `${Math.min(100, (target.want / total) * 100)}%`, width: 2, bgcolor: "text.primary" }} />}</Box>
+              </Box>;
+            })}</Stack>
+          </Paper>;
+        })}
+      </Box>
+    </Box>
+    <Box>
+      <Typography variant="h6" gutterBottom>Visual clusters</Typography>
+      {analysis.clusters.length === 0 ? <Typography color="text.secondary">Image embeddings are not available yet.</Typography> : <Stack spacing={1}>{analysis.clusters.map((cluster, index) => <Paper key={index} elevation={0} sx={{ p: 1.5, border: 1, borderColor: "divider", borderRadius: 3 }}><Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ sm: "center" }}><Typography fontWeight={700} minWidth={80}>Cluster {index + 1}</Typography><Stack direction="row" spacing={0.5}>{cluster.representative_media_ids.map((mediaId) => { const item = items.find((entry) => entry.media_id === mediaId); return item ? <Box key={mediaId} component="img" src={`${API}/thumbnails/${encodeFilePath(item.media.thumbnail_path)}`} alt="" sx={{ width: 56, height: 56, objectFit: "cover", borderRadius: 1 }} /> : null; })}</Stack><Box flex={1}><Typography variant="body2" color="text.secondary">{cluster.count} images</Typography><Stack direction="row" spacing={0.5} mt={0.5} flexWrap="wrap" useFlexGap>{cluster.top_tags.map((tag) => <Chip key={tag} size="small" label={tag} />)}</Stack></Box></Stack></Paper>)}</Stack>}
+    </Box>
+    <Box>
+      <Typography variant="h6" gutterBottom>Gaps</Typography>
+      {gaps.every((gap) => gap.deficit === 0) ? <Typography color="text.secondary">Composition targets are covered.</Typography> : <Stack spacing={1}>{gaps.filter((gap) => gap.deficit > 0).map((gap) => <Paper key={`${gap.dimension}-${gap.band}`} elevation={0} sx={{ px: 2, py: 1.5, border: 1, borderColor: "divider", borderRadius: 3 }}><Stack direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "center" }} justifyContent="space-between" gap={1}><Box><Typography fontWeight={700}>{gap.dimension} · {gap.band.replaceAll("_", " ")}</Typography><Typography variant="body2" color="text.secondary">Have {gap.have}, target {gap.want}, deficit {gap.deficit}</Typography></Box><Button disabled={!gap.candidates?.length} onClick={() => onPreview(gap)}>Add {Math.min(gap.deficit, gap.candidates?.length ?? 0)}</Button></Stack></Paper>)}</Stack>}
+    </Box>
+  </Stack>;
+}
 
 export default function DatasetDetailPage() {
   const { id } = useParams();
@@ -70,12 +117,16 @@ export default function DatasetDetailPage() {
   const [runs, setRuns] = useState<TrainingRun[]>([]);
   const [trainingHealth, setTrainingHealth] = useState<TrainingHealth | null>(null);
   const [analysis, setAnalysis] = useState<DatasetAnalysis | null>(null);
+  const [gaps, setGaps] = useState<CompositionGap[]>([]);
+  const [gapPreview, setGapPreview] = useState<CompositionGap | null>(null);
+  const [gapMedia, setGapMedia] = useState<Media[]>([]);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [sort, setSort] = useState("position");
   const [tab, setTab] = useState(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [captionItem, setCaptionItem] = useState<DatasetItem | null>(null);
   const [caption, setCaption] = useState("");
   const [cropItem, setCropItem] = useState<DatasetItem | null>(null);
@@ -90,6 +141,7 @@ export default function DatasetDetailPage() {
   const [repairOpen, setRepairOpen] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
   const selection = useSelection();
+  const poseTaskVersion = useTaskCompletionVersion(["pose_backfill"]);
   const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
     containerRef: gridRef,
     itemSelector: "[data-media-card]",
@@ -105,12 +157,21 @@ export default function DatasetDetailPage() {
   const loadAnalysis = useCallback(async () => {
     setAnalysisError(null);
     try {
-      setAnalysis(await getDatasetAnalysis(datasetId));
+      const [nextAnalysis, nextGaps] = await Promise.all([
+        getDatasetAnalysis(datasetId),
+        getDatasetGaps(datasetId),
+      ]);
+      setAnalysis(nextAnalysis);
+      setGaps(nextGaps);
     } catch (reason) {
       setAnalysis(null);
       setAnalysisError(reason instanceof Error ? reason.message : "Failed to analyse dataset");
     }
   }, [datasetId]);
+
+  useEffect(() => {
+    if (poseTaskVersion > 0) void loadAnalysis();
+  }, [poseTaskVersion, loadAnalysis]);
 
   const load = useCallback(async () => {
     try {
@@ -135,6 +196,15 @@ export default function DatasetDetailPage() {
   }, [datasetId, sort, loadAnalysis]);
 
   useEffect(() => { void load(); return () => selection.clear(); }, [load]);
+  useEffect(() => {
+    if (!gapPreview) { setGapMedia([]); return; }
+    let cancelled = false;
+    const ids = (gapPreview.candidates ?? []).slice(0, gapPreview.deficit);
+    void Promise.all(ids.map((mediaId) => getMedia(String(mediaId))))
+      .then((details) => { if (!cancelled) setGapMedia(details.map((detail) => detail.media)); })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to preview gap candidates"));
+    return () => { cancelled = true; };
+  }, [gapPreview]);
   const hasRunning = exports.some((entry) => entry.status === "pending" || entry.status === "running");
   useEffect(() => {
     if (!hasRunning) return;
@@ -222,6 +292,7 @@ export default function DatasetDetailPage() {
         </Stack>
       </Paper>
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
+      {notice && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setNotice(null)}>{notice}</Alert>}
       <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ mb: 2 }}><Tab label={`Items (${dataset.item_count ?? items.length})`} /><Tab label="Analysis" /><Tab label={`Exports (${exports.length})`} /><Tab label={`Runs (${runs.length})`} /><Tab label="Captions" /></Tabs>
 
       {tab === 0 && (
@@ -259,7 +330,7 @@ export default function DatasetDetailPage() {
 
       {tab === 1 && (
         <Stack spacing={3}>
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}><Button variant="contained" onClick={() => { setPreviewExcluded(null); setAutoOpen(true); }}>Auto-select…</Button><Button variant="outlined" onClick={() => setRegularizationOpen(true)}>Build regularization set…</Button></Stack>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}><Button variant="contained" onClick={() => { setPreviewExcluded(null); setAutoOpen(true); }}>Auto-select…</Button><Button variant="outlined" onClick={() => setRegularizationOpen(true)}>Build regularization set…</Button><Button variant="outlined" disabled={dataset.person_id == null} onClick={async () => { await backfillDatasetPose(datasetId); setNotice("Pose backfill started. Composition data will update when processing finishes."); }}>Backfill pose</Button></Stack>
           {analysisError ? <Alert severity="error" action={<Button color="inherit" size="small" onClick={() => void loadAnalysis()}>Retry</Button>}>{analysisError}</Alert> : !analysis ? <CircularProgress /> : <>
             <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", md: "repeat(2, 1fr)" } }}>
               {Object.entries(analysis.summary).map(([section, buckets]) => {
@@ -267,6 +338,7 @@ export default function DatasetDetailPage() {
                 return <Paper key={section} elevation={0} sx={{ p: 2, border: 1, borderColor: "divider", borderRadius: 3 }}><Typography fontWeight={700} mb={1}>{section.replace("_hist", "").replace("_", " ")}</Typography><Stack spacing={1}>{Object.entries(buckets).map(([label, count]) => <Box key={label}><Stack direction="row" justifyContent="space-between"><Typography variant="caption">{label.replace("_", " ")}</Typography><Typography variant="caption">{count}</Typography></Stack><LinearProgress variant="determinate" value={(count / total) * 100} /></Box>)}</Stack></Paper>;
               })}
             </Box>
+            <CompositionPanel analysis={analysis} gaps={gaps} items={items} onPreview={setGapPreview} />
             <Box><Typography variant="h6" gutterBottom>Identity outliers</Typography>{analysis.outliers.length === 0 ? <Typography color="text.secondary">No identity-distance outliers.</Typography> : <Stack direction="row" spacing={2} sx={{ overflowX: "auto", pb: 1 }}>{analysis.outliers.map((itemId) => { const item = items.find((entry) => entry.id === itemId); const metric = analysis.items.find((entry) => entry.item_id === itemId); return item && <Paper key={itemId} elevation={0} sx={{ p: 1.5, minWidth: 180, border: 1, borderColor: "divider" }}><Box component="img" src={`${API}/thumbnails/${encodeFilePath(item.media.thumbnail_path)}`} sx={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 1 }} /><Typography variant="body2" mt={1}>Distance {metric?.identity_distance?.toFixed(3)}</Typography><Button size="small" onClick={async () => { await patchItem(item, { excluded: true }); await refreshCuration(); }}>Exclude</Button></Paper>; })}</Stack>}</Box>
             <Box><Typography variant="h6" gutterBottom>Duplicate groups</Typography>{analysis.duplicates.length === 0 ? <Typography color="text.secondary">No likely duplicates.</Typography> : <Stack spacing={1}>{analysis.duplicates.map((group, index) => <Paper key={index} elevation={0} sx={{ p: 2, border: 1, borderColor: "divider" }}><Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ sm: "center" }} gap={1}><Typography>Items {group.item_ids.join(", ")} · best {group.best_item_id}</Typography><Button onClick={async () => { await Promise.all(group.item_ids.filter((itemId) => itemId !== group.best_item_id).map((itemId) => { const item = items.find((entry) => entry.id === itemId); return item ? updateDatasetItem(datasetId, item.id, { excluded: true }) : Promise.resolve(null); })); await refreshCuration(); }}>Keep best</Button></Stack></Paper>)}</Stack>}</Box>
           </>}
@@ -334,6 +406,15 @@ export default function DatasetDetailPage() {
         <DialogTitle>Build regularization set</DialogTitle>
         <DialogContent><Stack spacing={2} sx={{ mt: 1 }}><TextField type="number" label="Target count" value={regularizationCount} onChange={(event) => setRegularizationCount(Number(event.target.value))} /><FormControl><InputLabel>Gender</InputLabel><Select label="Gender" value={regularizationGender} onChange={(event) => setRegularizationGender(event.target.value)}><MenuItem value="">Subject default</MenuItem><MenuItem value="female">Woman</MenuItem><MenuItem value="male">Man</MenuItem></Select></FormControl></Stack></DialogContent>
         <DialogActions><Button onClick={() => setRegularizationOpen(false)}>Cancel</Button><Button variant="contained" onClick={async () => { const created = await buildRegularizationDataset(datasetId, { target_count: regularizationCount, ...(regularizationGender ? { gender: regularizationGender } : {}) }); navigate(`/dataset/${created.id}`); }}>Build</Button></DialogActions>
+      </Dialog>
+
+      <Dialog open={Boolean(gapPreview)} onClose={() => setGapPreview(null)} fullWidth maxWidth="md">
+        <DialogTitle>Preview gap candidates</DialogTitle>
+        <DialogContent>
+          {gapPreview && <Typography color="text.secondary" mb={2}>Add up to {gapPreview.deficit} images for {gapPreview.dimension} · {gapPreview.band.replaceAll("_", " ")}.</Typography>}
+          {gapMedia.length === 0 ? <CircularProgress size={24} /> : <Box sx={{ display: "grid", gap: 1, gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(4, 1fr)", md: "repeat(6, 1fr)" } }}>{gapMedia.map((media) => <Box key={media.id} component="img" src={`${API}/thumbnails/${encodeFilePath(media.thumbnail_path)}`} alt={media.filename} sx={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 2, bgcolor: "action.hover" }} />)}</Box>}
+        </DialogContent>
+        <DialogActions><Button onClick={() => setGapPreview(null)}>Cancel</Button><Button variant="contained" disabled={gapMedia.length === 0} onClick={async () => { await addDatasetItems(datasetId, gapMedia.map((media) => media.id)); setGapPreview(null); await load(); }}>Add {gapMedia.length}</Button></DialogActions>
       </Dialog>
 
       <BatchCropDialog

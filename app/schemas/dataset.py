@@ -46,6 +46,7 @@ class DatasetUpdate(BaseModel):
     repeats: int | None = Field(default=None, gt=0)
     export_layout: DatasetExportLayout | None = None
     cover_media_id: int | None = None
+    composition_targets: dict[str, dict[str, float]] | None = None
 
 
 class DatasetRead(BaseModel):
@@ -65,6 +66,7 @@ class DatasetRead(BaseModel):
     export_layout: DatasetExportLayout
     cover_media_id: int | None
     regularization_dataset_id: int | None
+    composition_targets: dict[str, dict[str, float]] | None
     created_at: datetime
     updated_at: datetime
     item_count: int = 0
@@ -91,6 +93,7 @@ class DatasetItemRead(BaseModel):
     caption_override: str | None
     weight: float
     excluded: bool
+    origin: str
     created_at: datetime
     media: MediaPreview
     effective_caption: str | None
@@ -118,6 +121,15 @@ class DatasetItemsRequest(BaseModel):
 class DatasetItemsResult(BaseModel):
     added_ids: list[int] = Field(default_factory=list)
     skipped_ids: list[int] = Field(default_factory=list)
+
+
+class FillGapsRequest(BaseModel):
+    max_add: int = Field(gt=0)
+    dimensions: list[str] | None = None
+
+
+class FillGapsResult(BaseModel):
+    added_ids: list[int] = Field(default_factory=list)
 
 
 class DatasetBatchCropRequest(BaseModel):

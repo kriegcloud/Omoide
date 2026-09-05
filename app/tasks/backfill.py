@@ -15,7 +15,7 @@ from app.concurrency import heavy_writer
 from app.config import settings
 from app.database import safe_commit
 from app.logger import logger
-from app.models import Face, Media, ProcessingTask, Scene, Status
+from app.models import DatasetItem, Face, Media, ProcessingTask, Scene, Status
 from app.processor_registry import load_processors, processors
 from app.tasks.state import clear_task_progress, set_task_progress
 from app.utils import update_person_demographics
@@ -24,6 +24,7 @@ __all__ = [
     "run_backfill_demographics",
     "run_backfill_face_quality",
     "run_backfill_face_timestamps",
+    "run_pose_backfill",
 ]
 
 
@@ -60,6 +61,134 @@ def _load_face_source(media: Media, face: Face) -> np.ndarray | None:
     if x2 <= x1 or y2 <= y1:
         return None
     return image[y1:y2, x1:x2]
+
+
+def update_pose_matches(existing_faces: list[Face], detections: list) -> int:
+    """Update stored faces from detections matched at bbox IoU >= 0.5.
+
+    This intentionally updates the existing rows instead of calling
+    ``FaceProcessor.reset_for_media``. Re-detection and reinsertion could
+    detach faces from their assigned people; matching in place preserves the
+    face id and ``person_id`` while safely adding only pose data.
+    """
+    from app.processors.faces import FaceProcessor
+
+    updated = 0
+    for face in existing_faces:
+        stored = _stored_bbox_to_xyxy(face.bbox)
+        if stored is None:
+            continue
+        match = max(
+            detections,
+            key=lambda candidate: FaceProcessor._iou(stored, candidate.bbox),
+            default=None,
+        )
+        if match is None or FaceProcessor._iou(stored, match.bbox) < 0.5:
+            continue
+        raw_kps = getattr(match, "kps", None)
+        if raw_kps is None:
+            continue
+        points = np.asarray(raw_kps, dtype=np.float64)
+        if points.shape != (5, 2) or not np.isfinite(points).all():
+            continue
+        yaw, pitch = FaceProcessor._estimate_pose(points)
+        face.kps = points.tolist()
+        face.yaw = yaw
+        face.pitch = pitch
+        if face.frontality is None:
+            face.frontality = FaceProcessor._estimate_frontality(points)
+        updated += 1
+    return updated
+
+
+def run_pose_backfill(task_id: str, dataset_id: int) -> None:
+    """Backfill dataset face pose in place, preserving person assignments."""
+    if settings.general.presentation_mode:
+        logger.warning("Pose backfill refused in presentation mode.")
+        return
+    if not processors:
+        load_processors()
+    face_proc = next((processor for processor in processors if processor.name == "faces"), None)
+    if face_proc is None:
+        raise RuntimeError("FaceProcessor not found; cannot backfill pose")
+    face_proc.load_model()
+
+    with Session(db.engine) as session:
+        task = session.get(ProcessingTask, task_id)
+        if task is None:
+            return
+        media_ids = list(
+            session.exec(
+                select(DatasetItem.media_id)
+                .join(Face, Face.media_id == DatasetItem.media_id)
+                .where(DatasetItem.dataset_id == dataset_id, Face.yaw.is_(None))
+                .distinct()
+            ).all()
+        )
+        task.status = Status.RUNNING
+        task.started_at = datetime.now(UTC)
+        task.total = len(media_ids)
+        session.add(task)
+        safe_commit(session)
+
+        for index, media_id in enumerate(media_ids):
+            task = session.get(ProcessingTask, task_id)
+            if task is None or task.status == Status.CANCELLED:
+                break
+            media = session.get(Media, media_id)
+            faces = list(
+                session.exec(
+                    select(Face).where(Face.media_id == media_id, Face.yaw.is_(None))
+                ).all()
+            )
+            if media is not None and faces and Path(media.path).exists():
+                groups: dict[float | None, list[Face]] = {}
+                for face in faces:
+                    groups.setdefault(face.timestamp if media.duration is not None else None, []).append(face)
+                for timestamp, group in groups.items():
+                    if media.duration is not None:
+                        image = _extract_frame_rgb(media.path, timestamp) if timestamp is not None else None
+                    else:
+                        try:
+                            with Image.open(media.path) as opened:
+                                image = np.asarray(ImageOps.exif_transpose(opened).convert("RGB"))
+                        except OSError:
+                            image = None
+                    if image is None or image.size == 0:
+                        continue
+                    height, width = image.shape[:2]
+                    if max(height, width) > 1280:
+                        scale = 1280 / max(height, width)
+                        image = cv2.resize(
+                            image,
+                            (int(width * scale), int(height * scale)),
+                            interpolation=cv2.INTER_AREA,
+                        )
+                    try:
+                        detections = face_proc.model.get(image)
+                    except Exception as exc:
+                        logger.debug("Pose detection failed for media %s: %s", media_id, exc)
+                        continue
+                    update_pose_matches(group, detections)
+                    session.add_all(group)
+            task = session.get(ProcessingTask, task_id)
+            if task:
+                task.processed = index + 1
+                session.add(task)
+            safe_commit(session)
+            set_task_progress(
+                task_id,
+                current_step="backfilling_pose",
+                current_item=f"{index + 1}/{len(media_ids)} media",
+            )
+
+        task = session.get(ProcessingTask, task_id)
+        if task:
+            task.status = Status.CANCELLED if task.status == Status.CANCELLED else Status.COMPLETED
+            task.finished_at = datetime.now(UTC)
+            session.add(task)
+            safe_commit(session)
+    clear_task_progress(task_id)
 
 
 def run_backfill_demographics(task_id: str) -> None:

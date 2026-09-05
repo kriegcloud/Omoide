@@ -233,7 +233,7 @@ class LikenessTests(unittest.TestCase):
 
     def test_migration_head_remains_single(self):
         script = ScriptDirectory.from_config(Config("alembic.ini"))
-        self.assertEqual(script.get_heads(), ["c6d7e8f9a0b1"])
+        self.assertEqual(script.get_heads(), ["d7e8f9a0b1c4"])
 
 
 if __name__ == "__main__":

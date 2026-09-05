@@ -171,6 +171,37 @@ class FaceProcessor(MediaProcessor):
         return float(np.clip(1.0 - 2.0 * abs(t - 0.5), 0.0, 1.0))
 
     @staticmethod
+    def _estimate_pose(kps) -> tuple[float | None, float | None]:
+        """Estimate yaw and pitch in degrees from five detector keypoints.
+
+        Negative yaw is toward the subject's left eye; negative pitch is
+        looking down. The deliberately simple geometry is stable across face
+        backends and keeps the stored values reproducible.
+        """
+        if kps is None:
+            return None, None
+        pts = np.asarray(kps, dtype=np.float64)
+        if pts.shape != (5, 2) or not np.isfinite(pts).all():
+            return None, None
+        left_eye, right_eye, nose, left_mouth, right_mouth = pts
+        eye_vec = right_eye - left_eye
+        eye_distance = float(np.linalg.norm(eye_vec))
+        if eye_distance <= 1e-6:
+            return None, None
+        eye_unit = eye_vec / eye_distance
+        eye_midpoint = (left_eye + right_eye) / 2.0
+        yaw = float(np.clip(((nose - eye_midpoint) @ eye_unit) / eye_distance * 180.0, -90.0, 90.0))
+
+        mouth_midpoint = (left_mouth + right_mouth) / 2.0
+        eye_to_mouth = mouth_midpoint - eye_midpoint
+        vertical_distance = float(np.linalg.norm(eye_to_mouth))
+        if vertical_distance <= 1e-6:
+            return yaw, None
+        fraction = float(((nose - eye_midpoint) @ eye_to_mouth) / (vertical_distance**2))
+        pitch = float(np.clip((0.5 - fraction) * 180.0, -90.0, 90.0))
+        return yaw, pitch
+
+    @staticmethod
     def _stored_bbox_to_xyxy(bbox: list[int] | None) -> list[int] | None:
         if not bbox or len(bbox) < 4:
             return None
@@ -254,6 +285,13 @@ class FaceProcessor(MediaProcessor):
             if norm > 0:
                 vec /= norm
             sex, age, sex_score = self._demographics(f)
+            raw_kps = getattr(f, "kps", None)
+            stored_kps = None
+            if raw_kps is not None:
+                points = np.asarray(raw_kps, dtype=np.float64)
+                if points.shape == (5, 2) and np.isfinite(points).all():
+                    stored_kps = points.tolist()
+            yaw, pitch = self._estimate_pose(stored_kps)
             face = Face(
                 media=media,
                 thumbnail_path=to_posix_str(
@@ -262,7 +300,10 @@ class FaceProcessor(MediaProcessor):
                 bbox=[x1, y1, x2 - x1, y2 - y1],
                 timestamp=timestamp,
                 det_score=det_score,
-                frontality=self._estimate_frontality(getattr(f, "kps", None)),
+                frontality=self._estimate_frontality(stored_kps),
+                kps=stored_kps,
+                yaw=yaw,
+                pitch=pitch,
                 sex=sex,
                 age=age,
                 sex_score=sex_score,

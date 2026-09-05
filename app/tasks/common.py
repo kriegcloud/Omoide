@@ -62,6 +62,7 @@ def create_and_run_task(
         "backfill_face_quality",
         "backfill_face_timestamps",
         "backfill_demographics",
+        "pose_backfill",
         "build_events",
         "geocode_places",
         "export_dataset",

@@ -53,6 +53,8 @@ from app.schemas.dataset import (
     DatasetRead,
     DatasetUpdate,
     FaceSummary,
+    FillGapsRequest,
+    FillGapsResult,
     RegularizationRequest,
     RunLikenessRead,
     TrainingRunRead,
@@ -86,10 +88,13 @@ from app.services.curation import (
     auto_select_dataset,
     build_regularization_dataset,
     compute_dataset_analysis,
+    dataset_gaps,
+    fill_dataset_gaps,
 )
 from app.tasks.common import create_and_run_task
 from app.tasks.dataset_export import export_dataset
 from app.tasks.dataset_caption_generation import generate_dataset_captions
+from app.tasks.backfill import run_pose_backfill
 
 
 router = APIRouter()
@@ -435,6 +440,7 @@ def batch_crop_items(
         )
         item.edit_ops = [crop.model_dump(mode="json")]
         item.edit_design_state = None
+        item.origin = "crop"
         session.add(item)
         updated_ids.append(item_id)
     session.commit()
@@ -511,6 +517,43 @@ def list_items(
 @router.get("/{dataset_id}/analysis")
 def get_analysis(dataset_id: int, session: Session = Depends(get_session)) -> dict:
     return compute_dataset_analysis(session, _dataset_or_404(session, dataset_id))
+
+
+@router.get("/{dataset_id}/gaps")
+def get_gaps(dataset_id: int, session: Session = Depends(get_session)) -> list[dict]:
+    return dataset_gaps(session, _dataset_or_404(session, dataset_id))
+
+
+@router.post("/{dataset_id}/fill-gaps", response_model=FillGapsResult)
+def fill_gaps(
+    dataset_id: int,
+    payload: FillGapsRequest,
+    session: Session = Depends(get_session),
+) -> FillGapsResult:
+    _mutating()
+    added = fill_dataset_gaps(
+        session,
+        _dataset_or_404(session, dataset_id),
+        **payload.model_dump(),
+    )
+    return FillGapsResult(added_ids=added)
+
+
+@router.post("/{dataset_id}/pose-backfill", response_model=ProcessingTask)
+def pose_backfill(
+    dataset_id: int,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+) -> ProcessingTask:
+    _mutating()
+    _dataset_or_404(session, dataset_id)
+    return create_and_run_task(
+        session,
+        background_tasks,
+        "pose_backfill",
+        partial(run_pose_backfill, dataset_id=dataset_id),
+        reuse_running=False,
+    )
 
 
 @router.post("/{dataset_id}/auto-select", response_model=AutoSelectResult)

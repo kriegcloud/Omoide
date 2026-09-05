@@ -297,6 +297,7 @@ export type TaskType =
   | "backfill_face_timestamps"
   | "backfill_face_quality"
   | "backfill_demographics"
+  | "pose_backfill"
   | "build_events"
   | "geocode_places"
   | "export_dataset"
@@ -562,6 +563,7 @@ export interface TrainingDataset {
   export_layout: DatasetExportLayout;
   cover_media_id?: number | null;
   regularization_dataset_id?: number | null;
+  composition_targets?: Record<string, Record<string, number>> | null;
   created_at: string;
   updated_at: string;
   item_count: number;
@@ -586,6 +588,7 @@ export interface DatasetItem {
   caption_override?: string | null;
   weight: number;
   excluded: boolean;
+  origin: "media" | "frame" | "crop";
   created_at: string;
   media: MediaPreview;
   effective_caption?: string | null;
@@ -602,6 +605,8 @@ export interface DatasetItemMetrics {
   framing: "closeup" | "portrait" | "half_body" | "full_body" | "none";
   other_people: number;
   frontality?: number | null;
+  yaw?: number | null;
+  pitch?: number | null;
   det_score?: number | null;
   sharpness?: number | null;
   brightness_mean?: number | null;
@@ -609,6 +614,22 @@ export interface DatasetItemMetrics {
   aspect: "portrait" | "square" | "landscape";
   identity_distance?: number | null;
   duplicate_group?: number | null;
+  resolution_bucket: string;
+}
+
+export interface CompositionGap {
+  dimension: string;
+  band: string;
+  have: number;
+  want: number;
+  deficit: number;
+  candidates?: number[];
+}
+
+export interface CompositionCluster {
+  count: number;
+  representative_media_ids: number[];
+  top_tags: string[];
 }
 
 export interface DatasetAnalysis {
@@ -616,6 +637,9 @@ export interface DatasetAnalysis {
   summary: Record<string, Record<string, number>>;
   outliers: number[];
   duplicates: Array<{ item_ids: number[]; best_item_id: number }>;
+  composition: Record<string, Record<string, number>>;
+  clusters: CompositionCluster[];
+  gaps: CompositionGap[];
 }
 
 export interface AutoSelectInput {

@@ -186,6 +186,11 @@ class Face(SQLModel, table=True):
     det_score: float | None = Field(default=None, nullable=True)
     # 1.0 = frontal, 0.0 = extreme profile (estimated from the 5-point keypoints)
     frontality: float | None = Field(default=None, nullable=True)
+    kps: list[list[float]] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    yaw: float | None = Field(default=None, nullable=True)
+    pitch: float | None = Field(default=None, nullable=True)
     sex: str | None = Field(default=None, nullable=True)
     sex_score: float | None = Field(default=None, nullable=True)
     age: int | None = Field(default=None, nullable=True)
@@ -458,6 +463,9 @@ class TrainingDataset(SQLModel, table=True):
     regularization_dataset_id: int | None = Field(
         default=None, foreign_key="trainingdataset.id"
     )
+    composition_targets: dict[str, dict[str, float]] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
     created_at: datetime = Field(default_factory=datetime.now, index=True)
     updated_at: datetime = Field(default_factory=datetime.now, index=True)
 
@@ -484,6 +492,7 @@ class DatasetItem(SQLModel, table=True):
     caption_override: str | None = Field(default=None)
     weight: float = Field(default=1.0)
     excluded: bool = Field(default=False, index=True)
+    origin: str = Field(default="media", nullable=False)
     created_at: datetime = Field(default_factory=datetime.now, index=True)
     caption_reviewed_at: datetime | None = Field(default=None, nullable=True)
 

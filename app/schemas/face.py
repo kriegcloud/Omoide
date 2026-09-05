@@ -7,6 +7,9 @@ class FaceRead(BaseModel):
     thumbnail_path: str
     similarity: float | None = None
     timestamp: float | None = None
+    kps: list[list[float]] | None = None
+    yaw: float | None = None
+    pitch: float | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -20,6 +20,7 @@ import type {
   DatasetCaptionFilter,
   DatasetCaptionPage,
   Task,
+  CompositionGap,
 } from "../types";
 import type { EditOp, FilerobotDesignState } from "../utils/editorOps";
 
@@ -86,6 +87,11 @@ export const trainingSampleImageUrl = (runId: number, sampleId: number) => `${AP
 export const createDatasetFromPerson = (personId: number) => fetch(`${API}/api/datasets/from-person/${personId}`, { method: "POST" }).then(json<TrainingDataset>);
 export const datasetManifestUrl = (exportId: number) => `${API}/api/datasets/exports/${exportId}/manifest`;
 export const getDatasetAnalysis = (id: number) => fetch(`${API}/api/datasets/${id}/analysis`).then(json<DatasetAnalysis>);
+export const getDatasetGaps = (id: number) => fetch(`${API}/api/datasets/${id}/gaps`).then(json<CompositionGap[]>);
+export const fillDatasetGaps = (id: number, input: { max_add: number; dimensions?: string[] }) => fetch(`${API}/api/datasets/${id}/fill-gaps`, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+}).then(json<{ added_ids: number[] }>);
+export const backfillDatasetPose = (id: number) => fetch(`${API}/api/datasets/${id}/pose-backfill`, { method: "POST" }).then(json<{ id: string }>);
 export const autoSelectDataset = (id: number, input: AutoSelectInput) => fetch(`${API}/api/datasets/${id}/auto-select`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
 }).then(json<AutoSelectResult>);

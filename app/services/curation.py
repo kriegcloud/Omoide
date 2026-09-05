@@ -22,7 +22,10 @@ from app.models import (
     Face,
     Media,
     MediaCurationStats,
+    MediaTagLink,
     Person,
+    PersonMediaLink,
+    Tag,
     TrainingDataset,
     TrainingDatasetKind,
 )
@@ -31,6 +34,27 @@ from app.services.embeddings import (
     decode_embedding as _decode_embedding,
     person_centroid as _person_centroid,
 )
+
+
+DEFAULT_COMPOSITION_TARGETS = {
+    "framing": {"close": 0.35, "half": 0.35, "full": 0.30},
+    "yaw": {
+        "left_profile": 0.10,
+        "left_three_quarter": 0.20,
+        "frontal": 0.40,
+        "right_three_quarter": 0.20,
+        "right_profile": 0.10,
+    },
+}
+
+YAW_BANDS = [
+    "left_profile",
+    "left_three_quarter",
+    "frontal",
+    "right_three_quarter",
+    "right_profile",
+]
+ANGLE_LABELS = ["< -45", "-45..-15", "-15..15", "15..45", "> 45"]
 
 
 def _slugify(value: str) -> str:
@@ -146,6 +170,181 @@ def _quality(metric: dict) -> float:
     )
 
 
+def kmeans(
+    vectors: np.ndarray, cluster_count: int, *, seed: int = 16, max_iterations: int = 100
+) -> tuple[np.ndarray, np.ndarray]:
+    """Cluster vectors with deterministic NumPy-only k-means."""
+    points = np.asarray(vectors, dtype=np.float32)
+    if points.ndim != 2 or len(points) == 0:
+        return np.empty(0, dtype=np.int64), np.empty((0, 0), dtype=np.float32)
+    count = min(max(1, int(cluster_count)), len(points))
+    generator = np.random.default_rng(seed)
+    centers = points[generator.choice(len(points), size=count, replace=False)].copy()
+    labels = np.full(len(points), -1, dtype=np.int64)
+    for _ in range(max_iterations):
+        distances = np.linalg.norm(points[:, None, :] - centers[None, :, :], axis=2)
+        next_labels = np.argmin(distances, axis=1)
+        if np.array_equal(next_labels, labels):
+            break
+        labels = next_labels
+        for index in range(count):
+            members = points[labels == index]
+            if len(members):
+                centers[index] = members.mean(axis=0)
+    return labels, centers
+
+
+def _image_embedding(session: Session, media_id: int) -> np.ndarray | None:
+    try:
+        row = session.exec(
+            text(
+                "SELECT embedding FROM media_embeddings WHERE media_id = :media_id"
+            ).bindparams(media_id=media_id)
+        ).first()
+    except OperationalError:
+        return None
+    return _decode_embedding(row[0]) if row else None
+
+
+def _angle_band(value: float | None, *, semantic: bool = False) -> str | None:
+    if value is None:
+        return None
+    index = int(np.searchsorted([-45, -15, 15, 45], value, side="right"))
+    return (YAW_BANDS if semantic else ANGLE_LABELS)[index]
+
+
+def _composition_framing(framing: str) -> str | None:
+    return {
+        "closeup": "close",
+        "portrait": "close",
+        "half_body": "half",
+        "full_body": "full",
+    }.get(framing)
+
+
+def _resolution_band(media: Media, buckets: list[int]) -> str:
+    longest = max(media.width or 0, media.height or 0)
+    ordered = sorted(set(buckets)) or [512, 768, 1024]
+    eligible = [bucket for bucket in ordered if bucket <= longest]
+    return str(eligible[-1]) if eligible else f"< {ordered[0]}"
+
+
+def _metric_for_media(
+    session: Session, dataset: TrainingDataset, media: Media
+) -> dict:
+    faces = list(session.exec(select(Face).where(Face.media_id == media.id)).all())
+    subject = _subject_face(faces, dataset.person_id)
+    image_area = (media.width or 0) * (media.height or 0)
+    face_ratio = _face_area(subject) / image_area if subject and image_area else None
+    brightness, contrast = _brightness(session, media)
+    return {
+        "media_id": media.id,
+        "face_ratio": face_ratio,
+        "framing": framing_for_ratio(face_ratio),
+        "other_people": sum(face.person_id != dataset.person_id for face in faces),
+        "frontality": subject.frontality if subject else None,
+        "yaw": subject.yaw if subject else None,
+        "pitch": subject.pitch if subject else None,
+        "det_score": subject.det_score if subject else None,
+        "sharpness": media.laplacian_score,
+        "brightness_mean": brightness,
+        "contrast_std": contrast,
+        "aspect": aspect_class(media.width, media.height),
+        "resolution_bucket": _resolution_band(media, dataset.buckets),
+        "resolution": image_area,
+        "subject_face": subject,
+    }
+
+
+def _composition_histograms(metrics: list[dict]) -> dict[str, dict[str, int]]:
+    dimensions: dict[str, list[str | None]] = {
+        "framing": [_composition_framing(metric["framing"]) for metric in metrics],
+        "yaw": [_angle_band(metric["yaw"], semantic=True) for metric in metrics],
+        "pitch": [_angle_band(metric["pitch"]) for metric in metrics],
+        "brightness": [
+            _histogram([metric["brightness_mean"]], [64, 128, 192], ["0–64", "64–128", "128–192", "192–255"])
+            for metric in metrics
+        ],
+        "aspect": [metric["aspect"] for metric in metrics],
+        "resolution": [metric["resolution_bucket"] for metric in metrics],
+    }
+    result: dict[str, dict[str, int]] = {}
+    for dimension, values in dimensions.items():
+        if dimension == "brightness":
+            counter: Counter = Counter()
+            for histogram in values:
+                counter.update({key: count for key, count in histogram.items() if count})
+            result[dimension] = dict(counter)
+        else:
+            result[dimension] = dict(Counter(value for value in values if value is not None))
+    for dimension, labels in {
+        "framing": ["close", "half", "full"],
+        "yaw": YAW_BANDS,
+        "pitch": ANGLE_LABELS,
+        "brightness": ["0–64", "64–128", "128–192", "192–255"],
+        "aspect": ["portrait", "square", "landscape"],
+    }.items():
+        result[dimension] = {
+            label: result.get(dimension, {}).get(label, 0) for label in labels
+        }
+    return result
+
+
+def _dataset_clusters(session: Session, metrics: list[dict]) -> list[dict]:
+    embedded = [
+        (metric, _image_embedding(session, metric["media_id"])) for metric in metrics
+    ]
+    embedded = [(metric, vector) for metric, vector in embedded if vector is not None]
+    if not embedded:
+        return []
+    points = np.asarray([vector for _, vector in embedded], dtype=np.float32)
+    count = min(len(points), max(3, min(12, round(len(metrics) / 40))))
+    labels, centers = kmeans(points, count)
+    clusters: list[dict] = []
+    for index, center in enumerate(centers):
+        member_indices = np.flatnonzero(labels == index)
+        ordered = sorted(
+            member_indices,
+            key=lambda member: float(np.linalg.norm(points[member] - center)),
+        )
+        media_ids = [embedded[member][0]["media_id"] for member in ordered]
+        tag_names = session.exec(
+            select(Tag.name)
+            .join(MediaTagLink, MediaTagLink.tag_id == Tag.id)
+            .where(MediaTagLink.media_id.in_(media_ids))
+        ).all()
+        clusters.append(
+            {
+                "count": len(member_indices),
+                "representative_media_ids": media_ids[:4],
+                "top_tags": [name for name, _ in Counter(tag_names).most_common(5)],
+            }
+        )
+    return clusters
+
+
+def _composition_gaps(
+    dataset: TrainingDataset, composition: dict, total: int
+) -> list[dict]:
+    targets = dataset.composition_targets or DEFAULT_COMPOSITION_TARGETS
+    gaps: list[dict] = []
+    for dimension, bands in targets.items():
+        histogram = composition.get(dimension, {})
+        for band, fraction in bands.items():
+            have = int(histogram.get(band, 0))
+            want = int(round(total * float(fraction)))
+            gaps.append(
+                {
+                    "dimension": dimension,
+                    "band": band,
+                    "have": have,
+                    "want": want,
+                    "deficit": max(0, want - have),
+                }
+            )
+    return gaps
+
+
 def _histogram(values: list[float | int | None], edges: list[float], labels: list[str]) -> dict[str, int]:
     result = dict.fromkeys(labels, 0)
     for value in values:
@@ -208,26 +407,13 @@ def compute_dataset_analysis(session: Session, dataset: TrainingDataset) -> dict
         media = session.get(Media, item.media_id)
         if media is None:
             continue
+        base = _metric_for_media(session, dataset, media)
         faces = list(session.exec(select(Face).where(Face.media_id == media.id)).all())
-        subject = _subject_face(faces, dataset.person_id)
+        subject = base.pop("subject_face")
         embedding = _face_embedding(session, subject.id) if subject and subject.id else None
-        image_area = (media.width or 0) * (media.height or 0)
-        face_ratio = _face_area(subject) / image_area if subject and image_area else None
-        brightness, contrast = _brightness(session, media)
         metric = {
             "item_id": item.id,
-            "media_id": media.id,
-            "face_ratio": face_ratio,
-            "framing": framing_for_ratio(face_ratio),
-            "other_people": sum(
-                face.person_id != dataset.person_id for face in faces
-            ),
-            "frontality": subject.frontality if subject else None,
-            "det_score": subject.det_score if subject else None,
-            "sharpness": media.laplacian_score,
-            "brightness_mean": brightness,
-            "contrast_std": contrast,
-            "aspect": aspect_class(media.width, media.height),
+            **base,
             "identity_distance": (
                 cosine_distance(embedding, centroid)
                 if embedding is not None and centroid is not None
@@ -235,7 +421,6 @@ def compute_dataset_analysis(session: Session, dataset: TrainingDataset) -> dict
             ),
             "duplicate_group": None,
             "phash": media.phash,
-            "resolution": image_area,
             "_embedding": embedding,
         }
         metrics.append(metric)
@@ -254,12 +439,130 @@ def compute_dataset_analysis(session: Session, dataset: TrainingDataset) -> dict
         "brightness_hist": _histogram([m["brightness_mean"] for m in metrics], [64, 128, 192], ["0–64", "64–128", "128–192", "192–255"]),
         "other_people_hist": dict(Counter(str(metric["other_people"]) for metric in metrics)),
     }
+    composition = _composition_histograms(metrics)
     return {
         "items": public,
         "summary": summary,
         "outliers": [metric["item_id"] for metric in metrics if (metric["identity_distance"] or 0) > 0.55],
         "duplicates": duplicates,
+        "composition": composition,
+        "clusters": _dataset_clusters(session, metrics),
+        "gaps": _composition_gaps(dataset, composition, len(metrics)),
     }
+
+
+def dataset_gaps(session: Session, dataset: TrainingDataset) -> list[dict]:
+    analysis = compute_dataset_analysis(session, dataset)
+    if dataset.person_id is None:
+        return [{**gap, "candidates": []} for gap in analysis["gaps"]]
+    existing = set(
+        session.exec(
+            select(DatasetItem.media_id).where(DatasetItem.dataset_id == dataset.id)
+        ).all()
+    )
+    detected = set(
+        session.exec(select(Face.media_id).where(Face.person_id == dataset.person_id)).all()
+    )
+    linked = set(
+        session.exec(
+            select(PersonMediaLink.media_id).where(
+                PersonMediaLink.person_id == dataset.person_id
+            )
+        ).all()
+    )
+    candidates: list[tuple[Media, dict]] = []
+    for media_id in detected | linked:
+        if media_id in existing:
+            continue
+        media = session.get(Media, media_id)
+        if media is None or media.duration is not None:
+            continue
+        metric = _metric_for_media(session, dataset, media)
+        metric.pop("subject_face", None)
+        candidates.append((media, metric))
+
+    result: list[dict] = []
+    for gap in analysis["gaps"]:
+        dimension, band = gap["dimension"], gap["band"]
+        matching = []
+        for media, metric in candidates:
+            value = metric.get(dimension)
+            if dimension == "framing":
+                value = _composition_framing(metric["framing"])
+            elif dimension == "yaw":
+                value = _angle_band(metric["yaw"], semantic=True)
+            elif dimension == "pitch":
+                value = _angle_band(metric["pitch"])
+            elif dimension == "brightness":
+                histogram = _histogram(
+                    [metric["brightness_mean"]],
+                    [64, 128, 192],
+                    ["0–64", "64–128", "128–192", "192–255"],
+                )
+                value = next((label for label, count in histogram.items() if count), None)
+            if value == band:
+                # Gap quality intentionally ignores frontality: profile gaps
+                # would otherwise rank their best candidates last.
+                quality = float(metric["sharpness"] or 0) * float(
+                    metric["face_ratio"] or 0
+                )
+                matching.append((quality, int(media.id)))
+        matching.sort(key=lambda entry: (-entry[0], entry[1]))
+        result.append({**gap, "candidates": [media_id for _, media_id in matching[:24]]})
+    session.commit()
+    return result
+
+
+def fill_dataset_gaps(
+    session: Session,
+    dataset: TrainingDataset,
+    *,
+    max_add: int,
+    dimensions: Iterable[str] | None = None,
+) -> list[int]:
+    allowed = set(dimensions) if dimensions is not None else None
+    gaps = [
+        gap
+        for gap in dataset_gaps(session, dataset)
+        if gap["deficit"] > 0 and (allowed is None or gap["dimension"] in allowed)
+    ]
+    max_position = session.exec(
+        select(func.max(DatasetItem.position)).where(DatasetItem.dataset_id == dataset.id)
+    ).one()
+    position = int(max_position if max_position is not None else -1) + 1
+    added: list[int] = []
+    used: set[int] = set()
+    offsets = [0] * len(gaps)
+    remaining = [int(gap["deficit"]) for gap in gaps]
+    while len(added) < max_add and any(value > 0 for value in remaining):
+        progressed = False
+        for index, gap in enumerate(gaps):
+            if len(added) >= max_add or remaining[index] <= 0:
+                continue
+            candidates = gap["candidates"]
+            while offsets[index] < len(candidates) and candidates[offsets[index]] in used:
+                offsets[index] += 1
+            if offsets[index] >= len(candidates):
+                remaining[index] = 0
+                continue
+            media_id = candidates[offsets[index]]
+            offsets[index] += 1
+            used.add(media_id)
+            added.append(media_id)
+            remaining[index] -= 1
+            session.add(
+                DatasetItem(
+                    dataset_id=dataset.id,
+                    media_id=media_id,
+                    position=position,
+                )
+            )
+            position += 1
+            progressed = True
+        if not progressed:
+            break
+    session.commit()
+    return added
 
 
 def auto_select_dataset(

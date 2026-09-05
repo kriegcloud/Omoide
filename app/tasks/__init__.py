@@ -14,6 +14,7 @@ from .backfill import (
     run_backfill_demographics,
     run_backfill_face_quality,
     run_backfill_face_timestamps,
+    run_pose_backfill,
 )
 from .blur import compute_blur_scores
 from .batch_edit import batch_edit_media
@@ -48,6 +49,7 @@ __all__ = [
     "run_backfill_demographics",
     "run_backfill_face_quality",
     "run_backfill_face_timestamps",
+    "run_pose_backfill",
     "create_and_run_task",
     "generate_hashes",
     "merge_similar_persons",
