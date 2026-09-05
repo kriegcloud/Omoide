@@ -646,3 +646,261 @@ still reports in. The app reads the file under `settings.general.resolved_datase
   `is_default`; unavailable presets are disabled with a "needs a Hugging Face
   token on the host" note.
 - Run rows show a small base-model chip.
+
+# Part III — Curation intelligence
+
+Part II gets images in, cleans them and trains. Part III adds judgement: what
+the dataset lacks, whether each image helps likeness, and whether the trained
+LoRA looks like the person. Same conventions as Parts I and II (stacked
+branches off master, Alembic chained on the current head, no new npm
+dependencies unless stated, tests per phase). Phases are ordered by the
+feedback loop: 15 → 16 → 17 close it, 18 → 20 raise throughput, 21 → 22 raise
+quality.
+
+## Phase 15 — Likeness-scored training evaluation  (branch `feat/likeness-eval`)
+
+Every training sample is embedded with the active face backend and compared to
+the dataset person's centroid, so "does it look like her" becomes a curve per
+run and per step.
+
+### Schema
+
+```
+TrainingSample += likeness: float | None      # cosine similarity to the person centroid, [-1, 1]
+                  face_count: int | None
+                  face_bbox: list[int] | None  # [x, y, w, h] of the scored face in sample pixels
+                  scored_at: datetime | None
+TrainingRun    += likeness_best_step: int | None
+                  likeness_best: float | None
+                  likeness_summary: JSON | None   # {"steps": [{"step", "mean", "max", "n"}]}
+```
+
+### Scoring
+
+- `app/services/likeness.py`: `LikenessScorer` wraps the same face model the
+  `FaceProcessor` uses (`FaceProcessor().load_model()`; buffalo_l returns
+  `normed_embedding`, the AdaFace socket backend exposes an equivalent — read
+  `app/services/face_inference.py`). `score_image(path, centroid) ->
+  (likeness, face_count, bbox)` picks the largest face; no face → `(None, 0, None)`.
+- Centroid: `get_person_embedding(session, dataset.person_id)` decoded with the
+  helper already used by `app/services/curation.py`; L2-normalised. Datasets
+  without a person are never scored.
+- `score_pending_samples(session, limit=16)` runs at the end of each reconcile
+  tick over samples with `scored_at IS NULL`, then refreshes the run's summary
+  and best step (`mean` per step; best = highest mean with `n >= 1`). Bounded
+  per tick so reconcile stays cheap; failures store `scored_at` with
+  `likeness NULL` and log once.
+
+### API
+
+| Route | Notes |
+| --- | --- |
+| `GET /api/datasets/runs/{run_id}/likeness` | `{ steps: [{step, mean, max, n}], best_step, best, scored, pending }` |
+| `GET /api/datasets/{id}/runs/likeness?run_ids=1,2` | same series per run for overlaying; defaults to all runs of the dataset |
+| `POST /api/datasets/runs/{run_id}/rescore` | clears `scored_at` on the run's samples and returns 202 |
+
+`TrainingSampleRead` gains `likeness`, `face_count`; `TrainingRunRead` gains
+`likeness_best_step`, `likeness_best`.
+
+### Frontend
+
+- Runs tab: a likeness sparkline per run row (inline SVG unless a chart
+  library is already in `frontend/package.json`), best step called out; the
+  expanded sample gallery shows a likeness badge per sample and highlights the
+  best step's group.
+- "Compare runs" toggle overlays the curves of every completed run of the
+  dataset with a legend (base model, rank, lr, steps).
+- Rescore action in the run menu.
+
+## Phase 16 — Composition dashboard and gap finder  (branch `feat/composition`)
+
+### Schema
+
+```
+Face += kps: list[list[float]] | None     # five detector keypoints in detector space
+        yaw: float | None                  # degrees, negative = subject's left profile
+        pitch: float | None                # degrees, negative = looking down
+TrainingDataset += composition_targets: JSON | None
+   {"framing": {"close": 0.35, "half": 0.35, "full": 0.30},
+    "yaw": {"left_profile": 0.10, "left_three_quarter": 0.20, "frontal": 0.40,
+            "right_three_quarter": 0.20, "right_profile": 0.10}}
+DatasetItem += origin: str = "media"       # media | frame | crop (used by Phases 10 and 18)
+```
+
+- Pose from the five keypoints (`FaceProcessor._parse_faces`): yaw from the
+  nose's horizontal offset between the eye centres relative to the inter-ocular
+  distance, pitch from the nose position between the eye line and the mouth
+  line; clamp to ±90. Store `kps` so future metrics do not need re-detection.
+- Backfill: `POST /api/datasets/{id}/pose-backfill` runs face detection again
+  only for the dataset's media whose faces lack `yaw` (a `ProcessingTask`).
+
+### Analysis
+
+`compute_dataset_analysis` gains `composition`: histograms for framing
+(existing), yaw bands (`< -45`, `-45..-15`, `-15..15`, `15..45`, `> 45`), pitch
+bands, brightness bands, aspect class, resolution bucket; and `clusters`: k-means
+(k = clamp(n/40, 3, 12)) over the items' image embeddings from the embedding
+extractor when present, each cluster with count, representative media ids and
+top tags. `gaps`: for each target dimension the have/want/deficit per band.
+
+### API
+
+| Route | Notes |
+| --- | --- |
+| `GET /api/datasets/{id}/gaps` | `[{dimension, band, have, want, deficit, candidates: [media_id…]}]`; candidates come from the person's media not in the dataset, filtered to that band, sorted by quality (sharpness × frontality-independent face size), max 24 each |
+| `POST /api/datasets/{id}/fill-gaps` `{ max_add, dimensions? }` | adds candidates round-robin across deficits until `max_add`; returns added ids |
+| `PATCH /api/datasets/{id}` | accepts `composition_targets` |
+
+### Frontend
+
+Analysis tab → **Composition**: stacked bars per dimension with target markers,
+cluster strips (representatives + tags), and a **Gaps** list with "Add N"
+buttons that preview candidates before adding.
+
+## Phase 17 — Caption review loop  (branch `feat/caption-review`)
+
+Builds on the annotation feature (`app/api/annotations.py`), which allows one
+active attempt at a time and stores immutable revisions with a review status.
+Annotation modules stay untouched; the dataset side orchestrates them.
+
+### Schema
+
+```
+DatasetItem += caption_reviewed_at: datetime | None
+CaptionLintFinding (not stored)  { code, severity: info|warn|error, message, start, end }
+```
+
+### Lint (`app/services/caption_lint.py`)
+
+`lint_caption(text, dataset, other_captions) -> list[CaptionLintFinding]`:
+
+- `identity-leak` (warn): eye colour, hair colour/length/texture, skin,
+  freckles, nose/jaw/cheek/lip descriptors, ethnicity words. Character
+  captions should describe what varies, not what defines the identity.
+- `other-people` (warn): "two people", "group", "another man/woman", "couple"
+  on a single-subject dataset.
+- `text-artifacts` (error): "watermark", "text", "logo", "caption", "subtitle".
+- `too-short` (< 4 words) / `too-long` (> 75 words) (warn).
+- `near-duplicate` (info): token Jaccard ≥ 0.9 with another item's caption.
+- `trigger-in-caption` (warn): the trigger word appears inside the caption body
+  (the template already prepends it).
+
+### API
+
+| Route | Notes |
+| --- | --- |
+| `GET /api/datasets/{id}/captions?filter=all\|findings\|candidate\|approved\|missing&cursor=` | per item: media, effective caption, source (override/approved/candidate/template/none), review_status, findings |
+| `POST /api/datasets/{id}/captions/generate` `{ only_missing: bool }` | `ProcessingTask` `dataset_caption_generation` that creates caption attempts sequentially through the annotation service, waiting for each to finish; 503 when annotations are disabled |
+| `PATCH /api/datasets/{id}/items/{item_id}/caption` `{ text }` | sets `caption_override`, marks reviewed |
+| `POST /api/datasets/{id}/items/{item_id}/caption/approve` | approves the latest candidate through the annotation approve route's service function, marks reviewed |
+
+### Frontend
+
+**Captions** tab: virtualised list (thumbnail, editable caption, lint chips
+with hover explanations, source chip), filter bar, "Generate missing" with task
+progress, per-row Regenerate/Approve, keyboard: Enter saves, ⌘/Ctrl+Enter
+approves, ↓/↑ moves.
+
+## Phase 18 — Video frame mining  (branch `feat/frame-mining`)
+
+Videos already carry per-scene face detections with timestamps. Mine the best
+frames of the subject and register them as ordinary images.
+
+- `POST /api/datasets/{id}/mine-frames` `{ video_media_ids?: int[], max_per_video: 12, min_face_px: 160, fps: 2 }`
+  → `ProcessingTask` `dataset_frame_mining`. Default videos: the person's videos
+  not yet mined for this dataset. Per video: sample candidate timestamps at `fps`
+  inside scenes where the person was detected (plus every `Face.timestamp` of the
+  person); decode frames with OpenCV; detect faces; keep frames whose largest
+  matching face (cosine to the person centroid ≥ 0.45) is ≥ `min_face_px`;
+  score = laplacian sharpness × face-size factor × novelty (yaw/pitch distance
+  from the dataset's existing bins and phash distance from selected frames);
+  farthest-point pick `max_per_video`.
+- Write JPEG (quality 95) beside the video as `<stem>_frame-<ms>.jpg` (same
+  convention as repair copies), register `Media` (created_at = video created_at +
+  offset), queue `edit_processor_names()` processing, add as `DatasetItem` with
+  `origin="frame"`.
+- `GET /api/datasets/{id}/mine-frames/candidates?video_media_id=` previews the
+  scored candidates without writing.
+- Frontend: Items toolbar **Mine video frames…** dialog listing the person's
+  videos (duration, detected face count, already-mined count), parameters, and a
+  preview grid with checkboxes before committing.
+
+## Phase 19 — Burst and near-duplicate control  (branch `feat/burst-dedupe`)
+
+```
+DatasetItem += excluded_reason: str | None   # duplicate|burst|manual|quality
+```
+
+- Grouping in `curation.py`: `burst` = items whose media `created_at` are within
+  3 s of a neighbour and phash hamming ≤ 12; `near` = hamming ≤ 6 regardless of
+  time. Pose-aware keep: within a group, keep one item per yaw band that differs
+  by > 15° plus the sharpest overall; everything else is a loser.
+- `POST /api/datasets/{id}/dedupe` `{ mode: burst|near|both, keep: sharpest|largest_face, pose_aware: bool, dry_run: bool }`
+  → `{ groups: [{ keep: [item_id], drop: [item_id] }], excluded }`; non-dry-run
+  sets `excluded=true, excluded_reason`.
+- `POST /api/datasets/{id}/items/reinclude` `{ reason?: burst|duplicate }` undoes.
+- Frontend: Analysis → **Duplicates** shows groups as strips with keepers
+  outlined, Apply/Undo, and the reason chip on excluded items in the grid.
+
+## Phase 20 — Keyboard triage mode  (branch `feat/triage`)
+
+Route `/dataset/:id/triage`: one item at a time, full-bleed image with face
+box overlay, right rail with metrics (sharpness, frontality, yaw, identity
+distance, framing, caption + lint), progress "312 / 1086 reviewed".
+
+```
+DatasetItem += reviewed_at: datetime | None
+```
+
+- Queue: unreviewed first (position order), then reviewed; `?filter=findings`
+  and `?filter=excluded` variants.
+- Hotkeys: `K` keep (mark reviewed, next), `X` exclude (`excluded_reason=manual`),
+  `C` crop (opens the face-crop suggestion; Enter accepts), `E` focus caption,
+  `R` repair menu, `1`/`2`/`3` weight 0.5/1/1.5, `←`/`→` navigate, `U` undo last
+  action, `?` help sheet. Preload the next three images.
+- Uses the existing item endpoints plus `PATCH /items/{id}` accepting
+  `reviewed_at`; a `POST /items/{id}/review` convenience marks reviewed.
+
+## Phase 21 — Background diversification  (branch `feat/background-swap`)
+
+A fourth repair profile, `omoide-background-swap-v1`, keeps the subject and
+repaints everything else from a prompt so background and outfit stop
+correlating with the identity.
+
+- Bridge (additive): params `{ subject_box, prompt, seed }`; the workflow
+  segments people, keeps the SEGS intersecting `subject_box` (inverse of
+  `OmoideSegsOutsideBox` — add `keep_inside` input), grows and feathers the
+  inverted mask, and inpaints with the Qwen-Image-Edit-2511 inpaint graph
+  already on the host (`qwen-edit-inpaint-r9700`).
+- App: `RepairSettings.background_swap_profile_id`; `POST /api/repairs/media/{id}`
+  accepts `params.prompt`; `app/templates/background_prompts.yaml` ships ~30
+  neutral realistic backgrounds; `POST /api/repairs/bulk` with
+  `randomize_prompts: true` assigns one per media.
+- Frontend: Repair ▸ **Swap background…** with prompt presets, custom prompt,
+  and a "randomise across selection" toggle; the Compare slider already shows
+  before/after.
+
+## Phase 22 — Post-training evaluation kit  (branch `feat/eval-kit`)
+
+Judge every checkpoint on the same prompts and seeds, scored with Phase 15.
+
+```
+EvalBatch(id, run_id FK, checkpoint_path, prompts: JSON, seeds: JSON,
+          lora_strength float, status, created_at, finished_at, error)
+EvalSample(id, batch_id FK, prompt_index, seed, path, likeness, face_count, scored_at)
+```
+
+- Bridge (additive): a `generate` action for profiles with `input_kind:
+  "params"` (no `LoadImage`): the params JSON carries `prompt`, `seed`,
+  `lora_name`, `strength`, `width`, `height`. The bridge stages the checkpoint
+  into `~/ai/ComfyUI/models/loras/omoide/<run>/` (source must be under the
+  datasets host root) and injects `lora_name`. Profile `omoide-eval-zimage-v1`
+  derives from the host's `z-image-turbo-r9700` graph with `LoraLoaderModelOnly`
+  after `UNETLoader`, `z_image_bf16` for base runs.
+- App: `POST /api/datasets/runs/{run_id}/eval` `{ checkpoint?, prompts?, seeds?, lora_strength }`
+  (defaults: the run's sample prompts, seeds `[1, 2, 3, 4]`, strength 1.0);
+  a task drives the bridge one image at a time and scores each with the
+  likeness scorer. `GET /api/datasets/runs/{run_id}/evals`, `GET /api/datasets/evals/{batch_id}`,
+  image route constrained to the run dir.
+- Frontend: run detail → **Eval** grid (prompts × seeds) with likeness per
+  cell and batch mean; compare two batches (checkpoints) side by side.
