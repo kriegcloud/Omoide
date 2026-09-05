@@ -121,13 +121,12 @@ def _queue_edited_media(
 ) -> None:
     # Lazy imports avoid the existing tasks.maintenance -> api.media cycle.
     from app.tasks import create_and_run_task, run_processors_for_media
+    from app.tasks.media_processing import edit_processor_names
 
     create_and_run_task(
         session=session,
         background_tasks=background_tasks,
         task_type="run_processor_for_media",
-        from app.tasks.media_processing import edit_processor_names
-
         callable_task=lambda task_id: run_processors_for_media(
             task_id, edit_processor_names(), [media_id]
         ),
