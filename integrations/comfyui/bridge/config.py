@@ -112,8 +112,8 @@ _COMFY_QWEN35 = ArtifactBinding(
 _COMFY_GIT_HEAD = ArtifactBinding(
     path=Path("/home/elpresidank/ai/ComfyUI/.git/refs/heads/master"),
     bytes_expected=41,
-    sha256="4d95a5693bc5af5b551f074dab327c88f2f33fb7ade3578e37453d7ebf7d4f1e",
-    name="ComfyUI git revision e80c1570",
+    sha256="e39f9057f5c90805c97710c4215b9b0aee775a763233dda4300050343ba4884c",
+    name="ComfyUI git revision 250b2e95",
 )
 _OMOIDE_NODE_INIT = ArtifactBinding(
     path=Path(
@@ -202,7 +202,7 @@ PROFILE_BINDINGS: Mapping[str, ProfileBinding] = MappingProxyType(
             model_revision="5d50a2252bf1bcd49e5fee9b5f296986d442682b",
             model_license="Apache-2.0",
             comfy_version="0.34.0",
-            comfy_core_commit="e80c1570b6b44a2557d5d8e341e05782d18c9bbb",
+            comfy_core_commit="250b2e9551a7bc7a8ebb5beb07e0fecd2983e04a",
         ),
         "omoide-tags-v1": ProfileBinding(
             workflow_path=Path(
@@ -269,7 +269,7 @@ PROFILE_BINDINGS: Mapping[str, ProfileBinding] = MappingProxyType(
             model_revision="c5303bb7139430db980e4c680a778fe79d72b541",
             model_license="Apache-2.0",
             comfy_version="0.34.0",
-            comfy_core_commit="e80c1570b6b44a2557d5d8e341e05782d18c9bbb",
+            comfy_core_commit="250b2e9551a7bc7a8ebb5beb07e0fecd2983e04a",
             general_threshold=0.5296000242233276,
             character_threshold=0.8500000238418579,
         ),
@@ -562,7 +562,7 @@ def _load_profile(profile_id: str, value: object) -> Profile:
             model_revision=digest,
             model_license="host-managed",
             comfy_version="0.34.0",
-            comfy_core_commit="e80c1570b6b44a2557d5d8e341e05782d18c9bbb",
+            comfy_core_commit="250b2e9551a7bc7a8ebb5beb07e0fecd2983e04a",
             input_json_node_id=input_json_node_id,
             input_json_input=input_json_input,
         )

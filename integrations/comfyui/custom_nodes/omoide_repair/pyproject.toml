@@ -1,0 +1,10 @@
+[project]
+name = "omoide_repair"
+description = "Omoide image-repair helper nodes (subject-aware SEGS filtering)."
+version = "0.1.0"
+license = { text = "PolyForm-Noncommercial-1.0.0" }
+dependencies = []
+
+[tool.comfy]
+PublisherId = "kriegcloud"
+DisplayName = "Omoide Repair"
