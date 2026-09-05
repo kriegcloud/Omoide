@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll for requested Omoide LoRA training runs (fallback for the path unit)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30s
+AccuracySec=5s
+Unit=omoide-train.service
+
+[Install]
+WantedBy=timers.target

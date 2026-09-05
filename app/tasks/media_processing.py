@@ -577,6 +577,27 @@ def run_single_processor(
             clear_task_progress(task_id)
 
 
+def edit_processor_names() -> list[str]:
+    """Processors to run on an edited/repaired copy, honouring the active flags.
+
+    Disabled processors never load their models (the CLIP extractor has no
+    ``_preprocess`` until ``load_model`` runs), so asking for them fails the
+    whole follow-up run.
+    """
+    names: list[str] = []
+    if settings.processors.face_processor_active:
+        names.append("faces")
+    if settings.processors.image_embedding_processor_active:
+        names.append("embedding_extractor")
+    if settings.tagging.auto_tagging:
+        names.append("auto_tagger")
+    if settings.processors.blur_processor_active:
+        names.append("blur")
+    if settings.processors.exif_processor_active:
+        names.append("exif")
+    return names
+
+
 def run_processors_for_media(
     task_id: str, processor_names: list[str], media_ids: list[int]
 ) -> None:
@@ -623,7 +644,16 @@ def run_processors_for_media(
                 if _is_task_cancelled(task_id):
                     break
 
-                target.load_model()
+                try:
+                    target.load_model()
+                except Exception:  # noqa: BLE001 - one processor must not sink the rest
+                    logger.exception(
+                        "Processor %s failed to load; skipping it for this run", target.name
+                    )
+                    task.processed += len(media_ids)
+                    session.add(task)
+                    safe_commit(session)
+                    continue
                 target.active = True
 
                 batch_size = 100

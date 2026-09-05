@@ -14,7 +14,6 @@ from app.services.image_edits import edit_media_record
 from app.tasks.state import clear_task_progress, set_task_progress
 
 
-_EDIT_PROCESSORS = ["faces", "embedding_extractor", "auto_tagger", "blur", "exif"]
 
 
 def batch_edit_media(task_id: str, raw_request: dict) -> None:
@@ -108,6 +107,8 @@ def batch_edit_media(task_id: str, raw_request: dict) -> None:
 
     # Follow the single-edit path by processing edited outputs after the batch
     # summary itself has reached a terminal state.
-    from app.tasks.media_processing import run_processors_for_media
-
-    run_processors_for_media(processor_task_id, _EDIT_PROCESSORS, output_ids)
+    from app.tasks.media_processing import (
+        edit_processor_names,
+        run_processors_for_media,
+    )
+    run_processors_for_media(processor_task_id, edit_processor_names(), output_ids)

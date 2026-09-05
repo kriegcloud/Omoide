@@ -49,3 +49,13 @@ Inspect launcher activity with:
 ```sh
 journalctl --user -u omoide-train.service
 ```
+
+## Timer fallback
+
+systemd path units do not reliably notice `REQUESTED` files created inside
+freshly created nested directories, so `omoide-train.timer` also runs the
+launcher every 30 seconds. Enable both:
+
+```bash
+systemctl --user enable --now omoide-train.path omoide-train.timer
+```

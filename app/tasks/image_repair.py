@@ -20,7 +20,6 @@ from app.services.comfy_repair import ComfyRepairClient
 from app.services.image_edits import write_repaired
 from app.utils import generate_perceptual_hash, generate_thumbnail
 
-_EDIT_PROCESSORS = ["faces", "embedding_extractor", "auto_tagger", "blur", "exif"]
 _UPSCALE_PROFILE = "omoide-upscale-v1"
 
 
@@ -45,6 +44,11 @@ def _finish_failure(job_id: str, code: str, message: str, retryable: bool) -> No
         safe_commit(session)
 
 
+# 2x restoration of a 12 MP phone photo would produce a 48 MP file through a
+# 195 MP intermediate; the profile exists for small social-media sources.
+UPSCALE_MAX_SOURCE_SIDE = 2560
+
+
 def run_repair_job(job_id: str) -> None:
     """Load, transport, persist, and enqueue processing for a repair copy."""
     with Session(db.engine) as session:
@@ -61,6 +65,17 @@ def run_repair_job(job_id: str) -> None:
         if media.missing_since is not None or not os.path.isfile(media.path):
             _finish_failure(job_id, "media-missing", "Media file is missing", False)
             return
+        if job.profile == "omoide-upscale-v1":
+            longest = max(int(media.width or 0), int(media.height or 0))
+            if longest > UPSCALE_MAX_SOURCE_SIDE:
+                _finish_failure(
+                    job_id,
+                    "already-high-resolution",
+                    f"Upscale is for sources up to {UPSCALE_MAX_SOURCE_SIDE} px on the long side; "
+                    f"this image is {media.width}x{media.height}",
+                    False,
+                )
+                return
         job.status = ImageRepairStatus.RUNNING
         job.started_at = datetime.utcnow()
         job.external_prompt_id = job.id
@@ -155,9 +170,19 @@ def run_repair_job(job_id: str) -> None:
                 job_id,
                 exc.message,
             )
-        from app.tasks.media_processing import run_processors_for_media
+        from app.tasks.media_processing import (
+            edit_processor_names,
+            run_processors_for_media,
+        )
 
-        run_processors_for_media(processor_task_id, _EDIT_PROCESSORS, [media_id])
+        # The repaired copy is already registered; follow-up processing
+        # must not turn a successful repair into a failed job.
+        try:
+            run_processors_for_media(processor_task_id, edit_processor_names(), [media_id])
+        except Exception:  # noqa: BLE001 - durable background boundary
+            logger.exception(
+                "Post-repair processing failed for media %s (job %s)", media_id, job_id
+            )
     except ComfyAnnotationError as exc:
         _finish_failure(job_id, exc.code, exc.message, exc.retryable)
     except (OSError, ValueError, Image.DecompressionBombError) as exc:

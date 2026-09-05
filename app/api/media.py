@@ -82,7 +82,6 @@ from app.utils import (
 
 router = APIRouter()
 
-_EDIT_PROCESSORS = ["faces", "embedding_extractor", "auto_tagger", "blur", "exif"]
 
 
 def _require_media_mutations_allowed() -> None:
@@ -127,8 +126,10 @@ def _queue_edited_media(
         session=session,
         background_tasks=background_tasks,
         task_type="run_processor_for_media",
+        from app.tasks.media_processing import edit_processor_names
+
         callable_task=lambda task_id: run_processors_for_media(
-            task_id, _EDIT_PROCESSORS, [media_id]
+            task_id, edit_processor_names(), [media_id]
         ),
     )
 
