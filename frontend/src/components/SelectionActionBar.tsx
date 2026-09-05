@@ -6,6 +6,7 @@ import {
   Paper,
   Snackbar,
   Alert,
+  Tooltip,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import ReplayIcon from "@mui/icons-material/Replay";
@@ -14,20 +15,24 @@ import PersonAddIcon from "@mui/icons-material/PersonAdd";
 import PersonRemoveIcon from "@mui/icons-material/PersonRemove";
 import DriveFileMoveIcon from "@mui/icons-material/DriveFileMove";
 import DatasetIcon from "@mui/icons-material/Dataset";
+import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
 import { matchPath, useLocation } from "react-router-dom";
 import { useSelection } from "../context/SelectionContext";
 import { RerunProcessorsDialog } from "./RerunProcessorsDialog";
 import { AddToAlbumDialog } from "./AddToAlbumDialog";
 import AssignMediaToPersonDialog from "./AssignMediaToPersonDialog";
 import FolderPickerDialog from "./FolderPickerDialog";
-import { bulkMoveMedia } from "../services/mediaActions";
+import { batchEditMedia, bulkMoveMedia } from "../services/mediaActions";
 import { detachMediaFromPersonBulk } from "../services/personActions";
 import { useListStore } from "../stores/useListStore";
 import AddToDatasetDialog from "./AddToDatasetDialog";
+import { useLastEditStore } from "../stores/useLastEditStore";
+import { describeEditOps } from "../utils/editorOps";
 
 export const SelectionActionBar: React.FC = () => {
   const { selectedIds, clear } = useSelection();
   const { removeItems } = useListStore();
+  const lastEditOps = useLastEditStore((state) => state.ops);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [albumDialogOpen, setAlbumDialogOpen] = useState(false);
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
@@ -90,6 +95,52 @@ export const SelectionActionBar: React.FC = () => {
           >
             Add to Album
           </Button>
+          <Tooltip
+            title={
+              lastEditOps
+                ? describeEditOps(lastEditOps)
+                : "Save an image edit first"
+            }
+          >
+            <span>
+              <Button
+                size="small"
+                startIcon={<AutoFixHighIcon fontSize="small" />}
+                onClick={async () => {
+                  if (!lastEditOps) return;
+                  setBusy(true);
+                  try {
+                    const task = await batchEditMedia(
+                      Array.from(selectedIds),
+                      lastEditOps,
+                      "copy"
+                    );
+                    setSnackbar({
+                      open: true,
+                      message: `Batch edit ${task.id} started for ${count} item${count === 1 ? "" : "s"}.`,
+                      severity: "success",
+                    });
+                  } catch (error) {
+                    setSnackbar({
+                      open: true,
+                      message:
+                        error instanceof Error
+                          ? error.message
+                          : "Failed to start batch edit",
+                      severity: "error",
+                    });
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+                variant="contained"
+                disableElevation
+                disabled={!lastEditOps || busy}
+              >
+                Apply last edit
+              </Button>
+            </span>
+          </Tooltip>
           <Button
             size="small"
             startIcon={<ReplayIcon fontSize="small" />}

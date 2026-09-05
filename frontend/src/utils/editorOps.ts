@@ -10,6 +10,31 @@ export type EditOp =
       saturation?: number;
     };
 
+export function describeEditOps(ops: EditOp[]): string {
+  return ops
+    .map((op) => {
+      switch (op.op) {
+        case "crop":
+          return `Crop ${op.width}×${op.height}`;
+        case "rotate":
+          return `Rotate ${op.degrees}°`;
+        case "flip":
+          return `Flip ${op.axis}`;
+        case "resize":
+          return `Resize ${op.width}×${op.height}`;
+        case "adjust": {
+          const adjustments = [
+            op.brightness !== undefined && "brightness",
+            op.contrast !== undefined && "contrast",
+            op.saturation !== undefined && "saturation",
+          ].filter(Boolean);
+          return `Adjust ${adjustments.join(", ")}`;
+        }
+      }
+    })
+    .join(", ");
+}
+
 export interface FilerobotDesignState {
   finetunes?: string[];
   finetunesProps?: {

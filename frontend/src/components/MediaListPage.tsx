@@ -75,7 +75,11 @@ export default function MediaListPage({
   const { fetchInitial, loadMore, clearList, clearListsByPrefix } =
     useListStore();
 
-  const refreshKey = useTaskCompletionVersion(["scan", "process_media"]);
+  const refreshKey = useTaskCompletionVersion([
+    "scan",
+    "process_media",
+    "batch_edit_media",
+  ]);
   const [seenRefreshKey, setSeenRefreshKey] = useState(refreshKey);
   const hasNewItems = refreshKey !== seenRefreshKey;
   const gridRef = useRef<HTMLDivElement>(null);

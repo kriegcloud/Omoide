@@ -8,8 +8,13 @@ import {
   CircularProgress,
   Dialog,
   DialogActions,
+  Divider,
   FormControlLabel,
   IconButton,
+  List,
+  ListItem,
+  ListItemText,
+  Popover,
   Stack,
   Switch,
   Toolbar,
@@ -17,12 +22,16 @@ import {
   useTheme,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
+import CompareIcon from "@mui/icons-material/Compare";
+import GridOnIcon from "@mui/icons-material/GridOn";
+import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import SaveAltIcon from "@mui/icons-material/SaveAlt";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import { useNavigate } from "react-router-dom";
 import { API } from "../config";
 import { editMedia, getFaceCropSuggestions } from "../services/mediaActions";
 import { useListStore } from "../stores/useListStore";
+import { useLastEditStore } from "../stores/useLastEditStore";
 import type { CropFraming, FaceCropSuggestion, Media, MediaDetail } from "../types";
 import { encodeFilePath } from "../urlUtils";
 import {
@@ -63,13 +72,26 @@ interface FilerobotStoreState {
   };
 }
 
-interface FaceOverlayLayout {
+interface ImageOverlayLayout {
   left: number;
   top: number;
   width: number;
   height: number;
   rotation: number;
 }
+
+const ASPECT_BUCKETS = [512, 768, 1024] as const;
+
+const SHORTCUTS = [
+  ["R / Shift+R", "Rotate right / left"],
+  ["H / V", "Flip horizontally / vertically"],
+  ["C", "Select the crop tool"],
+  ["0", "Zoom to fit"],
+  ["` (hold)", "Compare with original"],
+  ["Ctrl/⌘+S", "Save copy"],
+  ["Ctrl/⌘+Shift+S", "Overwrite original"],
+  ["Esc", "Cancel"],
+] as const;
 
 const FRAMING_PRESETS: Array<{ framing: CropFraming; label: string }> = [
   { framing: "closeup", label: "Close-up" },
@@ -144,6 +166,7 @@ export default function ImageEditorDialog({
   const muiTheme = useTheme();
   const addItem = useListStore((state) => state.addItem);
   const updateItem = useListStore((state) => state.updateItem);
+  const setLastEdit = useLastEditStore((state) => state.setLastEdit);
   // Filerobot treats loadableDesignState as a state to (re)load, so it must
   // only ever carry the saved state the dialog opened with. Feeding the live
   // onModify state back into it re-applies every change and recurses until
@@ -165,8 +188,12 @@ export default function ImageEditorDialog({
   const updateStateRef = useRef<FilerobotUpdateState | undefined>(undefined);
   const editorHostRef = useRef<HTMLDivElement>(null);
   const [faceGuides, setFaceGuides] = useState(false);
+  const [aspectGuides, setAspectGuides] = useState(false);
+  const [compareHeld, setCompareHeld] = useState(false);
+  const [comparePinned, setComparePinned] = useState(false);
+  const [shortcutsAnchor, setShortcutsAnchor] = useState<HTMLElement | null>(null);
   const [faceSuggestions, setFaceSuggestions] = useState<FaceCropSuggestion[] | null>(null);
-  const [faceOverlay, setFaceOverlay] = useState<FaceOverlayLayout | null>(null);
+  const [imageOverlay, setImageOverlay] = useState<ImageOverlayLayout | null>(null);
 
   const captureStoreState = async (): Promise<FilerobotStoreState | null> => {
     const updateState = updateStateRef.current;
@@ -224,22 +251,26 @@ export default function ImageEditorDialog({
     setHasChanges(false);
     setError(null);
     setFaceGuides(false);
+    setAspectGuides(false);
+    setCompareHeld(false);
+    setComparePinned(false);
+    setShortcutsAnchor(null);
     setFaceSuggestions(null);
-    setFaceOverlay(null);
+    setImageOverlay(null);
   }, [open, media.id, initialDesignState]);
 
-  const updateFaceOverlay = async () => {
+  const updateImageOverlay = async () => {
     const live = await captureStoreState();
     const shown = live?.shownImageDimensions;
     const host = editorHostRef.current;
     const canvas = host?.querySelector<HTMLElement>(".FIE_canvas-container");
     if (!shown?.width || !shown.height || !host || !canvas) {
-      setFaceOverlay(null);
+      setImageOverlay(null);
       return;
     }
     const hostRect = host.getBoundingClientRect();
     const canvasRect = canvas.getBoundingClientRect();
-    setFaceOverlay({
+    setImageOverlay({
       left: canvasRect.left - hostRect.left + (shown.x ?? 0),
       top: canvasRect.top - hostRect.top + (shown.y ?? 0),
       width: shown.width,
@@ -255,7 +286,7 @@ export default function ImageEditorDialog({
       if (faceSuggestions === null) {
         setFaceSuggestions(await getFaceCropSuggestions(media.id));
       }
-      await updateFaceOverlay();
+      await updateImageOverlay();
     } catch (reason) {
       setFaceGuides(false);
       setError(reason instanceof Error ? reason.message : "Failed to load face guides");
@@ -289,18 +320,18 @@ export default function ImageEditorDialog({
         },
       });
       setHasChanges(true);
-      window.setTimeout(() => { void updateFaceOverlay(); }, 0);
+      window.setTimeout(() => { void updateImageOverlay(); }, 0);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Failed to apply face framing");
     }
   };
 
   useEffect(() => {
-    if (!faceGuides) return;
-    const onResize = () => { void updateFaceOverlay(); };
+    if (!faceGuides && !aspectGuides && !compareHeld && !comparePinned) return;
+    const onResize = () => { void updateImageOverlay(); };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [faceGuides]);
+  }, [faceGuides, aspectGuides, compareHeld, comparePinned]);
 
   const editorTheme = useMemo(
     () => ({
@@ -322,7 +353,62 @@ export default function ImageEditorDialog({
     media.cache_version ? `?v=${media.cache_version}` : ""
   }`;
 
-  const save = async (mode: "copy" | "overwrite") => {
+  const updateAdjustments = (
+    transform: (
+      adjustments: NonNullable<FilerobotDesignState["adjustments"]>
+    ) => NonNullable<FilerobotDesignState["adjustments"]>
+  ) => {
+    const updateState = updateStateRef.current;
+    if (!updateState) return;
+    updateState((live) => ({
+      adjustments: transform(live.adjustments ?? {}),
+    }));
+    setHasChanges(true);
+    setError(null);
+    window.setTimeout(() => { void updateImageOverlay(); }, 0);
+  };
+
+  const selectCropTool = () => {
+    // Filerobot 4.9.1 exposes no public select-tool API. Keep this fallback
+    // scoped to its documented tools bar class so a missing selector is safe.
+    editorHostRef.current
+      ?.querySelector<HTMLElement>(".FIE_tools-bar .FIE_crop-tool")
+      ?.click();
+  };
+
+  const zoomToFit = () => {
+    const host = editorHostRef.current;
+    if (!host) return;
+    let zoomLabel = host.querySelector<HTMLElement>(".FIE_topbar-zoom-label");
+    if (zoomLabel?.getAttribute("aria-disabled") === "true") {
+      // Filerobot disables zoom while Crop is selected. Selecting a passive
+      // finetune tool enables its own zoom menu without changing image data.
+      host.querySelector<HTMLElement>(".FIE_brightness-tool-button")?.click();
+      zoomLabel = host.querySelector<HTMLElement>(".FIE_topbar-zoom-label");
+    }
+    zoomLabel?.click();
+    window.setTimeout(() => {
+      // The zoom menu is portalled outside the editor host. Filerobot has no
+      // public zoom API, so invoke its translated Fit-size preset by label.
+      const menu = document.querySelector<HTMLElement>(".FIE_topbar-zoom-menu");
+      const fitLabel = Array.from(menu?.querySelectorAll<HTMLElement>("*") ?? [])
+        .find((element) => element.children.length === 0 && element.textContent?.trim() === "Fit size");
+      (fitLabel?.closest<HTMLElement>("[role='menuitem'], button, li") ?? fitLabel?.parentElement)?.click();
+      window.setTimeout(() => { void updateImageOverlay(); }, 0);
+    }, 0);
+  };
+
+  const toggleCompare = (pinned: boolean) => {
+    setComparePinned(pinned);
+    if (pinned) void updateImageOverlay();
+  };
+
+  const toggleAspectGuides = (visible: boolean) => {
+    setAspectGuides(visible);
+    if (visible) void updateImageOverlay();
+  };
+
+  const save = async (saveMode: "copy" | "overwrite") => {
     setSaving(true);
     setError(null);
     try {
@@ -379,19 +465,20 @@ export default function ImageEditorDialog({
       }
       const detail = await editMedia(media.id, {
         ops,
-        mode,
+        mode: saveMode,
         design_state: freshState,
       });
-      if (mode === "overwrite") {
+      setLastEdit(ops);
+      if (saveMode === "overwrite") {
         detail.media.cache_version = Date.now();
         if (mediaListKey) updateItem(mediaListKey, detail.media);
       } else if (mediaListKey) {
         addItem(mediaListKey, detail.media, "start");
       }
-      onSaved?.(detail, mode);
+      onSaved?.(detail, saveMode);
       setConfirmOverwrite(false);
       onClose();
-      if (mode === "copy") {
+      if (saveMode === "copy") {
         navigate(`/medium/${detail.media.id}`, {
           state: { media: detail.media, mediaListKey },
         });
@@ -403,6 +490,99 @@ export default function ImageEditorDialog({
       setSaving(false);
     }
   };
+
+  useEffect(() => {
+    if (!open) return;
+
+    const isEditableTarget = (target: EventTarget | null) =>
+      target instanceof HTMLElement &&
+      (target.matches("input, textarea, select") ||
+        target.isContentEditable ||
+        Boolean(target.closest("[contenteditable='true']")));
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target)) return;
+
+      if (event.code === "Backquote" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        if (!event.repeat) {
+          setCompareHeld(true);
+          void updateImageOverlay();
+        }
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        if (!hasChanges || saving) return;
+        if (event.shiftKey && mode === "write") setConfirmOverwrite(true);
+        else if (!event.shiftKey) void save("copy");
+        return;
+      }
+
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      switch (event.key.toLowerCase()) {
+        case "escape":
+          event.preventDefault();
+          if (saving) return;
+          if (confirmOverwrite) setConfirmOverwrite(false);
+          else if (shortcutsAnchor) setShortcutsAnchor(null);
+          else onClose();
+          break;
+        case "r":
+          event.preventDefault();
+          updateAdjustments((adjustments) => ({
+            ...adjustments,
+            rotation: (adjustments.rotation ?? 0) + (event.shiftKey ? -90 : 90),
+          }));
+          break;
+        case "h":
+          event.preventDefault();
+          updateAdjustments((adjustments) => ({
+            ...adjustments,
+            isFlippedX: !adjustments.isFlippedX,
+          }));
+          break;
+        case "v":
+          event.preventDefault();
+          updateAdjustments((adjustments) => ({
+            ...adjustments,
+            isFlippedY: !adjustments.isFlippedY,
+          }));
+          break;
+        case "c":
+          event.preventDefault();
+          selectCropTool();
+          break;
+        case "0":
+          event.preventDefault();
+          zoomToFit();
+          break;
+      }
+    };
+
+    const stopComparing = (event?: KeyboardEvent) => {
+      if (!event || event.code === "Backquote") setCompareHeld(false);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", stopComparing);
+    window.addEventListener("blur", stopComparing);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", stopComparing);
+      window.removeEventListener("blur", stopComparing);
+    };
+  }, [
+    open,
+    hasChanges,
+    saving,
+    mode,
+    confirmOverwrite,
+    shortcutsAnchor,
+    onClose,
+    designState,
+  ]);
 
   return (
     <>
@@ -434,6 +614,26 @@ export default function ImageEditorDialog({
               </Typography>
             </Box>
             <Stack direction="row" spacing={0.5} alignItems="center" sx={{ ml: { sm: "auto" }, overflowX: "auto" }}>
+              <Button
+                size="small"
+                startIcon={<CompareIcon />}
+                variant={comparePinned ? "contained" : "text"}
+                aria-pressed={comparePinned}
+                onClick={() => toggleCompare(!comparePinned)}
+                sx={{ whiteSpace: "nowrap" }}
+              >
+                Compare
+              </Button>
+              <Button
+                size="small"
+                startIcon={<GridOnIcon />}
+                variant={aspectGuides ? "contained" : "text"}
+                aria-pressed={aspectGuides}
+                onClick={() => toggleAspectGuides(!aspectGuides)}
+                sx={{ whiteSpace: "nowrap" }}
+              >
+                Bucket guides
+              </Button>
               <FormControlLabel
                 control={<Switch size="small" checked={faceGuides} onChange={(event) => void toggleFaceGuides(event.target.checked)} />}
                 label="Face guides"
@@ -444,9 +644,44 @@ export default function ImageEditorDialog({
                   {preset.label}
                 </Button>
               ))}
+              <IconButton
+                size="small"
+                aria-label="Show editor keyboard shortcuts"
+                aria-haspopup="true"
+                aria-expanded={Boolean(shortcutsAnchor)}
+                onClick={(event) => setShortcutsAnchor(event.currentTarget)}
+              >
+                <HelpOutlineIcon fontSize="small" />
+              </IconButton>
             </Stack>
           </Toolbar>
         </AppBar>
+        <Popover
+          open={Boolean(shortcutsAnchor)}
+          anchorEl={shortcutsAnchor}
+          onClose={() => setShortcutsAnchor(null)}
+          anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+          transformOrigin={{ vertical: "top", horizontal: "right" }}
+        >
+          <Box sx={{ minWidth: 280, p: 1 }}>
+            <Typography variant="subtitle2" sx={{ px: 1, py: 0.75 }}>
+              Keyboard shortcuts
+            </Typography>
+            <Divider />
+            <List dense disablePadding sx={{ pt: 0.5 }}>
+              {SHORTCUTS.map(([keys, action]) => (
+                <ListItem key={keys} sx={{ py: 0.25 }}>
+                  <ListItemText
+                    primary={action}
+                    secondary={keys}
+                    primaryTypographyProps={{ variant: "body2" }}
+                    secondaryTypographyProps={{ variant: "caption" }}
+                  />
+                </ListItem>
+              ))}
+            </List>
+          </Box>
+        </Popover>
 
         <Box ref={editorHostRef} sx={{ flex: 1, minHeight: 0, bgcolor: "background.default", position: "relative" }}>
           <Suspense
@@ -468,14 +703,16 @@ export default function ImageEditorDialog({
                 setDesignState(nextState);
                 setHasChanges(true);
                 setError(null);
-                if (faceGuides) window.setTimeout(() => { void updateFaceOverlay(); }, 0);
+                if (faceGuides || aspectGuides || compareHeld || comparePinned) {
+                  window.setTimeout(() => { void updateImageOverlay(); }, 0);
+                }
               }}
               theme={editorTheme}
             />
             )}
           </Suspense>
-          {faceGuides && faceOverlay && media.width && media.height && ((faceOverlay.rotation % 360) + 360) % 360 === 0 && (
-            <Box sx={{ position: "absolute", pointerEvents: "none", zIndex: 5, left: faceOverlay.left, top: faceOverlay.top, width: faceOverlay.width, height: faceOverlay.height, overflow: "hidden" }}>
+          {faceGuides && imageOverlay && media.width && media.height && ((imageOverlay.rotation % 360) + 360) % 360 === 0 && (
+            <Box sx={{ position: "absolute", pointerEvents: "none", zIndex: 5, left: imageOverlay.left, top: imageOverlay.top, width: imageOverlay.width, height: imageOverlay.height, overflow: "hidden" }}>
               {(faceSuggestions ?? []).map((suggestion) => {
                 const [x, y, width, height] = suggestion.face_bbox;
                 return (
@@ -483,6 +720,63 @@ export default function ImageEditorDialog({
                 );
               })}
             </Box>
+          )}
+          {aspectGuides && imageOverlay && media.width && media.height && ((imageOverlay.rotation % 360) + 360) % 360 === 0 && (
+            <Box sx={{ position: "absolute", pointerEvents: "none", zIndex: 5, left: imageOverlay.left, top: imageOverlay.top, width: imageOverlay.width, height: imageOverlay.height, overflow: "hidden" }}>
+              {ASPECT_BUCKETS.filter((bucket) => bucket <= Math.min(media.width!, media.height!)).map((bucket) => {
+                const width = bucket * imageOverlay.width / media.width!;
+                const height = bucket * imageOverlay.height / media.height!;
+                return (
+                  <Box
+                    key={bucket}
+                    sx={{
+                      position: "absolute",
+                      left: `calc(50% - ${width / 2}px)`,
+                      top: `calc(50% - ${height / 2}px)`,
+                      width,
+                      height,
+                      border: "1px solid",
+                      borderColor: "info.light",
+                      boxShadow: "0 0 0 1px rgba(0,0,0,0.45)",
+                    }}
+                  >
+                    <Typography
+                      component="span"
+                      variant="caption"
+                      sx={{
+                        position: "absolute",
+                        top: 2,
+                        left: 4,
+                        px: 0.5,
+                        color: "common.white",
+                        bgcolor: "rgba(0,0,0,0.68)",
+                        borderRadius: 0.5,
+                      }}
+                    >
+                      {bucket}
+                    </Typography>
+                  </Box>
+                );
+              })}
+            </Box>
+          )}
+          {(compareHeld || comparePinned) && imageOverlay && (
+            <Box
+              component="img"
+              src={source}
+              alt="Original image preview"
+              sx={{
+                position: "absolute",
+                pointerEvents: "none",
+                zIndex: 6,
+                left: imageOverlay.left,
+                top: imageOverlay.top,
+                width: imageOverlay.width,
+                height: imageOverlay.height,
+                objectFit: "contain",
+                bgcolor: "background.default",
+              }}
+            />
           )}
         </Box>
 
