@@ -14,6 +14,8 @@ ReadOnlyPaths=/home/elpresidank/YeeBois/dev/ai-toolkit
 ReadOnlyPaths=-/home/elpresidank/.config/omoide/train-launcher.env
 ReadWritePaths=/home/elpresidank/.local/share/omoide-portal/datasets
 ReadWritePaths=-/home/elpresidank/.cache
+# MIOpen writes lock files and kernel databases here unless MIOPEN_USER_DB_PATH redirects them.
+ReadWritePaths=-/home/elpresidank/.config/miopen
 PrivateTmp=true
 LockPersonality=true
 RestrictSUIDSGID=true

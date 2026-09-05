@@ -92,3 +92,14 @@ stop early because ai-toolkit is misconfigured. The heartbeat contains its
 timestamp, hostname, launcher version, ai-toolkit path, toolkit readiness,
 and a boolean indicating whether `HF_TOKEN` is configured. It never contains
 the token itself. The Runs tab warns when this heartbeat is missing or stale.
+
+## ROCm caches
+
+MIOpen writes kernel databases and lock files under `~/.config/miopen` by default,
+which the sandboxed unit mounts read-only. Point them at the writable cache in
+`train-launcher.env`:
+
+```
+MIOPEN_USER_DB_PATH=/home/elpresidank/.cache/omoide/miopen/db
+MIOPEN_CACHE_DIR=/home/elpresidank/.cache/omoide/miopen/cache
+```
