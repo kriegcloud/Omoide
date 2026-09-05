@@ -474,6 +474,7 @@ export interface TrainingRun {
   dataset_id: number;
   export_id: number;
   backend: string;
+  base_model: string;
   status: TrainingRunStatus;
   run_dir: string;
   steps: number;
@@ -498,10 +499,27 @@ export interface TrainingSample {
 
 export interface TrainingRunInput {
   export_id?: number;
+  base_model?: string;
   steps: number;
   lr: number;
   rank: number;
   sample_prompts?: string[];
+}
+
+export interface TrainingHealth {
+  launcher_seen_at?: string | null;
+  launcher_ok: boolean;
+  hf_token_configured?: boolean | null;
+  stale_after_seconds: number;
+}
+
+export interface TrainingPreset {
+  id: string;
+  label: string;
+  description: string;
+  requires_hf_token: boolean;
+  is_default: boolean;
+  available: boolean;
 }
 
 export interface TrainingDataset {

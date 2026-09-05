@@ -495,6 +495,18 @@ class AnnotationSettings(BaseModel):
     tags_profile_id: str = "omoide-tags-v1"
 
 
+class TrainingSettings(BaseModel):
+    default_base_model: str = "z-image"
+    z_image_path: str | None = None
+    z_image_turbo_path: str | None = None
+    launcher_stale_after_seconds: int = 120
+
+    @field_validator("z_image_path", "z_image_turbo_path", mode="before")
+    @classmethod
+    def _empty_path_is_none(cls, value):
+        return None if value == "" else value
+
+
 class RepairSettings(BaseModel):
     """Opt-in settings for host-side ComfyUI image repair."""
 
@@ -860,6 +872,7 @@ class AppSettings(BaseModel):
     ai: AISettings = Field(default_factory=AISettings)
     tagging: TaggingSettings = Field(default_factory=TaggingSettings)
     annotations: AnnotationSettings = Field(default_factory=AnnotationSettings)
+    training: TrainingSettings = Field(default_factory=TrainingSettings)
     repairs: RepairSettings = Field(default_factory=RepairSettings)
     face_recognition: FaceRecognitionSettings = Field(
         default_factory=FaceRecognitionSettings

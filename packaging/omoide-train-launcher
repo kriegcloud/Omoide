@@ -16,10 +16,47 @@ set -a
 source "$ENV_FILE"
 set +a
 
-: "${AI_TOOLKIT_DIR:?AI_TOOLKIT_DIR must be set in $ENV_FILE}"
-: "${AI_TOOLKIT_PYTHON:?AI_TOOLKIT_PYTHON must be set in $ENV_FILE}"
+readonly AI_TOOLKIT_DIR="${AI_TOOLKIT_DIR:-}"
+readonly AI_TOOLKIT_PYTHON="${AI_TOOLKIT_PYTHON:-}"
 readonly DATASETS_ROOT="${OMOIDE_DATASETS_ROOT:-$DEFAULT_DATASETS_ROOT}"
 
+toolkit_ok=false
+if [[ -d "$AI_TOOLKIT_DIR" && -f "$AI_TOOLKIT_DIR/run.py" && -x "$AI_TOOLKIT_PYTHON" ]]; then
+  toolkit_ok=true
+fi
+hf_token_configured=false
+if [[ -n "${HF_TOKEN:-}" ]]; then
+  hf_token_configured=true
+fi
+
+json_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  printf '%s' "$value"
+}
+
+launcher_dir="$DATASETS_ROOT/.launcher"
+mkdir -p "$launcher_dir"
+heartbeat="$launcher_dir/heartbeat.json"
+heartbeat_tmp="$heartbeat.tmp.$$"
+printf '{\n  "seen_at": "%s",\n  "hostname": "%s",\n  "launcher_version": 2,\n  "ai_toolkit_dir": "%s",\n  "toolkit_ok": %s,\n  "hf_token_configured": %s\n}\n' \
+  "$(date --iso-8601=seconds)" \
+  "$(json_escape "$(hostname)")" \
+  "$(json_escape "$AI_TOOLKIT_DIR")" \
+  "$toolkit_ok" \
+  "$hf_token_configured" > "$heartbeat_tmp"
+mv "$heartbeat_tmp" "$heartbeat"
+
+if [[ -z "$AI_TOOLKIT_DIR" ]]; then
+  printf 'AI_TOOLKIT_DIR must be set in %s\n' "$ENV_FILE" >&2
+  exit 1
+fi
+if [[ -z "$AI_TOOLKIT_PYTHON" ]]; then
+  printf 'AI_TOOLKIT_PYTHON must be set in %s\n' "$ENV_FILE" >&2
+  exit 1
+fi
 if [[ ! -d "$AI_TOOLKIT_DIR" || ! -f "$AI_TOOLKIT_DIR/run.py" ]]; then
   printf 'AI_TOOLKIT_DIR does not contain run.py: %s\n' "$AI_TOOLKIT_DIR" >&2
   exit 1

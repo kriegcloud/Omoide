@@ -164,6 +164,7 @@ class DatasetExportRead(BaseModel):
 
 class TrainingRunRequest(BaseModel):
     export_id: int | None = None
+    base_model: str | None = None
     steps: int = Field(default=2000, gt=0)
     lr: float = Field(default=1e-4, gt=0)
     rank: int = Field(default=16, gt=0)
@@ -184,6 +185,7 @@ class TrainingRunRead(BaseModel):
     dataset_id: int
     export_id: int
     backend: str
+    base_model: str
     status: TrainingRunStatus
     run_dir: str
     steps: int
@@ -199,6 +201,22 @@ class TrainingRunRead(BaseModel):
     checkpoints: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class TrainingHealthRead(BaseModel):
+    launcher_seen_at: datetime | None
+    launcher_ok: bool
+    hf_token_configured: bool | None
+    stale_after_seconds: int
+
+
+class TrainingPresetRead(BaseModel):
+    id: str
+    label: str
+    description: str
+    requires_hf_token: bool
+    is_default: bool
+    available: bool
 
 
 class AutoSelectRequest(BaseModel):

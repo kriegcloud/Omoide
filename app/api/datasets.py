@@ -46,6 +46,8 @@ from app.schemas.dataset import (
     RegularizationRequest,
     TrainingRunRead,
     TrainingRunRequest,
+    TrainingHealthRead,
+    TrainingPresetRead,
     TrainingSampleRead,
 )
 from app.schemas.media import MediaPreview
@@ -55,6 +57,12 @@ from app.services.training_runs import (
     create_run,
     reconcile_runs,
     run_checkpoints,
+)
+from app.services.training_presets import (
+    PRESETS,
+    default_preset_id,
+    get_preset,
+    launcher_health,
 )
 from app.services.face_crops import bbox_to_source_pixels, suggest_crop
 from app.services.curation import (
@@ -174,6 +182,31 @@ def _create_dataset(session: Session, payload: DatasetCreate) -> TrainingDataset
         raise HTTPException(status_code=409, detail="Dataset slug already exists") from exc
     session.refresh(dataset)
     return dataset
+
+
+@router.get("/training/health", response_model=TrainingHealthRead)
+def get_training_health() -> dict:
+    return launcher_health()
+
+
+@router.get("/training/presets", response_model=list[TrainingPresetRead])
+def list_training_presets() -> list[TrainingPresetRead]:
+    health = launcher_health()
+    default_id = default_preset_id()
+    return [
+        TrainingPresetRead(
+            id=preset.id,
+            label=preset.label,
+            description=preset.description,
+            requires_hf_token=preset.requires_hf_token,
+            is_default=preset.id == default_id,
+            available=(
+                not preset.requires_hf_token
+                or health["hf_token_configured"] is True
+            ),
+        )
+        for preset in PRESETS.values()
+    ]
 
 
 @router.get("", response_model=list[DatasetRead])
@@ -513,6 +546,22 @@ def start_training_run(
 ) -> TrainingRunRead:
     _mutating()
     dataset = _dataset_or_404(session, dataset_id)
+    preset_id = payload.base_model or default_preset_id()
+    preset = get_preset(preset_id)
+    if preset is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown base model preset: {preset_id}",
+        )
+    health = launcher_health()
+    if preset.requires_hf_token and health["hf_token_configured"] is False:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This base model needs a Hugging Face token on the training "
+                "host. Set HF_TOKEN in the launcher environment file."
+            ),
+        )
     if payload.export_id is not None:
         export = session.get(DatasetExport, payload.export_id)
         if export is None or export.dataset_id != dataset_id:
@@ -534,7 +583,9 @@ def start_training_run(
                 detail="Complete a dataset export before starting training",
             )
     try:
-        run = create_run(session, dataset, export, payload.model_dump())
+        params = payload.model_dump()
+        params["base_model"] = preset_id
+        run = create_run(session, dataset, export, params)
     except (OSError, ValueError, yaml.YAMLError) as exc:
         session.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc

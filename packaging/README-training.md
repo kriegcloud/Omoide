@@ -22,6 +22,8 @@ Edit `~/.config/omoide/train-launcher.env`:
 ```sh
 AI_TOOLKIT_DIR=/home/elpresidank/YeeBois/dev/ai-toolkit
 AI_TOOLKIT_PYTHON=/absolute/path/to/a/python-with-ai-toolkit-dependencies
+# Required only for the gated FLUX.1-dev preset:
+# HF_TOKEN=hf_...
 # Optional, only when this ROCm installation needs an explicit gfx override:
 # HSA_OVERRIDE_GFX_VERSION=...
 ```
@@ -36,6 +38,30 @@ The workstation deployment stores datasets under
 set `OMOIDE_DATASETS_ROOT` in the environment file and update
 `PathExistsGlob` and `ReadWritePaths` in the two units to the same absolute
 path.
+
+## Base-model presets
+
+The Runs tab offers three ai-toolkit presets: Z-Image (the workstation
+default), Z-Image Turbo, and gated FLUX.1-dev. Z-Image and Z-Image Turbo use
+their public Hugging Face model ids unless a local single-file model path is
+configured. FLUX.1-dev requires a non-empty `HF_TOKEN` in
+`train-launcher.env`; the launcher reports only whether the token is present
+and never writes its value to the heartbeat.
+
+The workstation container accepts these environment variables:
+
+- `OMOIDE_TRAINING__DEFAULT_BASE_MODEL`: default preset id (`z-image`,
+  `z-image-turbo`, or `flux-dev`).
+- `OMOIDE_TRAINING__Z_IMAGE_PATH`: opaque host path to a bf16 Z-Image
+  `.safetensors` file. An empty value uses `Tongyi-MAI/Z-Image`.
+- `OMOIDE_TRAINING__Z_IMAGE_TURBO_PATH`: opaque host path to a bf16 Z-Image
+  Turbo `.safetensors` file. An empty value uses
+  `Tongyi-MAI/Z-Image-Turbo`.
+- `OMOIDE_TRAINING__LAUNCHER_STALE_AFTER_SECONDS`: age after which the
+  launcher heartbeat is considered stale (default 120 seconds).
+
+These paths belong to the host and are intentionally not checked by the
+container.
 
 Load and enable the watcher:
 
@@ -59,3 +85,10 @@ launcher every 30 seconds. Enable both:
 ```bash
 systemctl --user enable --now omoide-train.path omoide-train.timer
 ```
+
+Every invocation atomically updates
+`<OMOIDE_DATASETS_ROOT>/.launcher/heartbeat.json`, including invocations that
+stop early because ai-toolkit is misconfigured. The heartbeat contains its
+timestamp, hostname, launcher version, ai-toolkit path, toolkit readiness,
+and a boolean indicating whether `HF_TOKEN` is configured. It never contains
+the token itself. The Runs tab warns when this heartbeat is missing or stale.

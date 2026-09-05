@@ -525,6 +525,7 @@ class TrainingRun(SQLModel, table=True):
         foreign_key="datasetexport.id", ondelete="CASCADE", index=True
     )
     backend: str = Field(default="ai_toolkit")
+    base_model: str = Field(default="flux-dev")
     status: TrainingRunStatus = Field(
         default=TrainingRunStatus.REQUESTED, index=True
     )

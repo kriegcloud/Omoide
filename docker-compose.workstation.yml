@@ -26,6 +26,9 @@ services:
       # Host path of /app/data/datasets, written into generated training configs
       # so ai-toolkit on the host can consume an export directly.
       OMOIDE_GENERAL__DATASETS_HOST_ROOT: "${HOST_DATA_DIR}/datasets"
+      OMOIDE_TRAINING__DEFAULT_BASE_MODEL: "${OMOIDE_TRAIN_DEFAULT_BASE_MODEL:-z-image}"
+      OMOIDE_TRAINING__Z_IMAGE_PATH: "${OMOIDE_TRAIN_Z_IMAGE_PATH:-}"
+      OMOIDE_TRAINING__Z_IMAGE_TURBO_PATH: "${OMOIDE_TRAIN_Z_IMAGE_TURBO_PATH:-}"
       OMOIDE_FACE_RECOGNITION__EMBEDDING_BACKEND: "${OMOIDE_FACE_BACKEND:-buffalo_l}"
       OMOIDE_FACE_RECOGNITION__INFERENCE_SOCKET_PATH: /app/data/run/omoide-ml.sock
       OMOIDE_ANNOTATIONS__ENABLED: "true"

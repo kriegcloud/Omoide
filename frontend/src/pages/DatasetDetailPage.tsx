@@ -46,11 +46,12 @@ import {
   getDatasetAnalysis,
   getDatasetItems,
   getTrainingRuns,
+  getTrainingHealth,
   removeDatasetItems,
   updateDataset,
   updateDatasetItem,
 } from "../services/datasets";
-import type { AutoSelectInput, DatasetAnalysis, DatasetExport, DatasetExportLayout, DatasetItem, Media, TrainingDataset, TrainingRun } from "../types";
+import type { AutoSelectInput, DatasetAnalysis, DatasetExport, DatasetExportLayout, DatasetItem, Media, TrainingDataset, TrainingHealth, TrainingRun } from "../types";
 import type { FilerobotDesignState } from "../utils/editorOps";
 import { encodeFilePath } from "../urlUtils";
 
@@ -66,6 +67,7 @@ export default function DatasetDetailPage() {
   const { ref: loadMoreRef, inView: loadMoreInView } = useInView({ rootMargin: "400px" });
   const [exports, setExports] = useState<DatasetExport[]>([]);
   const [runs, setRuns] = useState<TrainingRun[]>([]);
+  const [trainingHealth, setTrainingHealth] = useState<TrainingHealth | null>(null);
   const [analysis, setAnalysis] = useState<DatasetAnalysis | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [sort, setSort] = useState("position");
@@ -142,8 +144,11 @@ export default function DatasetDetailPage() {
   useEffect(() => {
     if (!hasActiveRun) return;
     const timer = window.setInterval(() => {
-      void getTrainingRuns(datasetId)
-        .then(setRuns)
+      void Promise.all([getTrainingRuns(datasetId), getTrainingHealth()])
+        .then(([nextRuns, nextHealth]) => {
+          setRuns(nextRuns);
+          setTrainingHealth(nextHealth);
+        })
         .catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to refresh training runs"));
     }, 5000);
     return () => window.clearInterval(timer);
@@ -304,6 +309,8 @@ export default function DatasetDetailPage() {
           exports={exports}
           runs={runs}
           onRunsChange={setRuns}
+          health={trainingHealth}
+          onHealthChange={setTrainingHealth}
         />
       )}
 

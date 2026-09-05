@@ -19,6 +19,7 @@ from app.models import (
     TrainingSample,
 )
 from app.services.datasets import _ai_toolkit_config
+from app.services.training_presets import apply_preset, get_preset
 
 
 TERMINAL_RUN_STATUSES = {
@@ -83,6 +84,11 @@ def _run_config(
         sample["prompts"] = [str(prompt).strip() for prompt in prompts if str(prompt).strip()]
     process["training_folder"] = str(_host_path(run_dir / "output"))
     config["config"]["name"] = name
+    preset_id = str(params.get("base_model") or settings.training.default_base_model)
+    preset = get_preset(preset_id)
+    if preset is None:
+        raise ValueError(f"Unknown training preset: {preset_id}")
+    apply_preset(config, preset)
     return config, name
 
 
@@ -116,6 +122,7 @@ def create_run(
     run = TrainingRun(
         dataset_id=dataset.id,
         export_id=export.id,
+        base_model=str(params.get("base_model") or settings.training.default_base_model),
         run_dir=str(run_dir),
         config_yaml=config_yaml,
         steps=int(params.get("steps", 2000)),

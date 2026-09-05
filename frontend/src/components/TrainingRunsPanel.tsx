@@ -25,16 +25,20 @@ import StopIcon from "@mui/icons-material/Stop";
 import {
   cancelTrainingRun,
   createTrainingRun,
+  getTrainingHealth,
+  getTrainingPresets,
   getTrainingSamples,
   trainingSampleImageUrl,
 } from "../services/datasets";
-import type { DatasetExport, TrainingRun, TrainingSample } from "../types";
+import type { DatasetExport, TrainingHealth, TrainingPreset, TrainingRun, TrainingSample } from "../types";
 
 interface TrainingRunsPanelProps {
   datasetId: number;
   exports: DatasetExport[];
   runs: TrainingRun[];
   onRunsChange: (runs: TrainingRun[]) => void;
+  health: TrainingHealth | null;
+  onHealthChange: (health: TrainingHealth) => void;
 }
 
 const activeStatuses = new Set<TrainingRun["status"]>(["requested", "running"]);
@@ -57,7 +61,7 @@ function elapsed(run: TrainingRun): string {
   return `${minutes}m ${seconds % 60}s`;
 }
 
-export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChange }: TrainingRunsPanelProps) {
+export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChange, health, onHealthChange }: TrainingRunsPanelProps) {
   const completedExports = useMemo(
     () => exports.filter((entry) => entry.status === "completed"),
     [exports],
@@ -65,6 +69,8 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
   const latestExportId = completedExports[0]?.id;
   const [dialogOpen, setDialogOpen] = useState(false);
   const [exportId, setExportId] = useState<number | "">(latestExportId ?? "");
+  const [presets, setPresets] = useState<TrainingPreset[]>([]);
+  const [baseModel, setBaseModel] = useState("");
   const [steps, setSteps] = useState(2000);
   const [learningRate, setLearningRate] = useState(0.0001);
   const [rank, setRank] = useState(16);
@@ -74,6 +80,18 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [samples, setSamples] = useState<Record<number, TrainingSample[]>>({});
   const [loadingSamples, setLoadingSamples] = useState<Set<number>>(new Set());
+
+  useEffect(() => {
+    void Promise.all([getTrainingHealth(), getTrainingPresets()])
+      .then(([nextHealth, nextPresets]) => {
+        onHealthChange(nextHealth);
+        setPresets(nextPresets);
+        setBaseModel(nextPresets.find((preset) => preset.is_default)?.id ?? nextPresets[0]?.id ?? "");
+      })
+      .catch((reason) => {
+        setError(reason instanceof Error ? reason.message : "Could not load training configuration");
+      });
+  }, [onHealthChange]);
 
   useEffect(() => {
     const visibleActiveRuns = runs.filter((run) => expanded.has(run.id) && activeStatuses.has(run.status));
@@ -88,6 +106,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
 
   const openDialog = () => {
     setExportId(latestExportId ?? "");
+    setBaseModel(presets.find((preset) => preset.is_default)?.id ?? presets[0]?.id ?? "");
     setError(null);
     setDialogOpen(true);
   };
@@ -120,6 +139,12 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
 
   return (
     <Stack spacing={2.5}>
+      {health && !health.launcher_ok && (
+        <Alert severity="warning">
+          Training launcher last seen {health.launcher_seen_at ? new Date(health.launcher_seen_at).toLocaleString() : "never"}.
+          {" "}Enable it with <code>systemctl --user enable --now omoide-train.timer</code>; see <code>packaging/README-training.md</code>.
+        </Alert>
+      )}
       <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ sm: "center" }}>
         <Button
           variant="contained"
@@ -161,6 +186,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
                   <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
                     <Typography fontWeight={700}>Run #{run.id}</Typography>
                     <Chip size="small" label={run.status} color={statusColor(run.status)} />
+                    <Chip size="small" variant="outlined" label={run.base_model} />
                     <Typography variant="body2" color="text.secondary">
                       {new Date(run.created_at).toLocaleString()}
                     </Typography>
@@ -269,6 +295,21 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
                 ))}
               </Select>
             </FormControl>
+            <FormControl fullWidth>
+              <InputLabel>Base model</InputLabel>
+              <Select label="Base model" value={baseModel} onChange={(event) => setBaseModel(event.target.value)}>
+                {presets.map((preset) => (
+                  <MenuItem key={preset.id} value={preset.id} disabled={!preset.available}>
+                    <Box>
+                      <Typography variant="body2">{preset.label}</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {preset.available ? preset.description : "Needs a Hugging Face token on the host"}
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
               <TextField fullWidth type="number" label="Steps" value={steps} onChange={(event) => setSteps(Number(event.target.value))} inputProps={{ min: 1, step: 100 }} />
               <TextField fullWidth type="number" label="Learning rate" value={learningRate} onChange={(event) => setLearningRate(Number(event.target.value))} inputProps={{ min: 0, step: 0.00001 }} />
@@ -289,7 +330,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
           <Button
             variant="contained"
             startIcon={submitting ? <CircularProgress size={18} color="inherit" /> : <PlayArrowIcon />}
-            disabled={submitting || exportId === "" || steps <= 0 || learningRate <= 0 || rank <= 0}
+            disabled={submitting || exportId === "" || baseModel === "" || steps <= 0 || learningRate <= 0 || rank <= 0}
             onClick={async () => {
               if (exportId === "") return;
               setSubmitting(true);
@@ -298,6 +339,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
                 const samplePrompts = prompts.split("\n").map((prompt) => prompt.trim()).filter(Boolean);
                 const created = await createTrainingRun(datasetId, {
                   export_id: exportId,
+                  base_model: baseModel,
                   steps,
                   lr: learningRate,
                   rank,

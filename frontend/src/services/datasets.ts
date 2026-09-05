@@ -13,6 +13,8 @@ import type {
   DatasetBatchCropResult,
   TrainingRun,
   TrainingRunInput,
+  TrainingHealth,
+  TrainingPreset,
   TrainingSample,
 } from "../types";
 import type { EditOp, FilerobotDesignState } from "../utils/editorOps";
@@ -59,6 +61,8 @@ export const createDatasetExport = (id: number, layout?: DatasetExportLayout) =>
 }).then(json<DatasetExport>);
 export const getDatasetExports = (id: number) => fetch(`${API}/api/datasets/${id}/exports`).then(json<DatasetExport[]>);
 export const getTrainingRuns = (id: number) => fetch(`${API}/api/datasets/${id}/runs`).then(json<TrainingRun[]>);
+export const getTrainingHealth = () => fetch(`${API}/api/datasets/training/health`).then(json<TrainingHealth>);
+export const getTrainingPresets = () => fetch(`${API}/api/datasets/training/presets`).then(json<TrainingPreset[]>);
 export const createTrainingRun = (id: number, input: TrainingRunInput) => fetch(`${API}/api/datasets/${id}/train`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
 }).then(json<TrainingRun>);
