@@ -43,6 +43,31 @@ class AnnotationReviewStatus(StrEnum):
     SUPERSEDED = "superseded"
 
 
+class TrainingDatasetKind(StrEnum):
+    SUBJECT = "subject"
+    REGULARIZATION = "regularization"
+
+
+class DatasetCaptionSource(StrEnum):
+    ANNOTATION = "annotation"
+    TEMPLATE = "template"
+    NONE = "none"
+
+
+class DatasetExportLayout(StrEnum):
+    KOHYA = "kohya"
+    AI_TOOLKIT = "ai_toolkit"
+    ONETRAINER = "onetrainer"
+
+
+class DatasetExportStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class TimelineEvent(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     title: str = Field(index=True)
@@ -352,6 +377,80 @@ class MediaAnnotation(SQLModel, table=True):
 
     class Config:
         from_attributes = True
+
+
+class TrainingDataset(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True)
+    slug: str = Field(unique=True, index=True)
+    description: str | None = Field(default=None)
+    kind: TrainingDatasetKind = Field(default=TrainingDatasetKind.SUBJECT)
+    person_id: int | None = Field(default=None, foreign_key="person.id", index=True)
+    trigger_word: str
+    class_token: str
+    caption_source: DatasetCaptionSource = Field(
+        default=DatasetCaptionSource.ANNOTATION
+    )
+    caption_template: str = Field(default="{trigger} {class}, {caption}")
+    target_resolution: int = Field(default=1024)
+    buckets: list[int] = Field(
+        default_factory=lambda: [512, 768, 1024],
+        sa_column=Column(JSON, nullable=False),
+    )
+    repeats: int = Field(default=10)
+    export_layout: DatasetExportLayout = Field(
+        default=DatasetExportLayout.AI_TOOLKIT
+    )
+    cover_media_id: int | None = Field(default=None, foreign_key="media.id")
+    created_at: datetime = Field(default_factory=datetime.now, index=True)
+    updated_at: datetime = Field(default_factory=datetime.now, index=True)
+
+
+class DatasetItem(SQLModel, table=True):
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "dataset_id", "media_id", name="uq_datasetitem_dataset_media"
+        ),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    dataset_id: int = Field(
+        foreign_key="trainingdataset.id", ondelete="CASCADE", index=True
+    )
+    media_id: int = Field(foreign_key="media.id", index=True)
+    position: int = Field(default=0, index=True)
+    edit_ops: list[dict[str, Any]] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    edit_design_state: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    caption_override: str | None = Field(default=None)
+    weight: float = Field(default=1.0)
+    excluded: bool = Field(default=False, index=True)
+    created_at: datetime = Field(default_factory=datetime.now, index=True)
+
+
+class DatasetExport(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    dataset_id: int = Field(
+        foreign_key="trainingdataset.id", ondelete="CASCADE", index=True
+    )
+    layout: DatasetExportLayout
+    status: DatasetExportStatus = Field(
+        default=DatasetExportStatus.PENDING, index=True
+    )
+    task_id: str | None = Field(
+        default=None, foreign_key="processingtask.id", ondelete="SET NULL", index=True
+    )
+    output_dir: str = Field(default="")
+    item_count: int = Field(default=0)
+    manifest: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    error: str | None = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.now, index=True)
+    finished_at: datetime | None = Field(default=None)
 
 
 class Scene(SQLModel, table=True):

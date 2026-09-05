@@ -17,6 +17,7 @@ import DriveFileRenameOutlineIcon from "@mui/icons-material/DriveFileRenameOutli
 import DriveFileMoveIcon from "@mui/icons-material/DriveFileMove";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import PersonAddIcon from "@mui/icons-material/PersonAdd";
+import DatasetIcon from "@mui/icons-material/Dataset";
 import DeleteIcon from "@mui/icons-material/Delete";
 import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
 import config from "../config";
@@ -36,6 +37,7 @@ import ConfirmDialog from "./ConfirmDialog";
 import FolderPickerDialog from "./FolderPickerDialog";
 import RenameMediaDialog from "./RenameMediaDialog";
 import ImageEditorDialog from "./ImageEditorDialog";
+import AddToDatasetDialog from "./AddToDatasetDialog";
 
 export interface MediaPersonContext {
   personId: number;
@@ -49,7 +51,7 @@ interface MediaCardMenuProps {
   onDeleted?: () => void;
 }
 
-type DialogKind = "edit" | "rename" | "move" | "assign" | "deleteRecord" | "deleteFile" | null;
+type DialogKind = "edit" | "rename" | "move" | "assign" | "dataset" | "deleteRecord" | "deleteFile" | null;
 
 export default function MediaCardMenu({
   media,
@@ -239,6 +241,10 @@ export default function MediaCardMenu({
             Assign to person…
           </MenuItem>
         )}
+        <MenuItem onClick={() => openDialog("dataset")}>
+          <ListItemIcon><DatasetIcon /></ListItemIcon>
+          Add to dataset…
+        </MenuItem>
         <Divider />
         <MenuItem onClick={() => openDialog("deleteRecord")}>
           <ListItemIcon><DeleteIcon color="error" /></ListItemIcon>
@@ -289,6 +295,12 @@ export default function MediaCardMenu({
           setSnackbar({ message: `Assigned to ${person.name ?? "person"}`, severity: "success" });
           onDeleted?.();
         }}
+      />
+      <AddToDatasetDialog
+        open={dialog === "dataset"}
+        mediaIds={[media.id]}
+        onClose={() => setDialog(null)}
+        onAdded={(dataset) => setSnackbar({ message: `Added to ${dataset.name}`, severity: "success" })}
       />
       <ConfirmDialog
         open={dialog === "deleteRecord"}

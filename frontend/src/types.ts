@@ -268,7 +268,8 @@ export type TaskType =
   | "backfill_face_quality"
   | "backfill_demographics"
   | "build_events"
-  | "geocode_places";
+  | "geocode_places"
+  | "export_dataset";
 export type TaskStatus =
   | "pending"
   | "running"
@@ -395,6 +396,79 @@ export interface MediaPreview {
   inserted_at: string;
   is_favorite: boolean;
   cache_version?: number;
+}
+
+export type DatasetKind = "subject" | "regularization";
+export type DatasetCaptionSource = "annotation" | "template" | "none";
+export type DatasetExportLayout = "kohya" | "ai_toolkit" | "onetrainer";
+export type DatasetExportStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+
+export interface DatasetExport {
+  id: number;
+  dataset_id: number;
+  layout: DatasetExportLayout;
+  status: DatasetExportStatus;
+  task_id?: string | null;
+  output_dir: string;
+  host_output_dir?: string | null;
+  item_count: number;
+  manifest?: Record<string, unknown> | null;
+  error?: string | null;
+  created_at: string;
+  finished_at?: string | null;
+  launch_command?: string | null;
+}
+
+export interface TrainingDataset {
+  id: number;
+  name: string;
+  slug: string;
+  description?: string | null;
+  kind: DatasetKind;
+  person_id?: number | null;
+  trigger_word: string;
+  class_token: string;
+  caption_source: DatasetCaptionSource;
+  caption_template: string;
+  target_resolution: number;
+  buckets: number[];
+  repeats: number;
+  export_layout: DatasetExportLayout;
+  cover_media_id?: number | null;
+  created_at: string;
+  updated_at: string;
+  item_count: number;
+  included_count: number;
+  cover?: MediaPreview | null;
+  last_export?: DatasetExport | null;
+}
+
+export interface DatasetFaceSummary {
+  det_score?: number | null;
+  frontality?: number | null;
+  face_count: number;
+}
+
+export interface DatasetItem {
+  id: number;
+  dataset_id: number;
+  media_id: number;
+  position: number;
+  edit_ops?: import("./utils/editorOps").EditOp[] | null;
+  edit_design_state?: Record<string, unknown> | null;
+  caption_override?: string | null;
+  weight: number;
+  excluded: boolean;
+  created_at: string;
+  media: MediaPreview;
+  effective_caption?: string | null;
+  has_ops: boolean;
+  face_summary: DatasetFaceSummary;
+}
+
+export interface DatasetItemPage {
+  items: DatasetItem[];
+  next_cursor?: string | null;
 }
 
 export interface MediaDuplicate extends MediaPreview {

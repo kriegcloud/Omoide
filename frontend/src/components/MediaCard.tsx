@@ -7,6 +7,7 @@ import {
   CardMedia,
   Box,
   Checkbox,
+  Chip,
   Typography,
 } from "@mui/material";
 import { MediaPreview } from "../types";
@@ -17,6 +18,20 @@ import PlayCircleOutlineIcon from "@mui/icons-material/PlayCircleOutline";
 import FavoriteIcon from "@mui/icons-material/Favorite";
 import { useSelection } from "../context/SelectionContext";
 import MediaCardMenu, { MediaPersonContext } from "./MediaCardMenu";
+import DatasetItemMenu from "./DatasetItemMenu";
+
+export interface MediaDatasetContext {
+  caption?: string | null;
+  excluded: boolean;
+  hasOps: boolean;
+  detScore?: number | null;
+  frontality?: number | null;
+  faceCount: number;
+  onToggleExcluded: () => void;
+  onEditCaption: () => void;
+  onEditCrop: () => void;
+  onRemove: () => void;
+}
 
 function formatDuration(d?: number): string {
   if (d == null) return "";
@@ -74,6 +89,7 @@ interface MediaCardProps {
   mediaListKey?: string;
   navigationContext?: MediaNavigationContext;
   personContext?: MediaPersonContext;
+  datasetContext?: MediaDatasetContext;
   onSelectionClick?: (id: number, event: React.MouseEvent) => void;
 }
 
@@ -82,6 +98,7 @@ export default function MediaCard({
   mediaListKey,
   navigationContext,
   personContext,
+  datasetContext,
   onSelectionClick,
 }: MediaCardProps) {
   const { isSelecting, selectedIds, toggle } = useSelection();
@@ -201,6 +218,7 @@ export default function MediaCard({
         backgroundColor: "background.paper",
         outline: isSelected ? "3px solid" : "none",
         outlineColor: isSelected ? "primary.main" : "transparent",
+        opacity: datasetContext?.excluded ? 0.48 : 1,
         "&:hover": {
           transform: isSelecting ? "none" : "translateY(-4px)",
           boxShadow: isSelecting
@@ -396,6 +414,21 @@ export default function MediaCard({
         </CardActionArea>
       </Link>
 
+      {datasetContext && (
+        <Box sx={{ px: 1.25, py: 1, minHeight: 66 }}>
+          <Typography variant="caption" color="text.secondary" noWrap display="block">
+            {datasetContext.caption || "No caption"}
+          </Typography>
+          <Box sx={{ display: "flex", gap: 0.5, mt: 0.75, flexWrap: "wrap" }}>
+            {datasetContext.detScore != null && <Chip size="small" label={`Face ${Math.round(datasetContext.detScore * 100)}%`} />}
+            {datasetContext.frontality != null && <Chip size="small" label={`Front ${Math.round(datasetContext.frontality * 100)}%`} />}
+            {datasetContext.faceCount > 1 && <Chip size="small" color="warning" label={`${datasetContext.faceCount} faces`} />}
+            {datasetContext.hasOps && <Chip size="small" color="primary" label="Cropped" />}
+            {datasetContext.excluded && <Chip size="small" label="Excluded" />}
+          </Box>
+        </Box>
+      )}
+
       {media && !isSelecting && (
         <Box
           sx={{
@@ -405,12 +438,16 @@ export default function MediaCard({
             zIndex: 20,
           }}
         >
-          <MediaCardMenu
-            media={media}
-            mediaListKey={mediaListKey}
-            personContext={personContext}
-            onMediaChange={(updated) => setIsFavorite(updated.is_favorite)}
-          />
+          {datasetContext ? (
+            <DatasetItemMenu context={datasetContext} />
+          ) : (
+            <MediaCardMenu
+              media={media}
+              mediaListKey={mediaListKey}
+              personContext={personContext}
+              onMediaChange={(updated) => setIsFavorite(updated.is_favorite)}
+            />
+          )}
         </Box>
       )}
 

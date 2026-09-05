@@ -64,8 +64,11 @@ def create_and_run_task(
         "backfill_demographics",
         "build_events",
         "geocode_places",
+        "export_dataset",
     ],
     callable_task: Callable[[str], None],
+    *,
+    reuse_running: bool = True,
 ) -> ProcessingTask:
     """
     Creates a processing task in the database and adds the actual job to the
@@ -89,7 +92,7 @@ def create_and_run_task(
             status_code=503, detail="Database is busy; try again shortly."
         )
 
-    if existing_task:
+    if existing_task and reuse_running:
         logger.info("%s is already running. Reusing existing task.", task_type)
         return existing_task
 

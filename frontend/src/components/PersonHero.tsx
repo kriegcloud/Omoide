@@ -13,6 +13,7 @@ import {
   MenuItem,
 } from "@mui/material";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
+import DatasetIcon from "@mui/icons-material/Dataset";
 import { alpha } from "@mui/material/styles";
 import Grid from "@mui/material/Grid";
 import { Person } from "../types";
@@ -20,6 +21,8 @@ import { PersonEditForm } from "./PersonEditForm";
 import config, { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 import { PersonSocialLinks } from "./PersonSocialLinks";
+import { useNavigate } from "react-router-dom";
+import { createDatasetFromPerson } from "../services/datasets";
 
 interface PersonHeroProps {
   person: Person;
@@ -47,6 +50,8 @@ export function PersonHero({
   autoSelectingProfile,
 }: PersonHeroProps) {
   const theme = useTheme();
+  const navigate = useNavigate();
+  const [creatingDataset, setCreatingDataset] = useState(false);
   const [genderAnchor, setGenderAnchor] = useState<HTMLElement | null>(null);
   const thumbUrl = person.profile_face?.thumbnail_path
     ? `${API}/thumbnails/${encodeFilePath(
@@ -175,6 +180,22 @@ export function PersonHero({
                 ) : (
                   "Auto Profile"
                 )}
+              </Button>
+              <Button
+                variant="outlined"
+                startIcon={<DatasetIcon />}
+                disabled={saving || creatingDataset}
+                onClick={async () => {
+                  setCreatingDataset(true);
+                  try {
+                    const dataset = await createDatasetFromPerson(person.id);
+                    navigate(`/dataset/${dataset.id}`);
+                  } finally {
+                    setCreatingDataset(false);
+                  }
+                }}
+              >
+                {creatingDataset ? "Creating…" : "Create dataset"}
               </Button>
               <Button
                 variant="outlined"

@@ -24,6 +24,7 @@ import type { Media, MediaDetail } from "../types";
 import { encodeFilePath } from "../urlUtils";
 import {
   designStateToOps,
+  type EditOp,
   type FilerobotDesignState,
 } from "../utils/editorOps";
 import ConfirmDialog from "./ConfirmDialog";
@@ -106,6 +107,9 @@ interface ImageEditorDialogProps {
   mediaListKey?: string;
   onClose: () => void;
   onSaved?: (detail: MediaDetail, mode: "copy" | "overwrite") => void;
+  mode?: "write" | "virtual";
+  loadableDesignState?: FilerobotDesignState | null;
+  onOpsReady?: (ops: EditOp[], designState: FilerobotDesignState) => void;
 }
 
 export default function ImageEditorDialog({
@@ -114,6 +118,9 @@ export default function ImageEditorDialog({
   mediaListKey,
   onClose,
   onSaved,
+  mode = "write",
+  loadableDesignState,
+  onOpsReady,
 }: ImageEditorDialogProps) {
   const navigate = useNavigate();
   const muiTheme = useTheme();
@@ -124,8 +131,8 @@ export default function ImageEditorDialog({
   // onModify state back into it re-applies every change and recurses until
   // the stack overflows.
   const initialDesignState = useMemo(
-    () => (media.edit_design_state as FilerobotDesignState | null) ?? undefined,
-    [open, media.id]
+    () => loadableDesignState ?? (media.edit_design_state as FilerobotDesignState | null) ?? undefined,
+    [open, media.id, loadableDesignState]
   );
   const [designState, setDesignState] = useState<FilerobotDesignState | null>(
     initialDesignState ?? null
@@ -263,6 +270,11 @@ export default function ImageEditorDialog({
       if (ops.length === 0) {
         throw new Error("Make at least one image change before saving.");
       }
+      if (mode === "virtual") {
+        onOpsReady?.(ops, freshState);
+        onClose();
+        return;
+      }
       const detail = await editMedia(media.id, {
         ops,
         mode,
@@ -360,27 +372,29 @@ export default function ImageEditorDialog({
           <Button onClick={onClose} disabled={saving} sx={{ mr: "auto" }}>
             Cancel
           </Button>
-          <Button
-            color="warning"
-            variant="outlined"
-            startIcon={<WarningAmberIcon />}
-            onClick={() => setConfirmOverwrite(true)}
-            disabled={!hasChanges || saving}
-          >
-            Overwrite original
-          </Button>
+          {mode === "write" && (
+            <Button
+              color="warning"
+              variant="outlined"
+              startIcon={<WarningAmberIcon />}
+              onClick={() => setConfirmOverwrite(true)}
+              disabled={!hasChanges || saving}
+            >
+              Overwrite original
+            </Button>
+          )}
           <Button
             variant="contained"
             startIcon={saving ? <CircularProgress size={16} /> : <SaveAltIcon />}
             onClick={() => void save("copy")}
             disabled={!hasChanges || saving}
           >
-            Save copy
+            {mode === "virtual" ? "Use crop" : "Save copy"}
           </Button>
         </DialogActions>
       </Dialog>
 
-      <ConfirmDialog
+      {mode === "write" && <ConfirmDialog
         open={confirmOverwrite}
         title="Overwrite the original image?"
         message="The original file will be replaced. Faces will be detected again after saving; manual person links will be kept. This cannot be undone."
@@ -389,7 +403,7 @@ export default function ImageEditorDialog({
         loading={saving}
         onClose={() => setConfirmOverwrite(false)}
         onConfirm={() => void save("overwrite")}
-      />
+      />}
     </>
   );
 }

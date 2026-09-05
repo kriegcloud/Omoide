@@ -85,6 +85,7 @@ from app.api import (
     broken,
     config,
     duplicates,
+    datasets,
     events,
     exports,
     face,
@@ -595,6 +596,7 @@ app.include_router(
 app.include_router(events, prefix="/api/events", tags=["events"])
 app.include_router(places, prefix="/api/places", tags=["places"])
 app.include_router(exports.router, prefix="/api/export", tags=["export"])
+app.include_router(datasets.router, prefix="/api/datasets", tags=["datasets"])
 
 
 @app.get("/thumbnails/{file_path:path}", include_in_schema=False)

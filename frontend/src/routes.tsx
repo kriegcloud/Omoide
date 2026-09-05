@@ -37,6 +37,8 @@ const EventsPage = lazy(() => import("./pages/EventsPage"));
 const EventDetailPage = lazy(() => import("./pages/EventDetailPage"));
 const PlacesPage = lazy(() => import("./pages/PlacesPage"));
 const PlaceMediaPage = lazy(() => import("./pages/PlaceMediaPage"));
+const DatasetsPage = lazy(() => import("./pages/DatasetsPage"));
+const DatasetDetailPage = lazy(() => import("./pages/DatasetDetailPage"));
 
 const RouteFallback = () => (
   <Box
@@ -95,6 +97,8 @@ export const AppRoutes = () => {
           <Route path="/event/:id" element={<EventDetailPage />} />
           <Route path="/places" element={<PlacesPage />} />
           <Route path="/places/media" element={<PlaceMediaPage />} />
+          <Route path="/datasets" element={<DatasetsPage />} />
+          <Route path="/dataset/:id" element={<DatasetDetailPage />} />
           <Route
             path="/blur"
             element={

@@ -32,6 +32,7 @@ import TheatersIcon from "@mui/icons-material/Theaters";
 import PublicIcon from "@mui/icons-material/Public";
 import InsightsIcon from "@mui/icons-material/Insights";
 import BuildIcon from "@mui/icons-material/Build";
+import DatasetIcon from "@mui/icons-material/Dataset";
 import config from "../config";
 import { MAINTENANCE_PATHS } from "./MaintenanceShell";
 
@@ -90,6 +91,12 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
           to: "/people/hidden",
           icon: <VisibilityOffIcon />,
         },
+      ],
+    },
+    {
+      label: "Training",
+      items: [
+        { label: "Datasets", to: "/datasets", icon: <DatasetIcon /> },
       ],
     },
     {
@@ -156,6 +163,7 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
     if (pathname.startsWith("/album/")) return "/albums";
     if (pathname.startsWith("/event/")) return "/events";
     if (pathname.startsWith("/places/")) return "/places";
+    if (pathname.startsWith("/dataset/")) return "/datasets";
     if (pathname.startsWith("/medium/")) return null;
     if (MAINTENANCE_PATHS.includes(pathname)) return "/duplicates";
     return pathname;
@@ -185,7 +193,7 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
           justifyContent: "center",
         }}
       >
-        <Link to="/">
+        <Link to="/" onClick={isTemporary ? onClose : undefined}>
           <Box
             component="img"
             src={wordmarkSrc}
@@ -261,6 +269,7 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
                   <ListItemButton
                     component={RouterNavLink}
                     to={item.to}
+                    onClick={isTemporary ? onClose : undefined}
                     selected={isActive}
                     sx={{
                       borderRadius: 2,

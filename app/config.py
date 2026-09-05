@@ -330,6 +330,8 @@ class GeneralSettings(BaseModel):
     home_widgets: list[HomeWidgetSetting] = Field(default_factory=list)
 
     data_dir: Path = Field(default_factory=get_user_data_path)
+    datasets_dir: Path | None = None
+    datasets_host_root: Path | None = None
 
     # Derived paths (computed fields) keep in sync with data_dir
     @computed_field
@@ -452,6 +454,10 @@ class GeneralSettings(BaseModel):
             seen.add(base)
             resolved.append((base, bool(entry.read_only)))
         return resolved
+
+    def resolved_datasets_dir(self) -> Path:
+        """Return the configured export root or the active profile default."""
+        return _resolve_path_safe(self.datasets_dir or self.data_dir / "datasets")
 
     def ensure_media_path_writable(self, target: Path) -> None:
         """Raise if the path is not writable due to mount/read-only restrictions."""

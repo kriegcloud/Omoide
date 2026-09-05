@@ -13,6 +13,7 @@ import PhotoAlbumIcon from "@mui/icons-material/PhotoAlbum";
 import PersonAddIcon from "@mui/icons-material/PersonAdd";
 import PersonRemoveIcon from "@mui/icons-material/PersonRemove";
 import DriveFileMoveIcon from "@mui/icons-material/DriveFileMove";
+import DatasetIcon from "@mui/icons-material/Dataset";
 import { matchPath, useLocation } from "react-router-dom";
 import { useSelection } from "../context/SelectionContext";
 import { RerunProcessorsDialog } from "./RerunProcessorsDialog";
@@ -22,6 +23,7 @@ import FolderPickerDialog from "./FolderPickerDialog";
 import { bulkMoveMedia } from "../services/mediaActions";
 import { detachMediaFromPersonBulk } from "../services/personActions";
 import { useListStore } from "../stores/useListStore";
+import AddToDatasetDialog from "./AddToDatasetDialog";
 
 export const SelectionActionBar: React.FC = () => {
   const { selectedIds, clear } = useSelection();
@@ -30,6 +32,7 @@ export const SelectionActionBar: React.FC = () => {
   const [albumDialogOpen, setAlbumDialogOpen] = useState(false);
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const [datasetDialogOpen, setDatasetDialogOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const location = useLocation();
   const personMatch = matchPath({ path: "/person/:id/*", end: false }, location.pathname)
@@ -42,6 +45,8 @@ export const SelectionActionBar: React.FC = () => {
   }>({ open: false, message: "", severity: "success" });
 
   const count = selectedIds.size;
+
+  if (location.pathname.startsWith("/dataset/")) return null;
 
   return (
     <>
@@ -67,6 +72,15 @@ export const SelectionActionBar: React.FC = () => {
           }}
         >
           <Chip label={`${count} selected`} size="small" color="primary" />
+          <Button
+            size="small"
+            startIcon={<DatasetIcon fontSize="small" />}
+            onClick={() => setDatasetDialogOpen(true)}
+            variant="contained"
+            disableElevation
+          >
+            Add to dataset
+          </Button>
           <Button
             size="small"
             startIcon={<PhotoAlbumIcon fontSize="small" />}
@@ -210,6 +224,15 @@ export const SelectionActionBar: React.FC = () => {
           } finally {
             setBusy(false);
           }
+        }}
+      />
+      <AddToDatasetDialog
+        open={datasetDialogOpen}
+        mediaIds={Array.from(selectedIds)}
+        onClose={() => setDatasetDialogOpen(false)}
+        onAdded={(dataset, added) => {
+          setSnackbar({ open: true, message: `Added ${added} item(s) to ${dataset.name}.`, severity: "success" });
+          clear();
         }}
       />
 
