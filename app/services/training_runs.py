@@ -50,6 +50,17 @@ def _host_path(path: Path) -> Path:
     return path
 
 
+def _container_path(path: Path) -> Path:
+    """Inverse of ``_host_path``: map a host-side datasets path back into the container."""
+    host_root = settings.general.datasets_host_root
+    if host_root is not None:
+        try:
+            return settings.general.resolved_datasets_dir() / path.relative_to(host_root)
+        except ValueError:
+            pass
+    return path
+
+
 def _run_config(
     dataset: TrainingDataset,
     export: DatasetExport,

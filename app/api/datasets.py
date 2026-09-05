@@ -89,6 +89,7 @@ from app.services.datasets import (
     slugify,
 )
 from app.services.training_runs import (
+    _container_path,
     cancel_run,
     create_run,
     reconcile_runs,
@@ -354,9 +355,11 @@ def start_eval_batch(
     checkpoint_value = payload.checkpoint or _default_eval_checkpoint(run)
     if not checkpoint_value:
         raise HTTPException(status_code=409, detail="Training run has no checkpoint")
-    checkpoint = Path(checkpoint_value).resolve()
+    # The launcher reports host paths in status.json; validate everything in
+    # container space and hand the host path to the bridge separately.
+    checkpoint = _container_path(Path(checkpoint_value)).resolve()
     run_dir = Path(run.run_dir).resolve()
-    available = {str(Path(path).resolve()) for path in run_checkpoints(run)}
+    available = {str(_container_path(Path(path)).resolve()) for path in run_checkpoints(run)}
     if str(checkpoint) not in available or not checkpoint.is_relative_to(run_dir) or checkpoint.suffix.lower() != ".safetensors" or not checkpoint.is_file():
         raise HTTPException(status_code=409, detail="Checkpoint is not a valid file for this run")
     prompts = payload.prompts if payload.prompts is not None else _run_sample_prompts(run)

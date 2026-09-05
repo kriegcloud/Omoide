@@ -117,6 +117,16 @@ class TrainingRunTests(unittest.TestCase):
             )
             self.assertTrue(process["training_folder"].startswith("/host/datasets/"))
 
+    def test_container_path_inverts_host_path(self):
+        from app.services.training_runs import _container_path, _host_path
+
+        settings.general.datasets_host_root = Path("/host/datasets")
+        container = settings.general.resolved_datasets_dir() / "slug" / "export" / "runs" / "r" / "output" / "x.safetensors"
+        host = _host_path(container)
+        self.assertEqual(host, Path("/host/datasets/slug/export/runs/r/output/x.safetensors"))
+        self.assertEqual(_container_path(host), container)
+        self.assertEqual(_container_path(container), container)
+
     def test_reconcile_reads_status_and_registers_sample_steps(self):
         with Session(self.engine) as session:
             dataset, export = self._dataset_export(session)
