@@ -14,6 +14,7 @@ import app.database as db
 from app.api.media import delete_record
 from app.concurrency import heavy_writer
 from app.config import settings
+from app.image_limits import apply_pillow_limits
 from app.database import safe_commit
 from app.logger import logger
 from app.models import Media, ProcessingTask, Status
@@ -245,6 +246,7 @@ def run_media_processing_and_chain(task_id: str) -> None:
 
 
 def run_media_processing(task_id: str) -> None:
+    apply_pillow_limits(settings.scan.max_image_pixels)
     try:
         _run_media_processing(task_id)
     except Exception:

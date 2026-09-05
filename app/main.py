@@ -106,6 +106,7 @@ from app.api import (
 )
 from app.api.processors import router as proc_router
 from app.config import get_clip_bundle, get_os_app_config_dir, settings
+from app.image_limits import apply_pillow_limits
 from app.database import ensure_vec_tables
 from app.ffmpeg import ensure_ffmpeg_available
 from app.logger import configure_file_logging, logger
@@ -460,6 +461,9 @@ async def lifespan(app: FastAPI):
         threading.Thread(
             target=_prewarm_clip, daemon=True, name="clip-prewarm"
         ).start()
+    # Pillow's decoder limit is process-wide; derive it from settings before
+    # any scan or processing thread opens an image.
+    apply_pillow_limits(settings.scan.max_image_pixels)
     # Apply database migrations on startup (idempotent)
     logger.info("lifespan: applying migrations...")
     try:

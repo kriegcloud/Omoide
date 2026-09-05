@@ -24,9 +24,10 @@ MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_IMAGE_BYTES = 16 * 1024 * 1024
 MAX_IMAGE_DIMENSION = 16_384
 MAX_IMAGE_PIXELS = 40_000_000
-# Align Pillow's decoder policy with this boundary instead of inheriting its
-# substantially larger process default.
-Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+# This boundary is enforced explicitly on annotation inputs below. It must not
+# be written to ``Image.MAX_IMAGE_PIXELS``: that is process-wide and would make
+# the library scanner reject ordinary 200 MP phone photos. The global limit is
+# owned by ``app.image_limits`` and the ``scan.max_image_pixels`` setting.
 AttemptStatus = Literal[
     "queued",
     "running",

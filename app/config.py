@@ -514,6 +514,11 @@ class ScanSettings(BaseModel):
     # this option automatically rotates them to the correct direction and removes
     # the exif rotation information
     auto_rotate: bool = True
+    # Pillow refuses to decode images above twice this many pixels (its
+    # "decompression bomb" guard). The library default (~89 MP) rejects modern
+    # phone photos such as the 200 MP Samsung S24 Ultra, so default to 400 MP.
+    # A value <= 0 disables the guard entirely.
+    max_image_pixels: int = 400_000_000
     # Skip files that look like thumbnails while scanning media directories
     skip_thumbnails_on_scan: bool = True
     VIDEO_SUFFIXES: list[str] = [

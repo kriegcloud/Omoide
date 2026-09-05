@@ -16,7 +16,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import PlainTextResponse
-from PIL import Image
+from PIL import Image, ImageOps
 from sqlalchemy import and_, case, func, or_, text, tuple_, union_all
 from sqlalchemy.orm import aliased, selectinload
 from sqlmodel import Session, col, select
@@ -838,14 +838,24 @@ def edit_media(
         raise HTTPException(status_code=400, detail="At least one edit is required")
 
     try:
-        with Image.open(media.path) as original:
-            edited = apply_edit_ops(original, body.ops)
+        with Image.open(media.path) as opened:
+            # The editor works in display orientation (browsers honour the
+            # EXIF Orientation tag), so bring the pixels into that frame
+            # before replaying ops. The tag is then dropped on save.
+            orientation = opened.getexif().get(0x0112, 1)
+            source = (
+                ImageOps.exif_transpose(opened)
+                if orientation not in (None, 1)
+                else opened
+            )
+            edited = apply_edit_ops(source, body.ops)
         target = write_edited(
             media.path,
             edited,
             body.mode,
             media_roots=settings.general.resolved_media_dirs(),
-            rotated=any(op.op == "rotate" for op in body.ops),
+            rotated=any(op.op == "rotate" for op in body.ops)
+            or orientation not in (None, 1),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
