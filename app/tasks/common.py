@@ -66,6 +66,7 @@ def create_and_run_task(
         "geocode_places",
         "export_dataset",
         "batch_edit_media",
+        "dataset_caption_generation",
     ],
     callable_task: Callable[[str], None],
     *,

@@ -30,6 +30,7 @@ import ImageEditorDialog from "../components/ImageEditorDialog";
 import BatchCropDialog from "../components/BatchCropDialog";
 import RepairDialog from "../components/RepairDialog";
 import TrainingRunsPanel from "../components/TrainingRunsPanel";
+import DatasetCaptionsPanel from "../components/DatasetCaptionsPanel";
 import config from "../config";
 import { API } from "../config";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
@@ -221,7 +222,7 @@ export default function DatasetDetailPage() {
         </Stack>
       </Paper>
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
-      <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ mb: 2 }}><Tab label={`Items (${dataset.item_count ?? items.length})`} /><Tab label="Analysis" /><Tab label={`Exports (${exports.length})`} /><Tab label={`Runs (${runs.length})`} /></Tabs>
+      <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ mb: 2 }}><Tab label={`Items (${dataset.item_count ?? items.length})`} /><Tab label="Analysis" /><Tab label={`Exports (${exports.length})`} /><Tab label={`Runs (${runs.length})`} /><Tab label="Captions" /></Tabs>
 
       {tab === 0 && (
         <>
@@ -313,6 +314,8 @@ export default function DatasetDetailPage() {
           onHealthChange={setTrainingHealth}
         />
       )}
+
+      {tab === 4 && <DatasetCaptionsPanel datasetId={datasetId} />}
 
       <Dialog open={autoOpen} onClose={() => setAutoOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Auto-select dataset</DialogTitle>

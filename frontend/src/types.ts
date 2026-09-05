@@ -300,7 +300,8 @@ export type TaskType =
   | "build_events"
   | "geocode_places"
   | "export_dataset"
-  | "batch_edit_media";
+  | "batch_edit_media"
+  | "dataset_caption_generation";
 export type TaskStatus =
   | "pending"
   | "running"
@@ -591,6 +592,7 @@ export interface DatasetItem {
   has_ops: boolean;
   face_summary: DatasetFaceSummary;
   metrics?: DatasetItemMetrics | null;
+  caption_reviewed_at?: string | null;
 }
 
 export interface DatasetItemMetrics {
@@ -632,6 +634,41 @@ export interface AutoSelectResult {
 
 export interface DatasetItemPage {
   items: DatasetItem[];
+  next_cursor?: string | null;
+}
+
+export type DatasetCaptionFilter =
+  | "all"
+  | "findings"
+  | "candidate"
+  | "approved"
+  | "missing";
+
+export interface CaptionLintFinding {
+  code: string;
+  severity: "info" | "warn" | "error";
+  message: string;
+  start: number;
+  end: number;
+}
+
+export interface DatasetCaption {
+  item_id: number;
+  media_id: number;
+  position: number;
+  excluded: boolean;
+  media: MediaPreview;
+  caption: string;
+  effective_caption?: string | null;
+  source: "override" | "approved" | "candidate" | "template" | "none";
+  annotation_id?: string | null;
+  review_status?: AnnotationReviewStatus | null;
+  caption_reviewed_at?: string | null;
+  findings: CaptionLintFinding[];
+}
+
+export interface DatasetCaptionPage {
+  items: DatasetCaption[];
   next_cursor?: string | null;
 }
 

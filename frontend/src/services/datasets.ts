@@ -17,6 +17,9 @@ import type {
   TrainingPreset,
   TrainingSample,
   RunLikeness,
+  DatasetCaptionFilter,
+  DatasetCaptionPage,
+  Task,
 } from "../types";
 import type { EditOp, FilerobotDesignState } from "../utils/editorOps";
 
@@ -97,3 +100,39 @@ export const batchCropDatasetItems = (id: number, input: {
 }) => fetch(`${API}/api/datasets/${id}/items/batch-crop`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
 }).then(json<DatasetBatchCropResult>);
+
+export const getDatasetCaptions = (
+  id: number,
+  filter: DatasetCaptionFilter,
+  cursor?: string | null,
+) => {
+  const params = new URLSearchParams({ filter, limit: "100" });
+  if (cursor) params.set("cursor", cursor);
+  return fetch(`${API}/api/datasets/${id}/captions?${params}`).then(
+    json<DatasetCaptionPage>,
+  );
+};
+
+export const updateDatasetCaption = (
+  datasetId: number,
+  itemId: number,
+  text: string,
+) => fetch(`${API}/api/datasets/${datasetId}/items/${itemId}/caption`, {
+  method: "PATCH",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ text }),
+}).then(json<DatasetItem>);
+
+export const markDatasetCaptionReviewed = (
+  datasetId: number,
+  itemId: number,
+) => fetch(`${API}/api/datasets/${datasetId}/items/${itemId}/caption/reviewed`, {
+  method: "POST",
+}).then(json<{ item_id: number; caption_reviewed_at: string }>);
+
+export const generateDatasetCaptions = (id: number, onlyMissing = true) =>
+  fetch(`${API}/api/datasets/${id}/captions/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ only_missing: onlyMissing }),
+  }).then(json<Task>);

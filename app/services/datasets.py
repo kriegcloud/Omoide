@@ -50,6 +50,73 @@ def _annotation_text(annotation: MediaAnnotation | None) -> str:
     return str(value).strip()
 
 
+def caption_body_and_source(
+    dataset: TrainingDataset,
+    item: DatasetItem,
+    annotations: list[MediaAnnotation],
+) -> tuple[str, str, MediaAnnotation | None]:
+    """Resolve the editable caption body and its provenance without querying."""
+    override = (item.caption_override or "").strip()
+    if override:
+        return override, "override", None
+    if dataset.caption_source == DatasetCaptionSource.ANNOTATION:
+        approved = next(
+            (
+                annotation
+                for annotation in annotations
+                if annotation.review_status == AnnotationReviewStatus.APPROVED
+            ),
+            None,
+        )
+        candidate = next(
+            (
+                annotation
+                for annotation in annotations
+                if annotation.review_status == AnnotationReviewStatus.CANDIDATE
+            ),
+            None,
+        )
+        chosen = approved or candidate
+        if chosen is not None:
+            return _annotation_text(chosen), (
+                "approved" if chosen is approved else "candidate"
+            ), chosen
+    if dataset.caption_source != DatasetCaptionSource.NONE:
+        return "", "template", None
+    return "", "none", None
+
+
+def render_caption(
+    dataset: TrainingDataset,
+    caption: str,
+    person: Person | None,
+) -> str | None:
+    """Render a preloaded caption body through the dataset template."""
+    if dataset.caption_source == DatasetCaptionSource.NONE:
+        return None
+    if caption and person and person.name:
+        candidates = sorted(
+            {person.name.strip(), slugify(person.name)}, key=len, reverse=True
+        )
+        for candidate in candidates:
+            if candidate:
+                caption = re.sub(
+                    re.escape(candidate),
+                    dataset.trigger_word,
+                    caption,
+                    flags=re.IGNORECASE,
+                )
+
+    rendered = dataset.caption_template.format(
+        trigger=dataset.trigger_word,
+        **{"class": dataset.class_token},
+        caption=caption,
+    )
+    rendered = re.sub(r"\s+", " ", rendered).strip()
+    rendered = re.sub(r"\s*[,;:]\s*$", "", rendered).strip()
+    return rendered or None
+
+
 def resolve_caption(
     dataset: TrainingDataset,
     item: DatasetItem,
@@ -61,42 +128,18 @@ def resolve_caption(
     if dataset.caption_source == DatasetCaptionSource.NONE:
         return None
 
-    caption = (item.caption_override or "").strip()
-    if not caption and dataset.caption_source == DatasetCaptionSource.ANNOTATION and session:
-        annotations = session.exec(
+    annotations: list[MediaAnnotation] = []
+    if dataset.caption_source == DatasetCaptionSource.ANNOTATION and session:
+        annotations = list(session.exec(
             select(MediaAnnotation)
             .where(
                 MediaAnnotation.media_id == media.id,
                 MediaAnnotation.kind == AnnotationKind.CAPTION,
             )
             .order_by(MediaAnnotation.revision.desc())
-        ).all()
-        approved = next(
-            (
-                annotation
-                for annotation in annotations
-                if annotation.review_status == AnnotationReviewStatus.APPROVED
-            ),
-            None,
-        )
-        caption = _annotation_text(approved or (annotations[0] if annotations else None))
-
-    if caption and person and person.name:
-        candidates = sorted(
-            {person.name.strip(), slugify(person.name)}, key=len, reverse=True
-        )
-        for candidate in candidates:
-            if candidate:
-                caption = re.sub(re.escape(candidate), dataset.trigger_word, caption, flags=re.IGNORECASE)
-
-    rendered = dataset.caption_template.format(
-        trigger=dataset.trigger_word,
-        **{"class": dataset.class_token},
-        caption=caption,
-    )
-    rendered = re.sub(r"\s+", " ", rendered).strip()
-    rendered = re.sub(r"\s*[,;:]\s*$", "", rendered).strip()
-    return rendered or None
+        ).all())
+    caption, _, _ = caption_body_and_source(dataset, item, annotations)
+    return render_caption(dataset, caption, person)
 
 
 def pick_bucket(width: int, height: int, buckets: list[int]) -> int:

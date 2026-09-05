@@ -485,6 +485,7 @@ class DatasetItem(SQLModel, table=True):
     weight: float = Field(default=1.0)
     excluded: bool = Field(default=False, index=True)
     created_at: datetime = Field(default_factory=datetime.now, index=True)
+    caption_reviewed_at: datetime | None = Field(default=None, nullable=True)
 
 
 class MediaCurationStats(SQLModel, table=True):

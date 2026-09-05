@@ -15,13 +15,18 @@ from app.api.exports import _person_media
 from app.config import settings
 from app.database import get_session
 from app.models import (
+    AnnotationKind,
     DatasetExport,
     DatasetExportLayout,
     DatasetExportStatus,
     DatasetItem,
     Face,
     Media,
+    MediaAnnotation,
     Person,
+    ProcessingTask,
+    ProcessingTaskRead,
+    Status,
     TrainingDataset,
     TrainingRun,
     TrainingSample,
@@ -32,6 +37,11 @@ from app.schemas.dataset import (
     DatasetBatchCropRequest,
     DatasetBatchCropResult,
     DatasetBatchCropSkipped,
+    DatasetCaptionCursorPage,
+    DatasetCaptionGenerateRequest,
+    DatasetCaptionRead,
+    DatasetCaptionReviewedRead,
+    DatasetCaptionUpdate,
     DatasetCreate,
     DatasetExportRead,
     DatasetExportRequest,
@@ -52,7 +62,13 @@ from app.schemas.dataset import (
     TrainingSampleRead,
 )
 from app.schemas.media import MediaPreview
-from app.services.datasets import resolve_caption, slugify
+from app.services.caption_lint import lint_caption
+from app.services.datasets import (
+    caption_body_and_source,
+    render_caption,
+    resolve_caption,
+    slugify,
+)
 from app.services.training_runs import (
     cancel_run,
     create_run,
@@ -73,6 +89,7 @@ from app.services.curation import (
 )
 from app.tasks.common import create_and_run_task
 from app.tasks.dataset_export import export_dataset
+from app.tasks.dataset_caption_generation import generate_dataset_captions
 
 
 router = APIRouter()
@@ -744,3 +761,199 @@ def get_training_sample_image(
     if not sample_path.is_relative_to(run_dir) or not sample_path.is_file():
         raise HTTPException(status_code=404, detail="Training sample image not found")
     return FileResponse(sample_path)
+
+
+# Phase 17 caption review routes are kept together to ease stacked-branch merges.
+
+
+def _caption_item_or_404(
+    session: Session, dataset_id: int, item_id: int
+) -> DatasetItem:
+    item = session.get(DatasetItem, item_id)
+    if item is None or item.dataset_id != dataset_id:
+        raise HTTPException(status_code=404, detail="Dataset item not found")
+    return item
+
+
+@router.get("/{dataset_id}/captions", response_model=DatasetCaptionCursorPage)
+def list_captions(
+    dataset_id: int,
+    filter: str = Query(
+        default="all",
+        pattern="^(all|findings|candidate|approved|missing)$",
+    ),
+    cursor: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    session: Session = Depends(get_session),
+) -> DatasetCaptionCursorPage:
+    dataset = _dataset_or_404(session, dataset_id)
+    items = list(
+        session.exec(
+            select(DatasetItem)
+            .where(DatasetItem.dataset_id == dataset_id)
+            .order_by(DatasetItem.position, DatasetItem.id)
+        ).all()
+    )
+    media_ids = [item.media_id for item in items]
+    media_by_id = (
+        {
+            media.id: media
+            for media in session.exec(select(Media).where(Media.id.in_(media_ids))).all()
+        }
+        if media_ids
+        else {}
+    )
+    annotations_by_media: dict[int, list[MediaAnnotation]] = {
+        media_id: [] for media_id in media_ids
+    }
+    if media_ids:
+        annotations = session.exec(
+            select(MediaAnnotation)
+            .where(
+                MediaAnnotation.media_id.in_(media_ids),
+                MediaAnnotation.kind == AnnotationKind.CAPTION,
+            )
+            .order_by(MediaAnnotation.media_id, MediaAnnotation.revision.desc())
+        ).all()
+        for annotation in annotations:
+            annotations_by_media.setdefault(annotation.media_id, []).append(annotation)
+    person = session.get(Person, dataset.person_id) if dataset.person_id else None
+
+    resolved: list[tuple[DatasetItem, Media, str, str, str | None]] = []
+    for item in items:
+        media = media_by_id.get(item.media_id)
+        if media is None:
+            continue
+        body, source, _ = caption_body_and_source(
+            dataset, item, annotations_by_media.get(item.media_id, [])
+        )
+        resolved.append((item, media, body, source, render_caption(dataset, body, person)))
+
+    rows: list[DatasetCaptionRead] = []
+    bodies = [body for _, _, body, _, _ in resolved if body]
+    for item, media, body, source, effective_caption in resolved:
+        other_captions = list(bodies)
+        if body:
+            other_captions.remove(body)
+        findings = lint_caption(body, dataset, other_captions) if body else []
+        latest = next(iter(annotations_by_media.get(item.media_id, [])), None)
+        row = DatasetCaptionRead(
+            item_id=int(item.id),
+            media_id=item.media_id,
+            position=item.position,
+            excluded=item.excluded,
+            media=_media_preview(media),
+            caption=body,
+            effective_caption=effective_caption,
+            source=source,
+            annotation_id=latest.id if latest else None,
+            review_status=latest.review_status if latest else None,
+            caption_reviewed_at=item.caption_reviewed_at,
+            findings=[finding.__dict__ for finding in findings],
+        )
+        if filter == "findings" and not row.findings:
+            continue
+        if filter in {"candidate", "approved"} and (
+            row.review_status is None or row.review_status.value != filter
+        ):
+            continue
+        if filter == "missing" and source not in {"template", "none"}:
+            continue
+        rows.append(row)
+
+    offset = int(cursor or 0)
+    page = rows[offset : offset + limit + 1]
+    return DatasetCaptionCursorPage(
+        items=page[:limit],
+        next_cursor=(
+            str(offset + limit) if len(page) > limit and page[:limit] else None
+        ),
+    )
+
+
+@router.patch(
+    "/{dataset_id}/items/{item_id}/caption", response_model=DatasetItemRead
+)
+def update_item_caption(
+    dataset_id: int,
+    item_id: int,
+    payload: DatasetCaptionUpdate,
+    session: Session = Depends(get_session),
+) -> DatasetItemRead:
+    _mutating()
+    dataset = _dataset_or_404(session, dataset_id)
+    item = _caption_item_or_404(session, dataset_id, item_id)
+    item.caption_override = payload.text.strip() or None
+    item.caption_reviewed_at = datetime.now()
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return _item_read(session, dataset, item)
+
+
+@router.post(
+    "/{dataset_id}/items/{item_id}/caption/reviewed",
+    response_model=DatasetCaptionReviewedRead,
+)
+def mark_item_caption_reviewed(
+    dataset_id: int,
+    item_id: int,
+    session: Session = Depends(get_session),
+) -> DatasetCaptionReviewedRead:
+    _mutating()
+    _dataset_or_404(session, dataset_id)
+    item = _caption_item_or_404(session, dataset_id, item_id)
+    item.caption_reviewed_at = datetime.now()
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return DatasetCaptionReviewedRead(
+        item_id=int(item.id), caption_reviewed_at=item.caption_reviewed_at
+    )
+
+
+@router.post(
+    "/{dataset_id}/captions/generate", response_model=ProcessingTaskRead
+)
+def start_caption_generation(
+    dataset_id: int,
+    payload: DatasetCaptionGenerateRequest,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+) -> ProcessingTask:
+    _mutating()
+    _dataset_or_404(session, dataset_id)
+    if not settings.annotations.enabled:
+        raise HTTPException(status_code=503, detail="The annotation backend is disabled.")
+    active = session.exec(
+        select(ProcessingTask).where(
+            ProcessingTask.task_type == "dataset_caption_generation",
+            ProcessingTask.status.in_((Status.PENDING, Status.RUNNING)),
+        )
+    ).all()
+    if any((task.result or {}).get("dataset_id") == dataset_id for task in active):
+        raise HTTPException(
+            status_code=409,
+            detail="Caption generation is already running for this dataset.",
+        )
+    task = create_and_run_task(
+        session,
+        background_tasks,
+        "dataset_caption_generation",
+        partial(
+            generate_dataset_captions,
+            dataset_id=dataset_id,
+            only_missing=payload.only_missing,
+        ),
+        reuse_running=False,
+    )
+    task.result = {
+        "dataset_id": dataset_id,
+        "generated": 0,
+        "skipped": 0,
+        "failed": 0,
+    }
+    session.add(task)
+    session.commit()
+    session.refresh(task)
+    return task

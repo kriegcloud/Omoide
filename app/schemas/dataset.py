@@ -4,6 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models import (
+    AnnotationReviewStatus,
     DatasetCaptionSource,
     DatasetExportLayout,
     DatasetExportStatus,
@@ -96,6 +97,7 @@ class DatasetItemRead(BaseModel):
     has_ops: bool
     face_summary: FaceSummary
     metrics: dict | None = None
+    caption_reviewed_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -259,6 +261,47 @@ class RegularizationRequest(BaseModel):
     target_count: int = Field(gt=0)
     gender: str | None = None
     exclude_person_ids: list[int] = Field(default_factory=list)
+
+
+class CaptionLintFindingRead(BaseModel):
+    code: str
+    severity: Literal["info", "warn", "error"]
+    message: str
+    start: int
+    end: int
+
+
+class DatasetCaptionRead(BaseModel):
+    item_id: int
+    media_id: int
+    position: int
+    excluded: bool
+    media: MediaPreview
+    caption: str
+    effective_caption: str | None
+    source: Literal["override", "approved", "candidate", "template", "none"]
+    annotation_id: str | None = None
+    review_status: AnnotationReviewStatus | None = None
+    caption_reviewed_at: datetime | None = None
+    findings: list[CaptionLintFindingRead] = Field(default_factory=list)
+
+
+class DatasetCaptionCursorPage(BaseModel):
+    items: list[DatasetCaptionRead]
+    next_cursor: str | None
+
+
+class DatasetCaptionUpdate(BaseModel):
+    text: str = Field(max_length=32_768)
+
+
+class DatasetCaptionGenerateRequest(BaseModel):
+    only_missing: bool = True
+
+
+class DatasetCaptionReviewedRead(BaseModel):
+    item_id: int
+    caption_reviewed_at: datetime
 
 
 DatasetRead.model_rebuild()
