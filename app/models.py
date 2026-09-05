@@ -140,6 +140,9 @@ class Media(SQLModel, table=True):
     laplacian_score: float | None = Field(
         default=None, nullable=True, index=True
     )
+    edit_design_state: dict | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
     faces: list["Face"] = Relationship(back_populates="media")
     scenes: list["Scene"] = Relationship(back_populates="media")
     tags: list[Tag] = Relationship(

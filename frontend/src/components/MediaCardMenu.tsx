@@ -21,6 +21,7 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
 import config from "../config";
 import { Media, MediaPreview } from "../types";
+import { getMedia } from "../services/media";
 import {
   deleteMediaFile,
   deleteMediaRecord,
@@ -34,6 +35,7 @@ import AssignMediaToPersonDialog from "./AssignMediaToPersonDialog";
 import ConfirmDialog from "./ConfirmDialog";
 import FolderPickerDialog from "./FolderPickerDialog";
 import RenameMediaDialog from "./RenameMediaDialog";
+import ImageEditorDialog from "./ImageEditorDialog";
 
 export interface MediaPersonContext {
   personId: number;
@@ -47,7 +49,7 @@ interface MediaCardMenuProps {
   onDeleted?: () => void;
 }
 
-type DialogKind = "rename" | "move" | "assign" | "deleteRecord" | "deleteFile" | null;
+type DialogKind = "edit" | "rename" | "move" | "assign" | "deleteRecord" | "deleteFile" | null;
 
 export default function MediaCardMenu({
   media,
@@ -61,6 +63,7 @@ export default function MediaCardMenu({
   const [busy, setBusy] = useState(false);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [favorite, setFavorite] = useState(!!media.is_favorite);
+  const [editorMedia, setEditorMedia] = useState<Media | null>(null);
   const [snackbar, setSnackbar] = useState<{ message: string; severity: "success" | "error" } | null>(null);
   const { updateItem, removeItem } = useListStore();
 
@@ -96,6 +99,20 @@ export default function MediaCardMenu({
     } catch (error) {
       setFavorite(!next);
       fail(error, "Failed to update favorite");
+    }
+  };
+
+  const openEditor = async () => {
+    closeMenu();
+    setBusy(true);
+    try {
+      const detail = await getMedia(String(media.id));
+      setEditorMedia(detail.media);
+      setDialog("edit");
+    } catch (error) {
+      fail(error, "Failed to load image editor");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -188,14 +205,21 @@ export default function MediaCardMenu({
           <ListItemIcon>{favorite ? <FavoriteIcon color="error" /> : <FavoriteBorderIcon />}</ListItemIcon>
           {favorite ? "Unfavorite" : "Favorite"}
         </MenuItem>
-        <Tooltip title="Coming soon" placement="left">
-          <span>
-            <MenuItem disabled>
-              <ListItemIcon><EditIcon /></ListItemIcon>
-              Edit…
-            </MenuItem>
-          </span>
-        </Tooltip>
+        {typeof media.duration === "number" ? (
+          <Tooltip title="Image editing is not available for videos" placement="left">
+            <span>
+              <MenuItem disabled>
+                <ListItemIcon><EditIcon /></ListItemIcon>
+                Edit…
+              </MenuItem>
+            </span>
+          </Tooltip>
+        ) : (
+          <MenuItem onClick={() => void openEditor()}>
+            <ListItemIcon><EditIcon /></ListItemIcon>
+            Edit…
+          </MenuItem>
+        )}
         <MenuItem onClick={() => openDialog("rename")}>
           <ListItemIcon><DriveFileRenameOutlineIcon /></ListItemIcon>
           Rename…
@@ -234,6 +258,21 @@ export default function MediaCardMenu({
         onClose={() => setDialog(null)}
         onConfirm={(filename) => void confirmRename(filename)}
       />
+      {editorMedia && (
+        <ImageEditorDialog
+          open={dialog === "edit"}
+          media={editorMedia}
+          mediaListKey={mediaListKey}
+          onClose={() => setDialog(null)}
+          onSaved={(detail, mode) => {
+            if (mode === "overwrite") applyMedia(detail.media);
+            setSnackbar({
+              message: mode === "overwrite" ? "Original image updated" : "Edited copy saved",
+              severity: "success",
+            });
+          }}
+        />
+      )}
       <FolderPickerDialog
         open={dialog === "move"}
         loading={busy}

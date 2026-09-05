@@ -26,6 +26,7 @@ import { MediaDisplay } from "../components/MediaDisplay";
 import { MediaHeader } from "../components/MediaHeader";
 import { MediaContentTabs } from "../components/MediaContentTabs";
 import { SwipeHint } from "../components/SwipeHint";
+import ImageEditorDialog from "../components/ImageEditorDialog";
 
 import { Media, MediaDetail, Tag, Task } from "../types";
 import { getMedia } from "../services/media";
@@ -67,7 +68,7 @@ export default function MediaDetailPage() {
   // A. Global state from Zustand for the list context
   const items: unknown[] = listFromStore?.items ?? [];
 
-  const { removeItem } = useListStore();
+  const { removeItem, updateItem } = useListStore();
 
   // B. Local state for this specific modal's content
   const preloadedMedia = location.state?.media as Media | null;
@@ -82,6 +83,7 @@ export default function MediaDetailPage() {
   const [dialogType, setDialogType] = useState<
     "convert" | "deleteRecord" | "deleteFile" | null
   >(null);
+  const [editorOpen, setEditorOpen] = useState(false);
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     message: string;
@@ -246,13 +248,13 @@ export default function MediaDetailPage() {
       if (target?.closest?.("input, textarea, [contenteditable='true']")) {
         return;
       }
-      if (dialogType) return;
+      if (dialogType || editorOpen) return;
       if (e.key === "ArrowLeft") handleNavigate("prev");
       if (e.key === "ArrowRight") handleNavigate("next");
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleNavigate, dialogType]);
+  }, [handleNavigate, dialogType, editorOpen]);
 
   useEffect(() => {
     if (!task?.id || ["completed", "cancelled"].includes(task.status)) return;
@@ -507,6 +509,7 @@ export default function MediaDetailPage() {
                     onOpenDialog={setDialogType}
                     mediaListKey={mediaListKey}
                     onDeleted={navigateAfterDelete}
+                    onEdit={() => setEditorOpen(true)}
                     isBinary={isBinary}
                     onFavoriteChange={handleMediaUpdate}
                     onOpenFolder={async (mediaId) => {
@@ -563,6 +566,40 @@ export default function MediaDetailPage() {
                 onConfirmDeleteRecord={confirmDeleteRecord}
                 onConfirmDeleteFile={confirmDeleteFile}
               />
+              {typeof detail.media.duration !== "number" && (
+                <ImageEditorDialog
+                  open={editorOpen}
+                  media={detail.media}
+                  mediaListKey={mediaListKey}
+                  onClose={() => setEditorOpen(false)}
+                  onSaved={(savedDetail, mode) => {
+                    if (mode === "overwrite") {
+                      const cacheVersion = Date.now();
+                      const updatedMedia = {
+                        ...savedDetail.media,
+                        cache_version: cacheVersion,
+                      };
+                      handleMediaUpdate(updatedMedia);
+                      if (mediaListKey) updateItem(mediaListKey, updatedMedia);
+                      void fetchDetail().then(() => {
+                        setDetail((current) =>
+                          current
+                            ? {
+                                ...current,
+                                media: { ...current.media, cache_version: cacheVersion },
+                              }
+                            : current
+                        );
+                      });
+                      setSnackbar({
+                        open: true,
+                        message: "Original image updated; face processing has started",
+                        severity: "success",
+                      });
+                    }
+                  }}
+                />
+              )}
               {isDetailLoading ? (
                 <Box
                   sx={{

@@ -104,7 +104,7 @@ export default function MediaCard({
   const isDraggable = !!media && !isVideo && !isSelecting;
 
   const mediaUrl = media
-    ? `${API}/originals/${encodeFilePath(media.path)}`
+    ? `${API}/originals/${encodeFilePath(media.path)}${media.cache_version ? `?v=${media.cache_version}` : ""}`
     : `${API}/static/brand/404.png`;
   const filename = media ? media.filename : "404 Not found";
   const mediaId = media ? media.id : null;
@@ -114,7 +114,7 @@ export default function MediaCard({
     if (useOriginalGif) {
       thumbUrl = mediaUrl;
     } else if (media.thumbnail_path) {
-      thumbUrl = `${API}/thumbnails/${encodeFilePath(media.thumbnail_path)}`;
+      thumbUrl = `${API}/thumbnails/${encodeFilePath(media.thumbnail_path)}${media.cache_version ? `?v=${media.cache_version}` : ""}`;
     } else {
       thumbUrl = `${API}/thumbnails/${media.id}.jpg`;
     }

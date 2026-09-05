@@ -16,6 +16,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import PlainTextResponse
+from PIL import Image
 from sqlalchemy import and_, case, func, or_, text, tuple_, union_all
 from sqlalchemy.orm import aliased, selectinload
 from sqlmodel import Session, col, select
@@ -38,6 +39,7 @@ from app.schemas.media import (
     FavoriteUpdate,
     GeoUpdate,
     MediaDetail,
+    MediaEditRequest,
     MediaFolderBreadcrumb,
     MediaFolderCreateRequest,
     MediaFolderCreateResponse,
@@ -65,14 +67,19 @@ from app.services.media_files import (
     move_media_file,
     rename_media_file,
 )
+from app.services.image_edits import apply_edit_ops, write_edited
 from app.utils import (
     delete_file,
     delete_record,
     extract_scene_frame_and_thumbnail,
+    generate_perceptual_hash,
+    generate_thumbnail,
     update_exif_gps,
 )
 
 router = APIRouter()
+
+_EDIT_PROCESSORS = ["faces", "embedding_extractor", "auto_tagger", "blur", "exif"]
 
 
 def _require_media_mutations_allowed() -> None:
@@ -104,6 +111,22 @@ def _rename_media(media: Media, filename: str) -> Path:
         media.path,
         filename,
         settings.general.resolved_media_dirs(),
+    )
+
+
+def _queue_edited_media(
+    media_id: int, session: Session, background_tasks: BackgroundTasks
+) -> None:
+    # Lazy imports avoid the existing tasks.maintenance -> api.media cycle.
+    from app.tasks import create_and_run_task, run_processors_for_media
+
+    create_and_run_task(
+        session=session,
+        background_tasks=background_tasks,
+        task_type="run_processor_for_media",
+        callable_task=lambda task_id: run_processors_for_media(
+            task_id, _EDIT_PROCESSORS, [media_id]
+        ),
     )
 
 
@@ -796,6 +819,108 @@ def rename_media(
     safe_commit(session)
     session.refresh(media)
     return media
+
+
+@router.post("/{media_id}/edit", response_model=MediaDetail)
+def edit_media(
+    media_id: int,
+    body: MediaEditRequest,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    _require_media_mutations_allowed()
+    media = session.get(Media, media_id)
+    if media is None:
+        raise HTTPException(status_code=404, detail="Media not found")
+    if media.duration is not None:
+        raise HTTPException(status_code=400, detail="Videos cannot be edited")
+    if not body.ops:
+        raise HTTPException(status_code=400, detail="At least one edit is required")
+
+    try:
+        with Image.open(media.path) as original:
+            edited = apply_edit_ops(original, body.ops)
+        target = write_edited(
+            media.path,
+            edited,
+            body.mode,
+            media_roots=settings.general.resolved_media_dirs(),
+            rotated=any(op.op == "rotate" for op in body.ops),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (
+        InvalidMediaPathError,
+        MediaFileMissingError,
+        ReadOnlyMediaRootError,
+        OSError,
+    ) as exc:
+        raise _media_file_conflict(exc) from exc
+
+    if body.mode == "copy":
+        result_media = Media(
+            path=os.fspath(target),
+            filename=target.name,
+            size=target.stat().st_size,
+            width=edited.width,
+            height=edited.height,
+            created_at=media.created_at,
+            inserted_at=datetime.now(),
+            edit_design_state=body.design_state,
+        )
+        session.add(result_media)
+        safe_commit(session)
+        session.refresh(result_media)
+        result_media.phash = generate_perceptual_hash(result_media, type="image")
+        result_media.thumbnail_path, thumbnail_error = generate_thumbnail(result_media)
+        if thumbnail_error:
+            logger.warning(
+                "Edited media %s thumbnail failed: %s",
+                result_media.id,
+                thumbnail_error,
+            )
+        session.add(result_media)
+        safe_commit(session)
+    else:
+        from app.api.face import delete_faces
+
+        old_thumbnail = (
+            settings.general.thumb_dir / media.thumbnail_path
+            if media.thumbnail_path
+            else None
+        )
+        face_ids = session.exec(
+            select(Face.id).where(Face.media_id == media.id)
+        ).all()
+        if face_ids:
+            delete_faces(face_ids=face_ids, session=session)
+            media = session.get(Media, media_id)
+
+        media.size = target.stat().st_size
+        media.width = edited.width
+        media.height = edited.height
+        media.phash = generate_perceptual_hash(media, type="image")
+        media.faces_extracted = False
+        media.embeddings_created = False
+        media.ran_auto_tagging = False
+        media.edit_design_state = body.design_state
+        media.thumbnail_path, thumbnail_error = generate_thumbnail(media)
+        if thumbnail_error:
+            logger.warning(
+                "Edited media %s thumbnail failed: %s", media.id, thumbnail_error
+            )
+        if old_thumbnail and old_thumbnail != (
+            settings.general.thumb_dir / media.thumbnail_path
+            if media.thumbnail_path
+            else None
+        ):
+            old_thumbnail.unlink(missing_ok=True)
+        session.add(media)
+        safe_commit(session)
+        result_media = media
+
+    _queue_edited_media(result_media.id, session, background_tasks)
+    return get_media(result_media.id, session)
 
 
 @router.get("/locations", response_model=list[MediaLocation])

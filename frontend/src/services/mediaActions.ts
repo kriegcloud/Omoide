@@ -1,9 +1,17 @@
 import { API } from "../config";
 import { Media, MediaPreview, Task } from "../types";
+import type { MediaDetail } from "../types";
+import type { EditOp, FilerobotDesignState } from "../utils/editorOps";
 
 export interface BulkMoveResult {
   moved_ids: number[];
   skipped: { id: number; reason: string }[];
+}
+
+export interface EditMediaRequest {
+  ops: EditOp[];
+  mode: "copy" | "overwrite";
+  design_state: FilerobotDesignState | null;
 }
 
 const responseError = async (res: Response, fallback: string) => {
@@ -115,5 +123,18 @@ export const createMediaFolder = async (
     body: JSON.stringify({ parent_path: parentPath, name }),
   });
   if (!res.ok) throw await responseError(res, "Failed to create folder");
+  return res.json();
+};
+
+export const editMedia = async (
+  mediaId: number,
+  request: EditMediaRequest
+): Promise<MediaDetail> => {
+  const res = await fetch(`${API}/api/media/${mediaId}/edit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!res.ok) throw await responseError(res, "Failed to save image edits");
   return res.json();
 };

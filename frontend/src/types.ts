@@ -13,6 +13,8 @@ export interface Media {
   thumbnail_path?: string;
   extracted_scenes: boolean;
   is_favorite: boolean;
+  edit_design_state?: Record<string, unknown> | null;
+  cache_version?: number;
 }
 
 export interface MediaFolderPreview {
@@ -291,6 +293,7 @@ export interface MediaPreview {
   views: number;
   inserted_at: string;
   is_favorite: boolean;
+  cache_version?: number;
 }
 
 export interface MediaDuplicate extends MediaPreview {

@@ -17,6 +17,7 @@ from app.models import Face, Person, PersonMediaLink, PersonRelationship, Person
 from app.schemas.face import CursorPage, FaceAssign
 from app.schemas.person import PersonMinimal
 from app.utils import (
+    auto_select_profile_face,
     recalculate_person_appearance_counts,
     update_person_embedding,
 )
@@ -166,9 +167,10 @@ def delete_faces(
             continue
 
         # remove thumbnail from disk
-        thumb = settings.general.thumb_dir / face.thumbnail_path
-        if thumb.exists():
-            thumb.unlink()
+        if face.thumbnail_path:
+            thumb = settings.general.thumb_dir / face.thumbnail_path
+            if thumb.exists():
+                thumb.unlink()
 
         if person := face.person:
             person_id = face.person.id
@@ -183,6 +185,7 @@ def delete_faces(
     recalculate_person_appearance_counts(session, affected_person_ids)
     for pid in affected_person_ids:
         if session.get(Person, pid):
+            auto_select_profile_face(session, pid)
             update_person_embedding(session, pid)
     safe_commit(session)
     return {"message": "Faces deleted successfully"}

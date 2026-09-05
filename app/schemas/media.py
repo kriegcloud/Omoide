@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field as PydanticField
 from sqlmodel import Field, SQLModel
 
 from app.models import Face, Person
@@ -28,6 +29,7 @@ class MediaRead(SQLModel):
     extracted_scenes: bool
     thumbnail_path: str | None = None
     is_favorite: bool = False
+    edit_design_state: dict | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -45,6 +47,49 @@ class MediaPreview(SQLModel):
     thumbnail_path: str | None
     size: int | None
     is_favorite: bool = False
+
+
+class RotateEditOp(BaseModel):
+    op: Literal["rotate"]
+    degrees: Literal[90, 180, 270]
+
+
+class FlipEditOp(BaseModel):
+    op: Literal["flip"]
+    axis: Literal["horizontal", "vertical"]
+
+
+class CropEditOp(BaseModel):
+    op: Literal["crop"]
+    x: int = PydanticField(ge=0)
+    y: int = PydanticField(ge=0)
+    width: int = PydanticField(gt=0)
+    height: int = PydanticField(gt=0)
+
+
+class ResizeEditOp(BaseModel):
+    op: Literal["resize"]
+    width: int = PydanticField(gt=0)
+    height: int = PydanticField(gt=0)
+
+
+class AdjustEditOp(BaseModel):
+    op: Literal["adjust"]
+    brightness: int | None = PydanticField(default=None, ge=-100, le=100)
+    contrast: int | None = PydanticField(default=None, ge=-100, le=100)
+    saturation: int | None = PydanticField(default=None, ge=-100, le=100)
+
+
+EditOp = Annotated[
+    RotateEditOp | FlipEditOp | CropEditOp | ResizeEditOp | AdjustEditOp,
+    PydanticField(discriminator="op"),
+]
+
+
+class MediaEditRequest(BaseModel):
+    ops: list[EditOp]
+    mode: Literal["copy", "overwrite"] = "copy"
+    design_state: dict | None = None
 
 
 class MediaLocation(SQLModel):

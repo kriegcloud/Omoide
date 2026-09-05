@@ -44,6 +44,22 @@ def _root_for(path: Path, media_roots: list[MediaRoot]) -> MediaRoot | None:
     return max(matches, key=lambda item: len(item[0].parts), default=None)
 
 
+def require_writable_media_file(
+    source_path: str | Path, media_roots: list[MediaRoot]
+) -> Path:
+    """Resolve a media file and require it to live in a writable root."""
+    source = Path(source_path).expanduser().resolve(strict=False)
+    source_root = _root_for(source, media_roots)
+    if source_root is None:
+        raise InvalidMediaPathError("Media file is outside the configured media roots")
+    _, read_only = source_root
+    if read_only:
+        raise ReadOnlyMediaRootError("Source media directory is read-only")
+    if not source.is_file():
+        raise MediaFileMissingError("Media file is missing")
+    return source
+
+
 def resolve_destination_dir(
     destination_dir: str,
     media_roots: list[MediaRoot],
@@ -130,15 +146,8 @@ def move_media_file(
     destination_dir: str,
     media_roots: list[MediaRoot],
 ) -> Path:
-    source = Path(source_path).expanduser().resolve(strict=False)
-    source_root = _root_for(source, media_roots)
-    if source_root is None:
-        raise InvalidMediaPathError("Media file is outside the configured media roots")
-    root, read_only = source_root
-    if read_only:
-        raise ReadOnlyMediaRootError("Source media directory is read-only")
-    if not source.is_file():
-        raise MediaFileMissingError("Media file is missing")
+    source = require_writable_media_file(source_path, media_roots)
+    root, _ = _root_for(source, media_roots)  # validated above
 
     destination = resolve_destination_dir(
         destination_dir, media_roots, preferred_root=root
@@ -157,15 +166,7 @@ def rename_media_file(
     filename: str,
     media_roots: list[MediaRoot],
 ) -> Path:
-    source = Path(source_path).expanduser().resolve(strict=False)
-    source_root = _root_for(source, media_roots)
-    if source_root is None:
-        raise InvalidMediaPathError("Media file is outside the configured media roots")
-    _, read_only = source_root
-    if read_only:
-        raise ReadOnlyMediaRootError("Source media directory is read-only")
-    if not source.is_file():
-        raise MediaFileMissingError("Media file is missing")
+    source = require_writable_media_file(source_path, media_roots)
 
     target = source.with_name(validate_filename(filename, source.name))
     if target == source:

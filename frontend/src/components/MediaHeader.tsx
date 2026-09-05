@@ -5,6 +5,8 @@ import {
   Tooltip,
 } from "@mui/material";
 import { Vrpano, Delete, DeleteForever, FolderOpen, OpenInNew, Favorite, FavoriteBorder } from "@mui/icons-material";
+import EditIcon from "@mui/icons-material/Edit";
+import { Button } from "@mui/material";
 import { Media } from "../types";
 import config from "../config";
 import { BinaryNavigationControls } from "./BinaryNavigationControls";
@@ -21,6 +23,7 @@ interface MediaHeaderProps {
   onFavoriteChange?: (media: Media) => void;
   mediaListKey?: string;
   onDeleted?: () => void;
+  onEdit?: () => void;
 }
 
 export function MediaHeader({
@@ -32,6 +35,7 @@ export function MediaHeader({
   onFavoriteChange,
   mediaListKey,
   onDeleted,
+  onEdit,
 }: MediaHeaderProps) {
   const filename = media ? media.filename : "File not found!";
   const isVideo = typeof media?.duration === "number";
@@ -86,6 +90,16 @@ export function MediaHeader({
         }}
       >
         <BinaryNavigationControls variant="overlay" />
+        {!config.PRESENTATION_MODE && !isVideo && (
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<EditIcon />}
+            onClick={onEdit}
+          >
+            Edit
+          </Button>
+        )}
         {!config.PRESENTATION_MODE && media && (
           <MediaCardMenu
             media={media}

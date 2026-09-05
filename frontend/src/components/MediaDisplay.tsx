@@ -15,7 +15,7 @@ interface MediaDisplayProps {
 }
 
 export function MediaDisplay({ media, initialTime, autoplay, seekRequest, onProgress }: MediaDisplayProps) {
-  const mediaUrl = media ? `${API}/originals/${encodeFilePath(media.path)}` : `${API}/static/brand/404.png`;
+  const mediaUrl = media ? `${API}/originals/${encodeFilePath(media.path)}${media.cache_version ? `?v=${media.cache_version}` : ""}` : `${API}/static/brand/404.png`;
   const filename = media ? media.filename : "404 Not found";
   const isGif = media?.filename?.toLowerCase().endsWith(".gif") || media?.path?.toLowerCase().endsWith(".gif");
   const isVideo = typeof media?.duration === "number" && !isGif;
