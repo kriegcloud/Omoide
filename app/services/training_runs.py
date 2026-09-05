@@ -83,6 +83,12 @@ def _run_config(
     if prompts is not None:
         sample["prompts"] = [str(prompt).strip() for prompt in prompts if str(prompt).strip()]
     process["training_folder"] = str(_host_path(run_dir / "output"))
+    # Exports written before a host root was configured (or by an older build)
+    # carry container paths; ai-toolkit runs on the host and needs host paths.
+    for entry in process.get("datasets") or []:
+        folder = entry.get("folder_path") if isinstance(entry, dict) else None
+        if isinstance(folder, str) and folder:
+            entry["folder_path"] = str(_host_path(Path(folder)))
     config["config"]["name"] = name
     preset_id = str(params.get("base_model") or settings.training.default_base_model)
     preset = get_preset(preset_id)

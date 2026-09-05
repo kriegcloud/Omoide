@@ -95,6 +95,23 @@ class TrainingRunTests(unittest.TestCase):
             self.assertEqual(requested["run_id"], run.id)
             self.assertIn("created_at", requested)
 
+    def test_create_run_maps_export_dataset_folder_to_host_root(self):
+        with Session(self.engine) as session:
+            dataset, export = self._dataset_export(session)
+            export_dir = Path(export.output_dir)
+            container_dataset = settings.general.resolved_datasets_dir() / export_dir.name / "dataset"
+            config = yaml.safe_load((export_dir / "config.yaml").read_text())
+            config["config"]["process"][0]["datasets"][0]["folder_path"] = str(container_dataset)
+            (export_dir / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
+            settings.general.datasets_host_root = Path("/host/datasets")
+            run = create_run(session, dataset, export, {"steps": 10})
+            process = yaml.safe_load((Path(run.run_dir) / "config.yaml").read_text())["config"]["process"][0]
+            self.assertEqual(
+                process["datasets"][0]["folder_path"],
+                str(Path("/host/datasets") / export_dir.name / "dataset"),
+            )
+            self.assertTrue(process["training_folder"].startswith("/host/datasets/"))
+
     def test_reconcile_reads_status_and_registers_sample_steps(self):
         with Session(self.engine) as session:
             dataset, export = self._dataset_export(session)

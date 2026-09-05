@@ -133,8 +133,25 @@ def write_status(status: str, *, error=None, checkpoints=None, force=False) -> N
     last_write = current
 
 
+def configured_steps() -> int:
+    try:
+        import yaml  # ai-toolkit's environment ships PyYAML
+
+        loaded = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        return int(loaded["config"]["process"][0]["train"]["steps"])
+    except Exception:  # noqa: BLE001 - progress metadata only
+        return 0
+
+
+total = configured_steps()
+
+
 def parse_progress(text: str) -> None:
     global step, total, loss
+    # Only the training bar carries a loss; model-loading and download bars
+    # also print "n/m" and must not be mistaken for training progress.
+    if not re.search(r"\bloss\b", text, re.IGNORECASE):
+        return
     progress = re.search(r"(?<![\d.])(\d+)\s*/\s*(\d+)(?![\d.])", text)
     if progress:
         step = max(step, int(progress.group(1)))
