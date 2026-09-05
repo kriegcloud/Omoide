@@ -306,3 +306,262 @@ facebook, snapchat, other.
 `PersonHero` shows platform icons with the handle; clicking opens the profile
 in a new tab. An "Add link" popover with platform select and handle field.
 Suggestions render as chips the user can accept.
+
+---
+---
+
+# Part II — LoRA dataset workbench
+
+Goal: turn a curated person library into training-ready character LoRA
+datasets without leaving Omoide. Captioning itself is being built in a
+parallel effort on top of `MediaAnnotation` (kind `caption`/`tags`); the phases
+below only *consume* captions and must not modify the annotation modules,
+the ComfyUI bridge protocol, or `integrations/comfyui/*` except where Phase 11
+says so.
+
+Shared conventions (in addition to Part I):
+
+- Everything a dataset needs is stored relative to media ids plus op lists.
+  Files are only materialised on export.
+- Exports and training runs live under `settings.general.datasets_dir`
+  (default `<data dir>/datasets`, i.e. `/app/data/datasets` in the workstation
+  container). This directory is outside every media root so scans never index
+  exported copies. `OMOIDE_GENERAL__DATASETS_HOST_ROOT` (optional) is the host
+  path shown in the UI and written into generated training configs.
+- Face `bbox` is `[x, y, w, h]` in the detector's working space, which is the
+  image downscaled so its longest side is at most 1280 px (`MAX_DET_DIM` in
+  `app/processors/faces.py`). Convert to source pixels with
+  `scale = max(width, height) / min(max(width, height), 1280)`.
+- Long-running work uses the existing `ProcessingTask` machinery
+  (`app/tasks/common.py`, `set_task_progress`, cancellation).
+
+## Phase 8 — Training datasets and export  (branch `feat/training-datasets`)
+
+### Schema
+
+```
+TrainingDataset
+  id, name, slug (unique, derived from name, editable), description,
+  kind: "subject" | "regularization"        (default subject)
+  person_id FK person nullable              (subject datasets usually have one)
+  trigger_word str                          (e.g. "sydsch woman" → trigger "sydsch")
+  class_token str                           (e.g. "woman")
+  caption_source: "annotation" | "template" | "none"   (default annotation)
+  caption_template str  default "{trigger} {class}, {caption}"
+  target_resolution int default 1024
+  buckets json list[int] default [512, 768, 1024]
+  repeats int default 10
+  export_layout: "kohya" | "ai_toolkit" | "onetrainer"  default ai_toolkit
+  cover_media_id FK media nullable
+  created_at, updated_at
+
+DatasetItem
+  id, dataset_id FK (cascade), media_id FK, position int,
+  edit_ops json nullable        (EditOp[] from Phase 6, a *virtual* crop/rotate)
+  edit_design_state json nullable
+  caption_override str nullable
+  weight float default 1.0
+  excluded bool default false
+  created_at
+  UNIQUE(dataset_id, media_id)
+
+DatasetExport
+  id, dataset_id FK, layout, status: pending|running|completed|failed|cancelled,
+  task_id str nullable, output_dir str, item_count int, manifest json nullable,
+  error str nullable, created_at, finished_at
+```
+
+Migration `add_training_datasets` chained on `f26ceee70778`.
+
+### Effective caption
+
+`resolve_caption(dataset, item, media, person)`:
+
+1. `item.caption_override` if set.
+2. If `caption_source == "annotation"`: latest `MediaAnnotation` with
+   `kind == caption`, preferring `review_status` approved over pending,
+   highest `revision`. Its text has every occurrence of the person's display
+   name (case-insensitive, also the slug form) replaced by the trigger word.
+3. Apply `caption_template` with `{trigger}`, `{class}`, `{caption}`
+   (empty caption collapses the trailing separator).
+4. `caption_source == "none"` → no `.txt` written.
+
+### Export layouts
+
+Output root: `<datasets_dir>/<slug>/<YYYYmmdd-HHMMSS>/`.
+
+- **ai_toolkit**: `dataset/<index:04d>_<media id>.<ext>` + `.txt`, plus
+  `config.yaml` generated from `app/templates/ai_toolkit_lora.yaml` (a trimmed
+  copy of ai-toolkit's `train_lora_flux_24gb.yaml` with folder_path,
+  trigger_word, resolution buckets and sample prompts filled in) and a
+  `README.md` with the launch command.
+- **kohya**: `img/<repeats>_<trigger> <class>/` + `.txt`; `reg/` when a
+  regularization dataset is linked (Phase 9).
+- **onetrainer**: flat `images/` + `.txt`; masks in `masks/` when present
+  (Phase 11).
+
+For each non-excluded item, in `position` order: open original, apply
+`edit_ops` with `apply_edit_ops`, downscale so the longest side equals the
+largest bucket not exceeding the source (never upscale), convert to RGB JPEG
+quality 95 unless the source is PNG, strip EXIF, write. `manifest.json` lists
+`{ index, media_id, source_path, source_sha256, output_file, output_sha256,
+width, height, ops, caption }` plus dataset settings and the git revision of
+the app. The export runs as a task with progress; the `DatasetExport` row
+mirrors its status.
+
+### API
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/datasets` | list with counts and cover thumbnail |
+| POST | `/api/datasets` | create; body = editable fields; `person_id` prefill copies name → trigger slug and gender tag → class token |
+| GET/PATCH/DELETE | `/api/datasets/{id}` | |
+| POST | `/api/datasets/{id}/items` | `{ media_ids }` → `{ added_ids, skipped_ids }` (skips duplicates and videos) |
+| DELETE | `/api/datasets/{id}/items` | `{ media_ids }` |
+| PATCH | `/api/datasets/{id}/items/{item_id}` | `caption_override`, `edit_ops`, `edit_design_state`, `weight`, `excluded`, `position` |
+| GET | `/api/datasets/{id}/items?cursor&limit&include_excluded` | items joined with `MediaPreview`, `effective_caption`, `has_ops`, and the person's face summary for that media (`det_score`, `frontality`, `face_count`) |
+| POST | `/api/datasets/{id}/export` | `{ layout? }` → `DatasetExport` (task started) |
+| GET | `/api/datasets/{id}/exports` | history |
+| GET | `/api/datasets/exports/{export_id}/manifest` | manifest JSON |
+| POST | `/api/datasets/from-person/{person_id}` | create dataset and add every appearance (faces + manual links) |
+
+All mutations 403 in presentation mode.
+
+### Frontend
+
+- Sidebar: new **Training** section with **Datasets** (`/datasets`).
+- `DatasetsPage`: card grid (cover, name, item count, trigger word, last
+  export), New dataset dialog.
+- `DatasetDetailPage` (`/dataset/:id`): header with editable settings
+  (name, trigger, class, caption source/template, resolution, buckets,
+  repeats, layout), tabs **Items** (masonry of `MediaCard` with a dataset
+  context: caption preview line, quality chips, excluded dimming, an item
+  menu with Exclude/Include, Edit caption, Edit crop (opens the Phase 6
+  editor in *virtual* mode: saves ops to the item instead of writing a file),
+  Remove) and **Exports** (list with status, item count, output path,
+  manifest download, and the launch command for ai_toolkit).
+- Select mode on the dataset grid reuses the marquee hook; bulk Exclude /
+  Include / Remove.
+- `SelectionActionBar` (any media grid): **Add to dataset** (picker with
+  "New dataset…"). `MediaCardMenu`: **Add to dataset…**.
+- `PersonHero`: **Create dataset** button (calls from-person).
+
+## Phase 9 — Curation assistant  (branch `feat/dataset-curation`)
+
+### Metrics
+
+`app/services/curation.py` computes per (dataset, item):
+
+- `face_ratio`: subject face area / image area (subject = dataset person's
+  face in that media; falls back to the largest face).
+- `framing`: closeup (≥ 0.12), portrait (0.04–0.12), half_body (0.012–0.04),
+  full_body (< 0.012), none.
+- `other_people`: faces in the media not assigned to the subject.
+- `frontality`, `det_score`, `sharpness` (`Media.laplacian_score`),
+  `brightness_mean` (computed from the thumbnail, cached in a new
+  `MediaCurationStats(media_id PK, brightness_mean, contrast_std, computed_at)`).
+- `aspect`: portrait / square / landscape.
+- `identity_distance`: cosine distance between the subject face embedding
+  and the person centroid (`get_person_embedding`), via `face_embeddings`.
+- `duplicate_group`: phash Hamming distance ≤ 6 within the dataset, refined
+  by face-embedding distance < 0.25; each group gets a `best_item_id`
+  (highest sharpness × det_score × resolution).
+
+### API
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/datasets/{id}/analysis` | `{ items: [...metrics], summary: { framing, aspect, sharpness_hist, frontality_hist, brightness_hist, other_people_hist }, outliers: [item ids with identity_distance > 0.55], duplicates: [{ item_ids, best_item_id }] }` |
+| POST | `/api/datasets/{id}/auto-select` | `{ target_count, min_frontality?, min_sharpness?, max_other_people?, drop_duplicates: true, dry_run }` → farthest-point sampling over (face embedding ⊕ framing ⊕ aspect ⊕ brightness) starting from the best-quality item; non-selected items become `excluded` unless `dry_run` |
+| POST | `/api/datasets/{id}/regularization` | `{ target_count, gender?, exclude_person_ids? }` → creates a `regularization` dataset from other visible people with the matching gender tag, one face only, deduped, and links it as `regularization_dataset_id` on the subject dataset (new nullable FK) |
+
+### Frontend
+
+Dataset detail gains **Analysis**: summary bars, an outliers strip with one-click
+exclude, duplicate groups with "keep best", and the Auto-select dialog with a
+preview of what would be excluded. The item grid shows metric chips and lets
+you sort by any metric.
+
+## Phase 10 — Face-anchored crops  (branch `feat/face-crops`)
+
+`app/services/face_crops.py::suggest_crop(bbox_px, image_w, image_h, framing,
+aspect)` where framing ∈ {closeup, portrait, half_body, full_body} maps to a
+box of `k × face height` above/below the face (1.3/2.2, 2.2/4.5, 3/8, 4/14)
+centred on the face, clamped to the image and then expanded/shrunk to the
+requested aspect (`1:1`, `2:3`, `3:4`, `4:5`, `9:16`, `free`). Returns a
+Phase 6 `crop` op in source pixels plus the resulting bucket resolution.
+
+| Method | Path |
+| --- | --- |
+| GET | `/api/media/{id}/face-crops?person_id&framing&aspect` → suggestions per face |
+| POST | `/api/datasets/{id}/items/batch-crop` `{ item_ids?, framing, aspect, overwrite_existing_ops }` → sets `edit_ops` on items |
+| POST | `/api/media/batch-edit` `{ media_ids, ops, mode }` → runs Phase 6 edits for many media as a task (copies) |
+
+Frontend: **Batch crop** dialog on the dataset detail (framing + aspect,
+preview of the first 12 with the crop rectangle drawn over the thumbnail,
+Apply). In the editor: a **Face guides** toggle drawing face boxes, and
+framing preset buttons that set Filerobot's crop through `updateStateFnRef`
+(`{ adjustments: { crop: {...shown-space box} } }`).
+
+## Phase 11 — Image repair through the ComfyUI bridge  (branch `feat/image-repair`)
+
+Additive bridge change, coordinated with the captioning work: a profile
+`result_kind: "image"` whose `output_node_class` is `SaveImage`; the bridge
+returns `{ image_path }` of the produced file inside its staging directory and
+the app copies it out. Client method `ComfyAnnotationClient.repair(...)`
+shares the request plumbing with `annotate`. Profiles expected on the host
+(workflow JSONs are authored in ComfyUI, not in this repo; ship
+`integrations/comfyui/profiles/README.md` describing each contract):
+
+- `omoide-remove-text-v1`: OCR text regions → mask → inpaint (LaMa).
+- `omoide-upscale-v1`: 2× restoration (SUPIR or CodeFormer + ESRGAN).
+- `omoide-remove-people-v1`: input image + subject face box (as a JSON input
+  node) → segment non-subject people → inpaint; also returns the mask.
+
+App: `ImageRepairJob(id, media_id, profile, params json, status, attempt
+tracking like annotations, result_media_id, mask_path, error)`. Results are
+written next to the original as `<stem>_repaired-<profile>.<ext>` via the
+Phase 6 writer, registered as media, processing queued. Endpoints
+`POST /api/media/{id}/repair`, `POST /api/media/bulk-repair`, `GET /api/repairs`.
+UI: card menu **Repair ▸ Remove overlays / Upscale / Remove other people**,
+bulk action on datasets and selections, and a before/after slider on the
+media detail for repaired copies. Tests use a fake bridge.
+
+## Phase 12 — Editor polish  (branch `feat/editor-polish`)
+
+- Shortcuts inside the dialog: `R`/`Shift+R` rotate, `H`/`V` flip, `C` crop
+  tool, `0` fit, `Esc` cancel, `Ctrl/Cmd+S` save copy, `Ctrl/Cmd+Shift+S`
+  overwrite (still confirms).
+- Hold `\`` (backtick) to compare with the original (Filerobot has the
+  toggle; bind it).
+- **Apply last edit to selection**: the last saved op list is kept in a
+  zustand store; `SelectionActionBar` offers it and calls `/api/media/batch-edit`.
+- Face guides and framing presets from Phase 10 live here in the editor UI.
+- Aspect-bucket guide overlay (512/768/1024 boxes) toggle.
+
+## Phase 13 — Training runs  (branch `feat/training-runs`)
+
+The container cannot run training; the host does, via a path-activated
+systemd user unit that watches `<datasets host root>/**/runs/*/REQUESTED`.
+
+```
+TrainingRun
+  id, dataset_id FK, export_id FK, backend "ai_toolkit",
+  status: requested|running|completed|failed|cancelled,
+  run_dir, config_yaml text, steps int, started_at, finished_at,
+  last_sample_step int, error
+```
+
+- `POST /api/datasets/{id}/train` `{ export_id?, steps, lr, rank, sample_prompts[] }`
+  writes `<export>/runs/<timestamp>/config.yaml` (ai-toolkit format),
+  `REQUESTED`, and returns the run.
+- `packaging/omoide-train-launcher` + `omoide-train@.path/.service` (user
+  units): on `REQUESTED`, runs ai-toolkit (`python run.py config.yaml`) in the
+  user's ai-toolkit checkout with ROCm env, streaming `status.json`
+  (`{ status, step, total, loss, updated_at }`) and copying sample grids into
+  `samples/`. Writes `DONE` or `FAILED`.
+- A periodic app task reconciles `status.json` into `TrainingRun` and lists
+  `samples/` as `TrainingSample(run_id, step, path)` served from a new static
+  route under the data dir.
+- UI: **Runs** tab on the dataset detail with progress, loss sparkline, sample
+  gallery per step, and the resulting `.safetensors` path.
