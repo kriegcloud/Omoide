@@ -125,7 +125,6 @@ export default function ImageEditorDialog({
   // the stack overflows.
   const initialDesignState = useMemo(
     () => (media.edit_design_state as FilerobotDesignState | null) ?? undefined,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [open, media.id]
   );
   const [designState, setDesignState] = useState<FilerobotDesignState | null>(
