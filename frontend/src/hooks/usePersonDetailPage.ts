@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
-import { getPerson, getPersonMediaAppearances } from "../services/person";
+import { getPeople, getPerson, getPersonMediaAppearances } from "../services/person";
 import {
   autoMergeSimilarPersons,
   deletePerson as deletePersonService,
@@ -417,17 +417,29 @@ export const usePersonDetailPage = () => {
   ]);
 
   useEffect(() => {
-    if (!mergeOpen || !debouncedSearchTerm.trim()) {
+    if (!mergeOpen) {
       setCandidates([]);
       return;
     }
 
     const controller = new AbortController();
-    searchPersonsByName(debouncedSearchTerm, controller.signal)
+    const term = debouncedSearchTerm.trim();
+    // The person list endpoint orders by appearance count (desc); with no
+    // search term it doubles as "the five most-seen people" so the most
+    // likely merge targets are one click away.
+    const request = term
+      ? searchPersonsByName(term, controller.signal)
+      : getPeople().then((page) => page.items as unknown as Person[]);
+    request
       .then((response) => {
         if (controller.signal.aborted) return;
-        const filtered = response.filter((p: Person) => p.id !== Number(id));
-        setCandidates(filtered);
+        const filtered = response
+          .filter((p: Person) => p.id !== Number(id))
+          .sort(
+            (a, b) =>
+              (b.appearance_count ?? 0) - (a.appearance_count ?? 0) || b.id - a.id,
+          );
+        setCandidates(term ? filtered : filtered.slice(0, 5));
       })
       .catch((err) => {
         if (err.name !== "AbortError") {
