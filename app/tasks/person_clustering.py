@@ -1084,7 +1084,7 @@ def _compute_person_prototypes(vectors: np.ndarray, k: int) -> np.ndarray:
 def _load_person_prototype_matrix(
     session: Session,
     *,
-    per_person_cap: int = 64,
+    per_person_cap: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Build the matching matrix from per-person prototypes computed over the
@@ -1098,6 +1098,30 @@ def _load_person_prototype_matrix(
             getattr(settings.face_recognition, "person_matching_max_prototypes", 3)
         ),
     )
+    if per_person_cap is None:
+        per_person_cap = int(
+            getattr(settings.face_recognition, "person_prototype_sample_cap", 64)
+        )
+    per_person_cap = max(1, int(per_person_cap))
+    pose_prototypes_enabled = bool(
+        getattr(settings.face_recognition, "person_pose_prototypes_enabled", True)
+    )
+    pose_min_faces = max(
+        1,
+        int(
+            getattr(
+                settings.face_recognition, "person_pose_prototype_min_faces", 4
+            )
+        ),
+    )
+    pose_sample_cap = max(
+        1,
+        int(
+            getattr(
+                settings.face_recognition, "person_pose_prototype_sample_cap", 256
+            )
+        ),
+    )
     # Prefer quality faces for the prototypes so junk members (blurry/profile
     # faces mistakenly attached to a person) do not become attachment anchors.
     # Persons with no quality-rated faces fall back to all of their faces.
@@ -1105,7 +1129,7 @@ def _load_person_prototype_matrix(
     rows = session.exec(
         text(
             f"""
-            SELECT f.person_id, fe.embedding,
+            SELECT f.person_id, f.frontality, fe.embedding,
                    CASE WHEN 1=1 {quality_filter} THEN 1 ELSE 0 END AS is_quality
               FROM face            AS f
               JOIN face_embeddings AS fe ON fe.face_id = f.id
@@ -1116,12 +1140,9 @@ def _load_person_prototype_matrix(
 
     quality_grouped: dict[int, list[np.ndarray]] = {}
     fallback_grouped: dict[int, list[np.ndarray]] = {}
-    for person_id, raw_embedding, is_quality in rows:
+    pose_grouped: dict[int, dict[str, list[np.ndarray]]] = {}
+    for person_id, frontality, raw_embedding, is_quality in rows:
         if person_id is None:
-            continue
-        target = quality_grouped if is_quality else fallback_grouped
-        vecs = target.setdefault(int(person_id), [])
-        if len(vecs) >= per_person_cap:
             continue
         vec = vector_from_stored(raw_embedding)
         if vec is None or vec.size == 0:
@@ -1131,26 +1152,87 @@ def _load_person_prototype_matrix(
         norm = float(np.linalg.norm(vec))
         if not np.isfinite(norm) or norm == 0.0:
             continue
-        vecs.append((vec / norm).astype(np.float32, copy=False))
+        person_id = int(person_id)
+        normalized = (vec / norm).astype(np.float32, copy=False)
+        target = quality_grouped if is_quality else fallback_grouped
+        target.setdefault(person_id, []).append(normalized)
+
+        if frontality is not None:
+            frontality = float(frontality)
+            if not np.isfinite(frontality):
+                continue
+            if frontality >= 0.5:
+                pose_bin = "frontal"
+            elif frontality >= 0.25:
+                pose_bin = "quarter"
+            else:
+                pose_bin = "profile"
+            pose_grouped.setdefault(person_id, {}).setdefault(
+                pose_bin, []
+            ).append(normalized)
 
     grouped: dict[int, list[np.ndarray]] = dict(fallback_grouped)
     grouped.update(
         {pid: vecs for pid, vecs in quality_grouped.items() if vecs}
     )
 
-
     proto_person_ids: list[int] = []
     proto_vectors: list[np.ndarray] = []
-    for person_id, vecs in grouped.items():
-        if not vecs:
-            continue
-        arr = np.vstack(vecs)
+    prototype_counts = {"frontal": 0, "quarter": 0, "profile": 0, "kmeans": 0}
+    all_person_ids = sorted(set(grouped) | set(pose_grouped))
+    for person_id in all_person_ids:
+        vecs = grouped.get(person_id, [])
+        rng = np.random.default_rng(person_id)
+        if len(vecs) > per_person_cap:
+            indices = rng.choice(len(vecs), size=per_person_cap, replace=False)
+            sampled = np.vstack([vecs[int(index)] for index in indices])
+        else:
+            sampled = np.vstack(vecs)
+
         # only spend extra prototypes on persons with enough faces to
         # actually exhibit distinct pose modes (~4 faces per prototype)
-        k = min(max_prototypes, max(1, arr.shape[0] // 4))
-        for proto in _compute_person_prototypes(arr, k):
+        k = min(max_prototypes, max(1, sampled.shape[0] // 4))
+        for proto in _compute_person_prototypes(sampled, k):
             proto_person_ids.append(person_id)
             proto_vectors.append(proto)
+            prototype_counts["kmeans"] += 1
+
+        if not pose_prototypes_enabled:
+            continue
+
+        for pose_bin in ("frontal", "quarter", "profile"):
+            bin_vecs = pose_grouped.get(person_id, {}).get(pose_bin, [])
+            if len(bin_vecs) < pose_min_faces:
+                continue
+            if len(bin_vecs) > pose_sample_cap:
+                indices = rng.choice(
+                    len(bin_vecs), size=pose_sample_cap, replace=False
+                )
+                pose_sample = np.vstack(
+                    [bin_vecs[int(index)] for index in indices]
+                )
+            else:
+                pose_sample = np.vstack(bin_vecs)
+            pose_mean = pose_sample.mean(axis=0)
+            pose_norm = float(np.linalg.norm(pose_mean))
+            if not np.isfinite(pose_norm) or pose_norm == 0.0:
+                continue
+            proto_person_ids.append(person_id)
+            proto_vectors.append(
+                (pose_mean / pose_norm).astype(np.float32, copy=False)
+            )
+            prototype_counts[pose_bin] += 1
+
+    logger.info(
+        "prototypes: %d persons, %d rows "
+        "(frontal=%d quarter=%d profile=%d kmeans=%d)",
+        len(all_person_ids),
+        len(proto_person_ids),
+        prototype_counts["frontal"],
+        prototype_counts["quarter"],
+        prototype_counts["profile"],
+        prototype_counts["kmeans"],
+    )
 
     if not proto_person_ids:
         return np.array([], dtype=np.int64), np.empty((0, 0), dtype=np.float32)
