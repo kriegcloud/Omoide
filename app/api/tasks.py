@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import case, func
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, select
 
@@ -13,6 +14,7 @@ from app.config import settings
 from app.database import get_session, safe_commit
 from app.logger import logger
 from app.models import Media, ProcessingTask, ProcessingTaskRead
+from app.services.task_summary import summarize_task, task_duration_seconds
 from app.tasks import (
     clean_missing_files,
     compute_blur_scores,
@@ -41,6 +43,18 @@ from app.tasks import (
 from app.utils import get_image_taken_date, get_video_taken_date
 
 router = APIRouter()
+
+
+def _to_read(
+    task: ProcessingTask,
+    progress_map: dict[str, dict] | None = None,
+) -> ProcessingTaskRead:
+    base = task.model_dump()
+    base.update((progress_map or {}).get(task.id, {}))
+    base["failure_count"] = task_state.get_failure_count(task.id)
+    base["summary"] = summarize_task(task)
+    base["duration_seconds"] = task_duration_seconds(task)
+    return ProcessingTaskRead(**base)
 
 
 @router.post(
@@ -385,20 +399,50 @@ def list_tasks(session: Session = Depends(get_session)):
 def list_active_tasks(session: Session = Depends(get_session)):
     try:
         active = session.exec(
-            select(ProcessingTask).where(ProcessingTask.status == "running")
+            select(ProcessingTask)
+            .where(ProcessingTask.status.in_(("running", "pending")))
+            .order_by(
+                case((ProcessingTask.status == "running", 0), else_=1),
+                ProcessingTask.created_at.asc(),
+            )
         ).all()
         progress_map = task_state.get_task_progress()
-        result: list[ProcessingTaskRead] = []
-        for task in active:
-            base = task.model_dump()
-            base.update(progress_map.get(task.id, {}))
-            base["failure_count"] = task_state.get_failure_count(task.id)
-            result.append(ProcessingTaskRead(**base))
-        return result
+        return [_to_read(task, progress_map) for task in active]
     except OperationalError:
         # database might be contended; retry briefly
         time.sleep(0.5)
         return list_active_tasks(session)
+
+
+@router.get(
+    "/recent",
+    response_model=list[ProcessingTaskRead],
+    summary="List recently finished tasks",
+)
+def list_recent_tasks(
+    limit: int = 10,
+    task_type: str | None = None,
+    session: Session = Depends(get_session),
+):
+    clamped_limit = min(50, max(1, limit))
+    query = select(ProcessingTask).where(
+        ProcessingTask.status.in_(("completed", "failed", "cancelled"))
+    )
+    if task_type is not None:
+        query = query.where(ProcessingTask.task_type == task_type)
+    tasks = session.exec(
+        query
+        .order_by(
+            func.coalesce(
+                ProcessingTask.finished_at,
+                ProcessingTask.started_at,
+                ProcessingTask.created_at,
+            ).desc()
+        )
+        .limit(clamped_limit)
+    ).all()
+    progress_map = task_state.get_task_progress()
+    return [_to_read(task, progress_map) for task in tasks]
 
 
 @router.get(
@@ -422,7 +466,4 @@ def get_task(task_id: str, session: Session = Depends(get_session)):
     task = session.get(ProcessingTask, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    base = task.model_dump()
-    base.update(task_state.get_task_progress().get(task_id, {}))
-    base["failure_count"] = task_state.get_failure_count(task_id)
-    return ProcessingTaskRead(**base)
+    return _to_read(task, task_state.get_task_progress())

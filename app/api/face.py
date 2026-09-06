@@ -7,7 +7,7 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlmodel import Session, delete, select, text
 
 from app.config import settings
@@ -23,7 +23,6 @@ from app.utils import (
 )
 
 router = APIRouter()
-
 
 @router.post(
     "/assign",
@@ -73,7 +72,6 @@ async def assign_faces(
     safe_commit(session)
     return {"message": "Faces assigned successfully"}
 
-
 @router.post(
     "/detach",
     summary="Detaches existing faces from their persons",
@@ -117,7 +115,6 @@ async def detach_faces(
     safe_commit(session)
     return {"message": "Faces detached successfully"}
 
-
 def update_face_embedding(
     session: Session,
     face_id: int,
@@ -143,7 +140,6 @@ def update_face_embedding(
                    WHERE face_id=:f_id"""
         ).bindparams(f_id=face_id)
     safe_execute(session, sql)
-
 
 @router.delete(
     "/",
@@ -190,10 +186,15 @@ def delete_faces(
     safe_commit(session)
     return {"message": "Faces deleted successfully"}
 
-
 class FaceCreatePerson(BaseModel):
     name: str | None = None
 
+@router.get("/orphans/count", summary="Count faces not assigned to a person")
+def get_orphan_count(session: Session = Depends(get_session)) -> dict[str, int]:
+    count = session.exec(
+        select(func.count()).select_from(Face).where(Face.person_id.is_(None))
+    ).one()
+    return {"count": count}
 
 @router.get("/orphans", response_model=CursorPage)
 def get_orphans(
@@ -219,7 +220,6 @@ def get_orphans(
     else:
         next_cursor = None
     return CursorPage(next_cursor=next_cursor, items=orphans)
-
 
 @router.post(
     "/create_person",
@@ -280,7 +280,6 @@ async def create_person_from_faces(
     safe_commit(session)
     session.close()
     return PersonMinimal(id=person_id)
-
 
 def old_person_can_be_deleted(session: Session, person_id: int | None):
     if person_id is None:

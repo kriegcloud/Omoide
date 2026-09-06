@@ -15,6 +15,7 @@ import {
   Divider,
   Snackbar,
   Alert,
+  Chip,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -45,20 +46,13 @@ import BubbleChartIcon from "@mui/icons-material/BubbleChart";
 import LabelIcon from "@mui/icons-material/Label";
 import BlurOnIcon from "@mui/icons-material/BlurOn";
 import CameraAltIcon from "@mui/icons-material/CameraAlt";
+import {
+  formatRelativeTime,
+  formatTaskDuration,
+  formatTaskStep,
+} from "../utils/taskFormat";
 
-// Friendly names for the raw current_step keys published by backend tasks.
-// Unknown steps fall back to the raw key.
-const STEP_LABELS: Record<string, string> = {
-  clustering_batches: "Preparing clustering batches",
-  clustering_batch: "Clustering faces",
-  clustering_unassigned: "Clustering faces",
-  merging_similar_persons: "Merging similar people",
-  matching_known_persons: "Matching faces to known people",
-  backfilling_face_quality: "Rating face quality",
-  backfilling_demographics: "Predicting gender and age",
-};
-
-type TaskLabels = Partial<Record<TaskType, string>>;
+type TaskLabels = Record<TaskType, string>;
 const TASK_LABELS: TaskLabels = {
   scan: "Scan for New Files",
   process_media: "Process Unindexed Media",
@@ -74,7 +68,17 @@ const TASK_LABELS: TaskLabels = {
   backfill_demographics: "Backfill Gender/Age",
   build_events: "Cluster Events",
   geocode_places: "Geocode Places",
+  pose_backfill: "Pose Backfill",
+  export_dataset: "Export Dataset",
+  dataset_caption_generation: "Generate Captions",
+  dataset_frame_mining: "Mine Video Frames",
+  batch_edit_media: "Batch Edit Media",
+  generate_hashes: "Generate Hashes",
 };
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
 
 const PROCESSOR_ACTIONS = [
   { name: "faces", label: "Face Detection", icon: <FaceIcon /> },
@@ -89,14 +93,19 @@ type TaskManagerProps = {
 };
 
 export default function TaskManager({ isActive }: TaskManagerProps) {
-  const { activeTasks, forceRefresh, lastCompletedTasks } =
-    useTaskEvents(isActive);
+  const {
+    activeTasks,
+    recentTasks,
+    forceRefresh,
+    lastCompletedTasks,
+    lastFinishedTask,
+  } = useTaskEvents(isActive);
   const [processorsExpanded, setProcessorsExpanded] = useState(false);
   const [forceReprocess, setForceReprocess] = useState(false);
   const [snack, setSnack] = useState<{
     open: boolean;
     msg: string;
-    sev: "success" | "error";
+    sev: "success" | "warning" | "error";
     action?: React.ReactNode;
   }>({ open: false, msg: "", sev: "success" });
   const [failureEntries, setFailureEntries] = useState<TaskFailure[]>([]);
@@ -109,6 +118,34 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
   const lastProgressRef = useRef<
     Record<string, { value: number; changedAt: number }>
   >({});
+  const finishedSnackbarReadyRef = useRef(false);
+  const lastFinishedNonceRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!finishedSnackbarReadyRef.current) {
+      finishedSnackbarReadyRef.current = true;
+      lastFinishedNonceRef.current = lastFinishedTask?.nonce ?? null;
+      return;
+    }
+    if (
+      !lastFinishedTask ||
+      lastFinishedTask.nonce === lastFinishedNonceRef.current
+    ) {
+      return;
+    }
+    lastFinishedNonceRef.current = lastFinishedTask.nonce;
+    const { task } = lastFinishedTask;
+    setSnack({
+      open: true,
+      msg: `${TASK_LABELS[task.task_type]} · ${task.summary || "finished"}`,
+      sev:
+        task.status === "failed"
+          ? "error"
+          : task.status === "cancelled"
+            ? "warning"
+            : "success",
+    });
+  }, [lastFinishedTask]);
 
   const loadFailures = useCallback(
     async (
@@ -221,9 +258,9 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
         msg: `${TASK_LABELS[type] ?? type} started`,
         sev: "success",
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Error starting task", type, err);
-      const msg = err?.message || "Failed to start task";
+      const msg = errorMessage(err, "Failed to start task");
       setSnack({ open: true, msg, sev: "error" });
     }
   };
@@ -260,8 +297,12 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
           : `${label} started`,
         sev: "success",
       });
-    } catch (err: any) {
-      setSnack({ open: true, msg: err?.message || "Failed to start processor", sev: "error" });
+    } catch (err: unknown) {
+      setSnack({
+        open: true,
+        msg: errorMessage(err, "Failed to start processor"),
+        sev: "error",
+      });
     }
   };
 
@@ -336,8 +377,11 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                 // If we haven't seen progress in a bit (e.g., long video/scenes/model load),
                 // switch to an indeterminate bar to show activity.
                 const showIndeterminate =
-                  t.status === "running" &&
-                  (effectiveTotal === 0 || staleForMs > 8000 || t.current_step === "indexing");
+                  t.status === "pending" ||
+                  (t.status === "running" &&
+                    (effectiveTotal === 0 ||
+                      staleForMs > 8000 ||
+                      t.current_step === "indexing"));
                 const failureCount = t.failure_count ?? 0;
                 const clusteringPct =
                   isClusterTask && t.total > 0
@@ -361,7 +405,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                         {TASK_LABELS[t.task_type] ?? t.task_type}
                       </Typography>
                       <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
-                        {t.status === "running" ? pctLabel : t.status}
+                        {t.status === "pending" ? "Queued" : pctLabel}
                       </Typography>
                     </Box>
                     {hasMergeProgress ? (
@@ -469,7 +513,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                     {t.status === "running" && (
                       <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
                         {t.current_step
-                          ? STEP_LABELS[t.current_step] ?? t.current_step
+                          ? formatTaskStep(t.current_step)
                           : showIndeterminate
                             ? "Working..."
                             : ""}
@@ -492,6 +536,58 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
               })}
             </Stack>
           )}
+
+          <Stack spacing={1} mb={2}>
+            <Typography variant="overline" color="text.secondary">
+              Recent
+            </Typography>
+            {recentTasks.slice(0, 6).map((task) => {
+              const color =
+                task.status === "completed"
+                  ? "success"
+                  : task.status === "cancelled"
+                    ? "warning"
+                    : "error";
+              return (
+                <Box key={task.id} sx={{ minWidth: 0 }}>
+                  <Stack direction="row" spacing={0.75} alignItems="center">
+                    <Chip
+                      size="small"
+                      color={color}
+                      label={task.status}
+                      sx={{
+                        height: 18,
+                        "& .MuiChip-label": { px: 0.75, fontSize: "0.65rem" },
+                      }}
+                    />
+                    <Typography
+                      variant="body2"
+                      fontWeight="bold"
+                      noWrap
+                      sx={{ minWidth: 0 }}
+                    >
+                      {TASK_LABELS[task.task_type]}
+                    </Typography>
+                  </Stack>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    noWrap
+                    sx={{ display: "block", pl: 0.25 }}
+                  >
+                    {task.summary || "finished"} ·{" "}
+                    {formatTaskDuration(task.duration_seconds)} ·{" "}
+                    {formatRelativeTime(task)}
+                  </Typography>
+                </Box>
+              );
+            })}
+            {recentTasks.length === 0 && (
+              <Typography variant="caption" color="text.disabled">
+                No recent tasks
+              </Typography>
+            )}
+          </Stack>
 
           <Divider sx={{ my: 2 }} />
 

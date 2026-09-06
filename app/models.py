@@ -706,6 +706,8 @@ class ProcessingTaskRead(SQLModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     result: dict[str, Any] | None = None
+    summary: str | None = None
+    duration_seconds: float | None = None
     current_item: str | None = None
     current_step: str | None = None
     failure_count: int | None = None

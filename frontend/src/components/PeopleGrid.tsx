@@ -15,6 +15,7 @@ import {
 } from "@mui/material";
 import Grid from "@mui/material/Grid";
 import { useInView } from "react-intersection-observer";
+import { useNavigate } from "react-router-dom";
 import config from "../config";
 import { usePeopleSelection } from "../hooks/usePeopleSelection";
 import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
@@ -34,6 +35,7 @@ import { useTaskCompletionVersion } from "../TaskEventsContext";
 import { clearPeopleGrids, resortPeopleGrid } from "../stores/peopleCache";
 import { Person, PersonReadSimple } from "../types";
 import ConfirmDialog from "./ConfirmDialog";
+import ClusteringStatusStrip from "./ClusteringStatusStrip";
 import MergePeopleDialog from "./MergePeopleDialog";
 import MarqueeSelectionBox from "./MarqueeSelectionBox";
 import PersonCard from "./PersonCard";
@@ -59,6 +61,7 @@ export default function PeopleGrid({
   gender,
   onGenderChange,
 }: PeopleGridProps) {
+  const navigate = useNavigate();
   const { ref: loaderRef, inView } = useInView({ rootMargin: "200px" });
   const fetchPeople = useCallback(
     (cursor?: string | null) => getPeople(cursor ?? undefined, hidden, gender),
@@ -125,15 +128,24 @@ export default function PeopleGrid({
   );
   const selectedCount = selectedIds.size;
 
-  const refetch = () => {
+  const refetch = useCallback(() => {
     clearList(listKey);
     void fetchInitial(listKey, () => fetchPeople(null));
-  };
+  }, [clearList, fetchInitial, fetchPeople, listKey]);
 
-  const handleRefresh = () => {
+  const handleRefresh = useCallback(() => {
     setSeenRefreshKey(refreshKey);
     refetch();
-  };
+  }, [refreshKey, refetch]);
+
+  const handleShowUnassigned = useCallback(() => {
+    const section = document.getElementById("unassigned-faces");
+    if (section) {
+      section.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    navigate("/orphanfaces#unassigned-faces");
+  }, [navigate]);
 
   const updateSelectionAfterRemoval = (removedIds: number[]) => {
     const removed = new Set(removedIds);
@@ -396,6 +408,13 @@ export default function PeopleGrid({
           </Button>
         </Stack>
       </Stack>
+
+      {!hidden && (
+        <ClusteringStatusStrip
+          onRefresh={handleRefresh}
+          onShowUnassigned={handleShowUnassigned}
+        />
+      )}
 
       {error && (
         <Alert

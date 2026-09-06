@@ -20,7 +20,12 @@ from app.database import safe_commit
 from app.logger import logger
 from app.models import Media, ProcessingTask
 from app.utils import generate_thumbnail, process_file, save_thumbnail_image
-from .state import clear_task_progress, record_task_failure, set_task_progress
+from .state import (
+    clear_task_progress,
+    get_failure_count,
+    record_task_failure,
+    set_task_progress,
+)
 
 __all__ = ["run_scan"]
 
@@ -244,6 +249,11 @@ def run_scan(task_id: str) -> None:
             task = sess.get(ProcessingTask, task_id)
             task.status = "completed"
             task.finished_at = datetime.now(timezone.utc)
+            task.result = {
+                **(task.result or {}),
+                "new_files": len(new_files),
+                "skipped": get_failure_count(task_id),
+            }
             safe_commit(sess)
         clear_task_progress(task_id)
         logger.info("No new files to process. Scan finished.")
@@ -369,6 +379,11 @@ def run_scan(task_id: str) -> None:
             )
             task.finished_at = datetime.now(timezone.utc)
             task.processed = processed
+            task.result = {
+                **(task.result or {}),
+                "new_files": len(new_files),
+                "skipped": get_failure_count(task_id),
+            }
             sess.add(task)
             safe_commit(sess)
             set_task_progress(task_id, current_step="finalizing", current_item=None)

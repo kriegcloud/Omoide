@@ -173,7 +173,7 @@ export function PeopleSection({
 
       {/* Unassigned Faces Section */}
       {orphans.length > 0 && !config.PRESENTATION_MODE && (
-        <Box mb={4}>
+        <Box id="unassigned-faces" mb={4}>
           <Suspense fallback={<SectionLoader />}>
             <DetectedFaces
               isProcessing={false}

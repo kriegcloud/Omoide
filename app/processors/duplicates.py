@@ -58,7 +58,8 @@ class DuplicateProcessor:
         task = session.get(ProcessingTask, self.task_id)
         if task:
             task.status = status
-            task.started_at = datetime.now(timezone.utc)
+            if status == "running":
+                task.started_at = datetime.now(timezone.utc)
             if status == "completed" or status == "failed":
                 task.finished_at = datetime.now(timezone.utc)
             session.add(task)
@@ -414,6 +415,17 @@ class DuplicateProcessor:
                         session, progress_processed, progress_total
                     )
 
+                duplicate_group_count = session.exec(
+                    select(func.count(DuplicateGroup.id))
+                ).one()
+                task = session.get(ProcessingTask, self.task_id)
+                if task:
+                    task.result = {
+                        **(task.result or {}),
+                        "groups": int(duplicate_group_count),
+                    }
+                    session.add(task)
+                    session.commit()
                 self._update_task_status(session, "completed")
                 logger.info("pHash duplicate detection task finished.")
 

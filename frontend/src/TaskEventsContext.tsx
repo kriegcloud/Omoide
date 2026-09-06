@@ -8,7 +8,7 @@ import React, {
   useState,
 } from "react";
 import { getTask } from "./services/task";
-import { getActiveTasks } from "./services/taskActions";
+import { getActiveTasks, getRecentTasks } from "./services/taskActions";
 import { Task, TaskType } from "./types";
 
 const INITIAL_COUNTERS: Record<TaskType, number> = {
@@ -29,6 +29,9 @@ const INITIAL_COUNTERS: Record<TaskType, number> = {
   build_events: 0,
   geocode_places: 0,
   batch_edit_media: 0,
+  dataset_frame_mining: 0,
+  dataset_caption_generation: 0,
+  export_dataset: 0,
 };
 
 const BASE_POLL_INTERVAL_MS = 2000;
@@ -36,9 +39,11 @@ const MAX_POLL_INTERVAL_MS = 30000;
 
 type TaskEventsContextValue = {
   activeTasks: Task[];
+  recentTasks: Task[];
   completionCounters: Record<TaskType, number>;
   globalCompletionCount: number;
   lastCompletedTasks: Partial<Record<TaskType, Task>>;
+  lastFinishedTask: { task: Task; nonce: number } | null;
   forceRefresh: () => Promise<void>;
   subscribe: () => () => void;
 };
@@ -60,13 +65,19 @@ export function TaskEventsProvider({
   children: React.ReactNode;
 }) {
   const [activeTasks, setActiveTasks] = useState<Task[]>([]);
+  const [recentTasks, setRecentTasks] = useState<Task[]>([]);
   const [completionCounters, setCompletionCounters] =
     useState<Record<TaskType, number>>(INITIAL_COUNTERS);
   const [globalCompletionCount, setGlobalCompletionCount] = useState(0);
   const [lastCompletedTasks, setLastCompletedTasks] =
     useState<Partial<Record<TaskType, Task>>>({});
+  const [lastFinishedTask, setLastFinishedTask] = useState<{
+    task: Task;
+    nonce: number;
+  } | null>(null);
 
   const prevTasksRef = useRef<Record<string, Task>>({});
+  const recentIdsRef = useRef<Set<string> | null>(null);
   const pendingFetchRef = useRef<Promise<boolean> | null>(null);
   const subscribersRef = useRef(0);
   const pollTimeoutRef = useRef<number | null>(null);
@@ -86,11 +97,27 @@ export function TaskEventsProvider({
     if (!finished.length) return;
 
     const resolved = await Promise.all(finished.map((task) => safeFetchTask(task.id)));
-    const completedTasks = resolved.filter(
+    const resolvedTasks = resolved.filter(
+      (task): task is Task =>
+        Boolean(
+          task &&
+            (task.status === "completed" ||
+              task.status === "failed" ||
+              task.status === "cancelled")
+        )
+    );
+    const completedTasks = resolvedTasks.filter(
       (task): task is Task => Boolean(task && task.status === "completed")
     );
 
-    if (!completedTasks.length || !isMountedRef.current) return;
+    if (!resolvedTasks.length || !isMountedRef.current) return;
+
+    setLastFinishedTask((previous) => ({
+      task: resolvedTasks[0],
+      nonce: (previous?.nonce ?? 0) + 1,
+    }));
+
+    if (!completedTasks.length) return;
 
     const completedTypes = completedTasks.map((task) => task.task_type as TaskType);
 
@@ -124,10 +151,14 @@ export function TaskEventsProvider({
 
     const run = (async () => {
       try {
-        const tasks = await getActiveTasks();
+        const [tasks, recent] = await Promise.all([
+          getActiveTasks(),
+          getRecentTasks(),
+        ]);
         if (!isMountedRef.current) return true;
 
         setActiveTasks(tasks);
+        setRecentTasks(recent);
 
         const nextMap = tasks.reduce<Record<string, Task>>((acc, task) => {
           acc[task.id] = task;
@@ -135,9 +166,22 @@ export function TaskEventsProvider({
         }, {});
 
         const prevMap = prevTasksRef.current;
-        const finished = Object.values(prevMap).filter((task) => !nextMap[task.id]);
+        const disappeared = Object.values(prevMap).filter(
+          (task) => !nextMap[task.id]
+        );
         prevTasksRef.current = nextMap;
 
+        const previousRecentIds = recentIdsRef.current;
+        const newlyRecent = previousRecentIds
+          ? recent.filter((task) => !previousRecentIds.has(task.id))
+          : [];
+        recentIdsRef.current = new Set(recent.map((task) => task.id));
+
+        const newlyRecentIds = new Set(newlyRecent.map((task) => task.id));
+        const finished = [
+          ...newlyRecent,
+          ...disappeared.filter((task) => !newlyRecentIds.has(task.id)),
+        ];
         if (finished.length) {
           await applyFinishedTasks(finished);
         }
@@ -236,17 +280,21 @@ export function TaskEventsProvider({
   const value = useMemo(
     () => ({
       activeTasks,
+      recentTasks,
       completionCounters,
       globalCompletionCount,
       lastCompletedTasks,
+      lastFinishedTask,
       forceRefresh,
       subscribe,
     }),
     [
       activeTasks,
+      recentTasks,
       completionCounters,
       globalCompletionCount,
       lastCompletedTasks,
+      lastFinishedTask,
       forceRefresh,
       subscribe,
     ]
