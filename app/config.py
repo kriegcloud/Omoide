@@ -753,6 +753,13 @@ class FaceRecognitionSettings(BaseModel):
     # number of embedding prototypes kept per person when matching leftover
     # faces (captures pose modes instead of a single frontal-dominated centroid)
     person_matching_max_prototypes: int = 3
+    # Supplement the quality-filtered matching prototypes with centroids from
+    # each person's frontal, three-quarter, and profile faces.
+    person_pose_prototypes_enabled: bool = True
+    person_pose_prototype_min_faces: int = Field(default=4, ge=1)
+    person_pose_prototype_sample_cap: int = Field(default=256, ge=8)
+    # Deterministic per-person sample used to build the k-means prototypes.
+    person_prototype_sample_cap: int = Field(default=64, ge=8)
     # clustering algorithm to use for person discovery
     # graph k-NN clustering settings (cosine similarity)
     cw_threshold: float = 0.62
