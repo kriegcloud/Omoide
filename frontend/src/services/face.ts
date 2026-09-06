@@ -12,3 +12,10 @@ export const getOrphanFaces = async (
   if (!response.ok) throw new Error("Failed to fetch orphan faces");
   return response.json();
 };
+
+export const getOrphanFaceCount = async (): Promise<number> => {
+  const response = await fetch(`${API}/api/faces/orphans/count`);
+  if (!response.ok) throw new Error("Failed to fetch orphan face count");
+  const data: { count: number } = await response.json();
+  return data.count;
+};

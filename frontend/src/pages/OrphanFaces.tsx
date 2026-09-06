@@ -222,7 +222,7 @@ export default function OrphanFacesPage() {
   }
 
   return (
-    <Container maxWidth="xl" sx={{ pt: 4, pb: 7 }}>
+    <Container id="unassigned-faces" maxWidth="xl" sx={{ pt: 4, pb: 7 }}>
       {/* The header and toolbar are now part of the page's main layout flow */}
       <Box sx={{ display: "flex", alignItems: "center", mb: 2, gap: 2 }}>
         <Typography variant="h4" sx={{ flexGrow: 1 }}>

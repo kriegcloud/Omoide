@@ -421,12 +421,17 @@ def list_active_tasks(session: Session = Depends(get_session)):
 )
 def list_recent_tasks(
     limit: int = 10,
+    task_type: str | None = None,
     session: Session = Depends(get_session),
 ):
     clamped_limit = min(50, max(1, limit))
+    query = select(ProcessingTask).where(
+        ProcessingTask.status.in_(("completed", "failed", "cancelled"))
+    )
+    if task_type is not None:
+        query = query.where(ProcessingTask.task_type == task_type)
     tasks = session.exec(
-        select(ProcessingTask)
-        .where(ProcessingTask.status.in_(("completed", "failed", "cancelled")))
+        query
         .order_by(
             func.coalesce(
                 ProcessingTask.finished_at,

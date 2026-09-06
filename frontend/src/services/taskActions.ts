@@ -7,8 +7,13 @@ export const getActiveTasks = async (): Promise<Task[]> => {
   return res.json();
 };
 
-export const getRecentTasks = async (limit = 10): Promise<Task[]> => {
-  const res = await fetch(`${API}/api/tasks/recent?limit=${limit}`);
+export const getRecentTasks = async (
+  limit = 10,
+  taskType?: TaskType
+): Promise<Task[]> => {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (taskType) params.set("task_type", taskType);
+  const res = await fetch(`${API}/api/tasks/recent?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to fetch recent tasks");
   return res.json();
 };

@@ -23,7 +23,7 @@ import {
   FormControlLabel,
   Switch,
 } from "@mui/material";
-import { Task, TaskFailure, TaskType } from "../types";
+import { TaskFailure, TaskType } from "../types";
 import {
   startTask as startTaskService,
   cancelTask as cancelTaskService,
@@ -46,18 +46,11 @@ import BubbleChartIcon from "@mui/icons-material/BubbleChart";
 import LabelIcon from "@mui/icons-material/Label";
 import BlurOnIcon from "@mui/icons-material/BlurOn";
 import CameraAltIcon from "@mui/icons-material/CameraAlt";
-
-// Friendly names for the raw current_step keys published by backend tasks.
-// Unknown steps fall back to the raw key.
-const STEP_LABELS: Record<string, string> = {
-  clustering_batches: "Preparing clustering batches",
-  clustering_batch: "Clustering faces",
-  clustering_unassigned: "Clustering faces",
-  merging_similar_persons: "Merging similar people",
-  matching_known_persons: "Matching faces to known people",
-  backfilling_face_quality: "Rating face quality",
-  backfilling_demographics: "Predicting gender and age",
-};
+import {
+  formatRelativeTime,
+  formatTaskDuration,
+  formatTaskStep,
+} from "../utils/taskFormat";
 
 type TaskLabels = Record<TaskType, string>;
 const TASK_LABELS: TaskLabels = {
@@ -82,26 +75,6 @@ const TASK_LABELS: TaskLabels = {
   batch_edit_media: "Batch Edit Media",
   generate_hashes: "Generate Hashes",
 };
-
-function formatTaskDuration(seconds?: number | null): string {
-  if (seconds == null || !Number.isFinite(seconds)) return "—";
-  if (seconds < 10) return `${seconds.toFixed(1)} s`;
-  if (seconds < 60) return `${Math.round(seconds)} s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainder = Math.round(seconds % 60);
-  return remainder ? `${minutes} min ${remainder} s` : `${minutes} min`;
-}
-
-function formatRelativeTime(task: Task): string {
-  const value = task.finished_at ?? task.started_at ?? task.created_at;
-  if (!value) return "—";
-  const elapsedSeconds = Math.max(0, (Date.now() - new Date(value).getTime()) / 1000);
-  if (!Number.isFinite(elapsedSeconds) || elapsedSeconds < 60) return "just now";
-  if (elapsedSeconds < 3600) return `${Math.floor(elapsedSeconds / 60)} min ago`;
-  if (elapsedSeconds < 86400) return `${Math.floor(elapsedSeconds / 3600)} h ago`;
-  if (elapsedSeconds < 172800) return "yesterday";
-  return `${Math.floor(elapsedSeconds / 86400)} d ago`;
-}
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -540,7 +513,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                     {t.status === "running" && (
                       <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
                         {t.current_step
-                          ? STEP_LABELS[t.current_step] ?? t.current_step
+                          ? formatTaskStep(t.current_step)
                           : showIndeterminate
                             ? "Working..."
                             : ""}

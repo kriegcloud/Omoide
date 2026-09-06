@@ -9,12 +9,13 @@ os.environ["XDG_CONFIG_HOME"] = _CONFIG_HOME.name
 
 from sqlmodel import Session, SQLModel, create_engine, select  # noqa: E402
 
+from app.api.face import get_orphan_count, router as face_router  # noqa: E402
 from app.api.tasks import (  # noqa: E402
     list_active_tasks,
     list_recent_tasks,
     router as tasks_router,
 )
-from app.models import ProcessingTask  # noqa: E402
+from app.models import Face, ProcessingTask  # noqa: E402
 from app.processors.duplicates import DuplicateProcessor  # noqa: E402
 from app.services.task_summary import (  # noqa: E402
     summarize_task,
@@ -144,9 +145,9 @@ class TaskFeedApiTests(unittest.TestCase):
         ]
 
         with Session(self.engine) as session:
-            recent_two = list_recent_tasks(2, session)
-            recent_one = list_recent_tasks(0, session)
-            recent_fifty = list_recent_tasks(500, session)
+            recent_two = list_recent_tasks(2, session=session)
+            recent_one = list_recent_tasks(0, session=session)
+            recent_fifty = list_recent_tasks(500, session=session)
         self.assertEqual(
             [row.id for row in recent_two],
             [tasks[-1].id, tasks[-2].id],
@@ -156,6 +157,30 @@ class TaskFeedApiTests(unittest.TestCase):
 
         paths = [route.path for route in tasks_router.routes]
         self.assertLess(paths.index("/recent"), paths.index("/{task_id}"))
+
+    def test_recent_filters_by_exact_task_type(self) -> None:
+        base = datetime(2026, 1, 1)
+        older_cluster = self.add_task(
+            task_type="cluster_persons",
+            finished_at=base + timedelta(minutes=1),
+        )
+        self.add_task(task_type="scan", finished_at=base + timedelta(minutes=3))
+        newer_cluster = self.add_task(
+            task_type="cluster_persons",
+            finished_at=base + timedelta(minutes=2),
+        )
+
+        with Session(self.engine) as session:
+            clusters = list_recent_tasks(
+                limit=10,
+                task_type="cluster_persons",
+                session=session,
+            )
+
+        self.assertEqual(
+            [row.id for row in clusters],
+            [newer_cluster.id, older_cluster.id],
+        )
 
     def test_active_includes_pending_after_running(self) -> None:
         base = datetime(2026, 1, 1)
@@ -174,6 +199,31 @@ class TaskFeedApiTests(unittest.TestCase):
             [(row.id, str(row.status)) for row in response],
             [(running.id, "running"), (pending.id, "pending")],
         )
+
+
+class FaceFeedApiTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.engine = create_engine("sqlite://")
+        SQLModel.metadata.create_all(self.engine, tables=[Face.__table__])
+
+    def tearDown(self) -> None:
+        self.engine.dispose()
+
+    def test_orphan_count_counts_only_unassigned_faces(self) -> None:
+        with Session(self.engine) as session:
+            session.add_all(
+                [
+                    Face(media_id=1, person_id=None, bbox=[0, 0, 1, 1]),
+                    Face(media_id=2, person_id=None, bbox=[0, 0, 1, 1]),
+                    Face(media_id=3, person_id=9, bbox=[0, 0, 1, 1]),
+                ]
+            )
+            session.commit()
+            response = get_orphan_count(session)
+
+        self.assertEqual(response, {"count": 2})
+        paths = [route.path for route in face_router.routes]
+        self.assertLess(paths.index("/orphans/count"), paths.index("/orphans"))
 
 
 class DuplicateTaskStatusTests(unittest.TestCase):
