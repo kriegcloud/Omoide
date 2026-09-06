@@ -303,6 +303,7 @@ export type TaskType =
   | "geocode_places"
   | "export_dataset"
   | "batch_edit_media"
+  | "dataset_frame_mining"
   | "dataset_caption_generation";
 export type TaskStatus =
   | "pending"
@@ -397,6 +398,11 @@ export interface Task {
   merge_processed?: number;
   merge_pending?: number;
   result?: Record<string, unknown> | null;
+  summary?: string | null;
+  duration_seconds?: number | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  created_at?: string;
 }
 
 export type CropFraming = "closeup" | "portrait" | "half_body" | "full_body";

@@ -157,6 +157,7 @@ def clean_missing_files(task_id: str) -> None:
 
         task.status = "completed"
         task.finished_at = datetime.now(timezone.utc)
+        task.result = {**(task.result or {}), "removed": auto_deleted}
         session.commit()
         logger.info(
             "Missing files cleanup processed=%d flagged=%d recovered=%d auto_deleted=%d",

@@ -1402,6 +1402,7 @@ def _match_remaining_single_faces(
 
 def run_person_clustering(task_id: str) -> None:
     cluster_chunk_size = settings.face_recognition.cluster_batch_size
+    total_new_persons = 0
     with Session(db.engine) as session:
         task = session.get(ProcessingTask, task_id)
         if not task:
@@ -1550,6 +1551,7 @@ def run_person_clustering(task_id: str) -> None:
                             update_progress=False,
                         )
                         total_created += created_count
+                        total_new_persons += created_count
                         total_clusters += len(clusters)
                         if created_person_ids:
                             new_person_candidates.extend(created_person_ids)
@@ -1600,6 +1602,7 @@ def run_person_clustering(task_id: str) -> None:
                     )
                     if created_person_ids:
                         new_person_candidates.extend(created_person_ids)
+                    total_new_persons += created_count
                     logger.info(
                         "Cluster batch produced %d new persons out of %d candidate"
                         " clusters",
@@ -1652,7 +1655,7 @@ def run_person_clustering(task_id: str) -> None:
             "Starting merge of similar persons (%d candidates)",
             len(new_person_candidates),
         )
-        merge_similar_persons(task_id, new_person_candidates)
+        merged_persons = merge_similar_persons(task_id, new_person_candidates)
         if is_cancelled():
             logger.info("Clustering task %s cancelled before leftover matching.", task_id)
             finalize_cancelled()
@@ -1681,5 +1684,11 @@ def run_person_clustering(task_id: str) -> None:
         with Session(db.engine) as session:
             task = session.get(ProcessingTask, task_id)
             logger.info("FINISHED CLUSTERING!")
+            task.result = {
+                **(task.result or {}),
+                "new_persons": total_new_persons,
+                "matched": matched_leftovers,
+                "merged": merged_persons,
+            }
             complete_task(session, task)
     rebuild_person_relationships()
