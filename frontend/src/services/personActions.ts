@@ -1,6 +1,9 @@
 import { API } from "../config";
 import {
+  MergeCandidatesPage,
   Person,
+  PersonPairDecision,
+  PersonPairDecisionCreate,
   PersonRelationshipGraph,
   SocialLink,
   SocialLinkSuggestion,
@@ -183,6 +186,41 @@ export const unhidePersonsBulk = async (
   });
   if (!res.ok) throw new Error("Failed to unhide selected people");
   return res.json();
+};
+
+export const getMergeCandidates = async (
+  minSimilarity = 80,
+  limit = 50,
+  signal?: AbortSignal,
+): Promise<MergeCandidatesPage> => {
+  const params = new URLSearchParams({
+    min_similarity: minSimilarity.toString(),
+    limit: limit.toString(),
+  });
+  const res = await fetch(`${API}/api/persons/merge-candidates?${params}`, {
+    signal,
+  });
+  if (!res.ok) throw new Error("Failed to load merge candidates");
+  return res.json();
+};
+
+export const createPairDecision = async (
+  data: PersonPairDecisionCreate,
+): Promise<PersonPairDecision> => {
+  const res = await fetch(`${API}/api/persons/pair-decisions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error("Failed to save pair decision");
+  return res.json();
+};
+
+export const deletePairDecision = async (id: number): Promise<void> => {
+  const res = await fetch(`${API}/api/persons/pair-decisions/${id}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("Failed to delete pair decision");
 };
 
 export const mergePersons = async (sourceId: number, targetId: number) => {

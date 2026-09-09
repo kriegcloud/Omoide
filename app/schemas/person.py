@@ -118,6 +118,30 @@ class PersonReadSimple(SQLModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class MergeCandidate(BaseModel):
+    person_a: PersonRead
+    person_b: PersonRead
+    similarity: float
+    shared_media: int
+
+
+class MergeCandidatesPage(BaseModel):
+    items: list[MergeCandidate]
+
+
+class PersonPairDecisionCreate(BaseModel):
+    person_a_id: int
+    person_b_id: int
+    decision: Literal["not_same"]
+
+
+class PersonPairDecisionRead(PersonPairDecisionCreate):
+    id: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class MergePersonsRequest(BaseModel):
     source_id: int
     target_id: int

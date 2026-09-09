@@ -18,6 +18,7 @@ from sqlalchemy import (
     tuple_,
     union_all,
 )
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, delete, distinct, select, text, update
 
@@ -29,6 +30,7 @@ from app.models import (
     Media,
     Person,
     PersonMediaLink,
+    PersonPairDecision,
     PersonRelationship,
     PersonSocialLink,
     PersonTagLink,
@@ -40,6 +42,8 @@ from app.schemas.person import (
     CursorPage,
     FaceRead,
     MediaCursorPage,
+    MergeCandidate,
+    MergeCandidatesPage,
     MergePersonsBulkRequest,
     MergePersonsRequest,
     MergePersonsResult,
@@ -54,6 +58,8 @@ from app.schemas.person import (
     PersonMediaBulkRequest,
     PersonMediaReassignRequest,
     PersonMediaReassignResponse,
+    PersonPairDecisionCreate,
+    PersonPairDecisionRead,
     PersonRead,
     PersonReadSimple,
     PersonUpdate,
@@ -83,6 +89,7 @@ from app.utils import (
 )
 
 router = APIRouter()
+merge_queue_router = APIRouter()
 
 
 def _require_person(person_id: int, session: Session) -> Person:
@@ -98,6 +105,133 @@ def _require_mutations_enabled() -> None:
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
+
+
+@merge_queue_router.get("/merge-candidates", response_model=MergeCandidatesPage)
+def get_merge_candidates(
+    min_similarity: float = Query(default=80.0, ge=-100.0, le=100.0),
+    limit: int = Query(default=50, ge=1, le=200),
+    session: Session = Depends(get_session),
+):
+    # Stored person embeddings are unit vectors. Use the same L2-to-cosine
+    # percentage (and rounding) as get_similarities, without a per-person KNN
+    # cutoff that could hide pairs after decisions/hidden people are filtered.
+    rows = session.exec(
+        text(
+            """
+            WITH pair_distances AS (
+                SELECT a.person_id AS person_a_id, b.person_id AS person_b_id,
+                       MIN(vec_distance_L2(a.embedding, b.embedding)) AS distance
+                FROM person_embeddings AS a
+                JOIN person_embeddings AS b ON a.person_id < b.person_id
+                JOIN person AS pa ON pa.id = a.person_id
+                JOIN person AS pb ON pb.id = b.person_id
+                WHERE pa.hidden_at IS NULL AND pb.hidden_at IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM person_pair_decision AS decision
+                      WHERE decision.person_a_id = a.person_id
+                        AND decision.person_b_id = b.person_id
+                  )
+                GROUP BY a.person_id, b.person_id
+            ), scored AS (
+                SELECT person_a_id, person_b_id,
+                       ROUND((1.0 - distance * distance / 2.0) * 100, 2) AS similarity
+                FROM pair_distances
+            )
+            SELECT person_a_id, person_b_id, similarity FROM scored
+            WHERE similarity >= :min_similarity
+            ORDER BY similarity DESC, person_a_id, person_b_id
+            LIMIT :limit
+            """
+        ).bindparams(min_similarity=min_similarity, limit=limit)
+    ).all()
+    if not rows:
+        return MergeCandidatesPage(items=[])
+
+    person_ids = {pid for row in rows for pid in (row.person_a_id, row.person_b_id)}
+    people = {
+        person.id: PersonRead.model_validate(person)
+        for person in session.exec(select(Person).where(Person.id.in_(person_ids))).all()
+    }
+    # Count distinct shared media, including manual appearances and multiple
+    # faces/frames of the same person in one media item only once.
+    appearances = session.exec(
+        union_all(
+            select(Face.person_id, Face.media_id).where(Face.person_id.in_(person_ids)),
+            select(PersonMediaLink.person_id, PersonMediaLink.media_id).where(
+                PersonMediaLink.person_id.in_(person_ids)
+            ),
+        )
+    ).all()
+    media_by_person = {pid: set() for pid in person_ids}
+    for person_id, media_id in appearances:
+        media_by_person[person_id].add(media_id)
+    return MergeCandidatesPage(
+        items=[
+            MergeCandidate(
+                person_a=people[row.person_a_id],
+                person_b=people[row.person_b_id],
+                similarity=row.similarity,
+                shared_media=len(
+                    media_by_person[row.person_a_id] & media_by_person[row.person_b_id]
+                ),
+            )
+            for row in rows
+        ]
+    )
+
+
+@merge_queue_router.get("/pair-decisions", response_model=list[PersonPairDecisionRead])
+def get_pair_decisions(session: Session = Depends(get_session)):
+    return session.exec(
+        select(PersonPairDecision).order_by(
+            PersonPairDecision.created_at.desc(), PersonPairDecision.id.desc()
+        )
+    ).all()
+
+
+@merge_queue_router.post("/pair-decisions", response_model=PersonPairDecisionRead)
+def create_pair_decision(
+    body: PersonPairDecisionCreate,
+    session: Session = Depends(get_session),
+):
+    _require_mutations_enabled()
+    if body.person_a_id == body.person_b_id:
+        raise HTTPException(status_code=400, detail="Person IDs must differ")
+    person_a_id, person_b_id = sorted((body.person_a_id, body.person_b_id))
+    _require_person(person_a_id, session)
+    _require_person(person_b_id, session)
+    # The unique pair makes retries (including reversed IDs) atomic and keeps
+    # the original row ID and creation time for the future undo list.
+    statement = insert(PersonPairDecision).values(
+        person_a_id=person_a_id,
+        person_b_id=person_b_id,
+        decision=body.decision,
+    )
+    safe_execute(
+        session,
+        statement.on_conflict_do_update(
+            index_elements=["person_a_id", "person_b_id"],
+            set_={"decision": statement.excluded.decision},
+        ),
+    )
+    safe_commit(session)
+    return session.exec(
+        select(PersonPairDecision).where(
+            PersonPairDecision.person_a_id == person_a_id,
+            PersonPairDecision.person_b_id == person_b_id,
+        )
+    ).one()
+
+
+@merge_queue_router.delete("/pair-decisions/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_pair_decision(id: int, session: Session = Depends(get_session)):
+    _require_mutations_enabled()
+    decision = session.get(PersonPairDecision, id)
+    if decision is None:
+        raise HTTPException(status_code=404, detail="Pair decision not found")
+    session.delete(decision)
+    safe_commit(session)
 
 
 # Timeline events

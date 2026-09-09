@@ -151,6 +151,36 @@ export interface Person {
   social_links: SocialLink[];
 }
 
+export interface MergeCandidatePerson {
+  id: number;
+  name: string | null;
+  profile_face: ProfileFace | null;
+  appearance_count: number | null;
+}
+
+export interface MergeCandidate {
+  person_a: MergeCandidatePerson;
+  person_b: MergeCandidatePerson;
+  /** Cosine similarity percentage, matching getSimilarPersons. */
+  similarity: number;
+  shared_media: number;
+}
+
+export interface MergeCandidatesPage {
+  items: MergeCandidate[];
+}
+
+export interface PersonPairDecisionCreate {
+  person_a_id: number;
+  person_b_id: number;
+  decision: "not_same";
+}
+
+export interface PersonPairDecision extends PersonPairDecisionCreate {
+  id: number;
+  created_at: string;
+}
+
 export interface PersonIndex {
   id: number;
   name?: string;

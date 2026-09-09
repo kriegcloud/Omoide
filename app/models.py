@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import sqlalchemy as sa
 from sqlalchemy import Column
@@ -118,6 +118,21 @@ class PersonMediaLink(SQLModel, table=True):
 
     person: "Person" = Relationship(back_populates="media_links")
     media: "Media" = Relationship(back_populates="person_links")
+
+
+class PersonPairDecision(SQLModel, table=True):
+    __tablename__ = "person_pair_decision"
+    __table_args__ = (
+        sa.UniqueConstraint("person_a_id", "person_b_id", name="uq_person_pair_decision"),
+        sa.CheckConstraint("person_a_id < person_b_id", name="ck_person_pair_decision_order"),
+        sa.CheckConstraint("decision = 'not_same'", name="ck_person_pair_decision_value"),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    person_a_id: int = Field(foreign_key="person.id", ondelete="CASCADE")
+    person_b_id: int = Field(foreign_key="person.id", ondelete="CASCADE", index=True)
+    decision: Literal["not_same"] = Field(sa_column=Column(sa.String(), nullable=False))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class PersonSocialLink(SQLModel, table=True):
