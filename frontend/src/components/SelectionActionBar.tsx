@@ -1,3 +1,4 @@
+import { useUndo } from "../context/UndoContext";
 import React, { useState } from "react";
 import {
   Button,
@@ -25,7 +26,7 @@ import { AddToAlbumDialog } from "./AddToAlbumDialog";
 import AssignMediaToPersonDialog from "./AssignMediaToPersonDialog";
 import FolderPickerDialog from "./FolderPickerDialog";
 import { batchEditMedia, bulkMoveMedia } from "../services/mediaActions";
-import { detachMediaFromPersonBulk } from "../services/personActions";
+import { attachMediaToPersonBulk, detachMediaFromPersonBulk } from "../services/personActions";
 import { useListStore } from "../stores/useListStore";
 import AddToDatasetDialog from "./AddToDatasetDialog";
 import { useLastEditStore } from "../stores/useLastEditStore";
@@ -33,7 +34,8 @@ import { describeEditOps } from "../utils/editorOps";
 import RepairDialog from "./RepairDialog";
 
 export const SelectionActionBar: React.FC = () => {
-  const { selectedIds, clear } = useSelection();
+  const { selectedIds, clear, loadedCount, hasMore } = useSelection();
+  const { push, refreshVisible } = useUndo();
   const { removeItems } = useListStore();
   const lastEditOps = useLastEditStore((state) => state.ops);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -78,7 +80,8 @@ export const SelectionActionBar: React.FC = () => {
             maxWidth: "calc(100vw - 32px)",
           }}
         >
-          <Chip label={`${count} selected`} size="small" color="primary" />
+          <Chip label={`${count} selected · ${loadedCount} loaded`} size="small" color="primary" />
+          {hasMore && <Chip label="Load more to select the rest" size="small" variant="outlined" />}
           <Button
             size="small"
             startIcon={<DatasetIcon fontSize="small" />}
@@ -203,6 +206,15 @@ export const SelectionActionBar: React.FC = () => {
                       removeItems(key, result.detached_ids ?? []);
                     }
                   }
+                  const detachedIds = [...(result.detached_ids ?? [])];
+                  if (detachedIds.length) push({
+                    label: `Detached ${detachedIds.length} item(s) from this person`,
+                    undo: async () => {
+                      const inverse = await attachMediaToPersonBulk(personId, detachedIds);
+                      await refreshVisible();
+                      if (inverse.skipped_ids.length) throw new Error(`${inverse.skipped_ids.length} item(s) could not be reattached`);
+                    },
+                  });
                   clear();
                 } catch (error) {
                   setSnackbar({

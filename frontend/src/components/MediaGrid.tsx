@@ -1,3 +1,4 @@
+import { useListStore } from "../stores/useListStore";
 import React, { useRef } from "react";
 import { Box } from "@mui/material";
 import { MediaPreview } from "../types";
@@ -15,9 +16,13 @@ export const MediaGrid: React.FC<MediaGridProps> = ({
   mediaItems,
   listKey,
 }) => {
+  const hasMore = useListStore((state) => state.lists[listKey]?.hasMore ?? false);
   const gridRef = useRef<HTMLDivElement>(null);
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
   const { marqueeRect, onItemClick } = useGridSelection<number>({
+    listKey,
+    loadedCount: mediaItems.length,
+    hasMore,
     containerRef: gridRef,
     itemSelector: "[data-selectable-id]",
     getId: (element) => Number(element.dataset.selectableId),

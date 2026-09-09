@@ -1,3 +1,4 @@
+import { useUndoRefresh } from "../context/UndoContext";
 import React, { useEffect, useRef, useState } from "react";
 import Masonry from "react-masonry-css";
 import {
@@ -31,9 +32,14 @@ export default function HighlightsPage() {
   const [items, setItems] = useState<Media[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  useUndoRefresh(`highlights:${year}`, async () => {
+    if (year !== null) setItems(await getHighlights(year));
+  });
   const gridRef = useRef<HTMLDivElement>(null);
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
   const { marqueeRect, onItemClick } = useGridSelection<number>({
+    listKey: `highlights:${year}`,
+    loadedCount: items.length,
     containerRef: gridRef,
     itemSelector: "[data-media-card]",
     getId: (element) => Number(element.dataset.selectableId),

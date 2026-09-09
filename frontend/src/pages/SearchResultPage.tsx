@@ -1,3 +1,6 @@
+import { useUndoRefresh } from "../context/UndoContext";
+import { refreshCachedList } from "../stores/useListStore";
+import { getMedia } from "../services/media";
 import {
   Alert,
   Box,
@@ -104,27 +107,17 @@ export default function SearchResultsPage() {
   const { fetchInitial, loadMore, removeItem } = useListStore();
 
   // ---- local state for the media/combined category -----------------------
+  const [refreshedImageItems, setRefreshedImageItems] = useState<MediaPreview[] | null>(null);
   const [mediaState, setMediaState] = useState<MediaSearchState>(emptyMediaState);
   const [orderBy, setOrderBy] = useState<"relevance" | "date">("relevance");
   const [retryTick, setRetryTick] = useState(0);
   const activeQueryRef = useRef<string>("");
   const resultsGridRef = useRef<HTMLDivElement>(null);
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
-  const { marqueeRect, onItemClick } = useGridSelection<number>({
-    containerRef: resultsGridRef,
-    itemSelector: "[data-media-card]",
-    getId: (element) => Number(element.dataset.selectableId),
-    disabled: category !== "media",
-    selecting: isSelecting,
-    allowPlainDragOnItems: false,
-    onEnterSelection: beginSelecting,
-    onExitSelection: clear,
-    selectedIds,
-    onSelectionChange: setSelected,
-  });
 
   // Initial load for the combined (media) category
   useEffect(() => {
+    setRefreshedImageItems(null);
     if (category !== "media" || isImageSearch) return;
     if (!query) {
       setMediaState(emptyMediaState);
@@ -219,7 +212,7 @@ export default function SearchResultsPage() {
   const rawMediaItems: MediaPreview[] =
     category === "media"
       ? isImageSearch
-        ? (preloadedState?.items?.filter(isMedia) ?? [])
+        ? (refreshedImageItems ?? preloadedState?.items?.filter(isMedia) ?? [])
         : mediaState.media
       : [];
 
@@ -229,6 +222,34 @@ export default function SearchResultsPage() {
     if (mediaFilter === "video") return rawMediaItems.filter(isVideoMedia);
     return rawMediaItems.filter((i) => !isVideoMedia(i));
   }, [mediaFilter, rawMediaItems]);
+
+  const { marqueeRect, onItemClick } = useGridSelection<number>({
+    listKey: `search:${category}:${query}:${orderBy}:${mediaFilter}:${isImageSearch ? location.key : ""}`,
+    loadedCount: filteredMediaItems.length,
+    hasMore,
+    containerRef: resultsGridRef,
+    itemSelector: "[data-media-card]",
+    getId: (element) => Number(element.dataset.selectableId),
+    disabled: category !== "media",
+    selecting: isSelecting,
+    allowPlainDragOnItems: false,
+    onEnterSelection: beginSelecting,
+    onExitSelection: clear,
+    selectedIds,
+    onSelectionChange: setSelected,
+  });
+
+  useUndoRefresh(`search:${category}:${query}`, async () => {
+    if (category !== "media") { await refreshCachedList(listKey); return; }
+    if (isImageSearch) {
+      const details = await Promise.all(rawMediaItems.map((media) => getMedia(String(media.id))));
+      setRefreshedImageItems(details.map((detail, index) => ({ ...rawMediaItems[index], ...detail.media, thumbnail_path: detail.media.thumbnail_path ?? rawMediaItems[index].thumbnail_path })));
+      return;
+    }
+    const result = await searchCombined(query, ITEMS_PER_PAGE, undefined, orderBy);
+    setMediaState({ persons: result.persons ?? [], media: result.media ?? [],
+      nextCursor: result.next_cursor, hasMore: result.next_cursor !== null, isLoading: false, error: null });
+  });
 
   const navigationContext = useMemo(
     () =>

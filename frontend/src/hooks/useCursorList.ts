@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useUndoRefresh } from "../context/UndoContext";
+import { useCallback, useEffect, useRef, useState, useId } from "react";
 import { useInView } from "react-intersection-observer";
 
 export interface CursorListPage<T> {
@@ -41,7 +42,7 @@ export function useCursorList<T extends { id: number }>(
   const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
 
   const fetchPage = useCallback(
-    async (cursor: string | null, append: boolean) => {
+    async (cursor: string | null, append: boolean, throwOnError = false) => {
       if (!append) {
         generationRef.current += 1;
         nextCursorRef.current = null;
@@ -62,6 +63,7 @@ export function useCursorList<T extends { id: number }>(
       } catch (e) {
         if (generation !== generationRef.current) return;
         setError(e instanceof Error ? e.message : "Failed to load media");
+        if (throwOnError) throw e;
       } finally {
         if (generation === generationRef.current) {
           inFlightRef.current = false;
@@ -118,6 +120,9 @@ export function useCursorList<T extends { id: number }>(
   );
 
   const refetch = useCallback(() => fetchPage(null, false), [fetchPage]);
+
+  const refreshId = useId();
+  useUndoRefresh(`cursor-list:${refreshId}`, () => fetchPage(null, false, true));
 
   return {
     items,

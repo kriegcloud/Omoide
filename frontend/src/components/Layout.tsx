@@ -7,6 +7,9 @@ import { BinaryNavigationControls } from "./BinaryNavigationControls";
 import ProfileSetupDialog from "./ProfileSetupDialog";
 import { SelectionActionBar } from "./SelectionActionBar";
 
+import { UndoSnackbar } from "./UndoSnackbar";
+import { SelectionRouteSync } from "../context/SelectionContext";
+
 export function Layout() {
   return (
     <Box sx={{ display: "flex", minHeight: "100vh" }}>
@@ -20,7 +23,9 @@ export function Layout() {
         </Box>
       </Box>
       <ProfileSetupDialog />
+      <SelectionRouteSync />
       <SelectionActionBar />
+      <UndoSnackbar />
     </Box>
   );
 }

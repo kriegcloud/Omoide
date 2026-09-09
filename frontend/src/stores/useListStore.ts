@@ -1,6 +1,19 @@
 import { create } from "zustand";
 import { CursorPage } from "../types";
 
+// Keep the initial fetcher so a mounted card can refresh its owning cached list.
+const initialFetchers = new Map<string, () => Promise<CursorPage<unknown>>>();
+const generations = new Map<string, number>();
+
+export async function refreshCachedList(listKey: string) {
+  const fetcher = initialFetchers.get(listKey);
+  if (!fetcher) return; // Some cards belong to a page-owned cursor list.
+  useListStore.getState().clearList(listKey);
+  await useListStore.getState().fetchInitial(listKey, fetcher);
+  const error = useListStore.getState().lists[listKey]?.error;
+  if (error) throw new Error(`List refresh failed: ${error}`);
+}
+
 // A generic state shape for any paginated list
 export interface ListState<T> {
   items: T[];
@@ -49,6 +62,8 @@ export const useListStore = create<ListStoreState>((set, get) => ({
     listKey: string,
     fetcher: () => Promise<CursorPage<T>>
   ) => {
+    initialFetchers.set(listKey, fetcher);
+    const generation = generations.get(listKey) ?? 0;
     const existingList = get().lists[listKey];
     // Do not fetch if the list is already loading or if it already has content.
     // A new search will have a new listKey, so this check will allow the fetch.
@@ -68,6 +83,7 @@ export const useListStore = create<ListStoreState>((set, get) => ({
 
     try {
       const response = await fetcher();
+      if ((generations.get(listKey) ?? 0) !== generation) return;
       set((state) => ({
         lists: {
           ...state.lists,
@@ -81,6 +97,7 @@ export const useListStore = create<ListStoreState>((set, get) => ({
         },
       }));
     } catch (error) {
+      if ((generations.get(listKey) ?? 0) !== generation) return;
       console.error(`Failed to fetch initial data for ${listKey}:`, error);
       set((state) => ({
         lists: {
@@ -100,6 +117,7 @@ export const useListStore = create<ListStoreState>((set, get) => ({
     listKey: string,
     fetcher: (cursor: string | null) => Promise<CursorPage<T>>
   ) => {
+    const generation = generations.get(listKey) ?? 0;
     const currentList = get().lists[listKey] as ListState<T> | undefined;
     if (!currentList || currentList.isLoading || !currentList.hasMore) return;
 
@@ -109,6 +127,7 @@ export const useListStore = create<ListStoreState>((set, get) => ({
 
     try {
       const response = await fetcher(currentList.nextCursor);
+      if ((generations.get(listKey) ?? 0) !== generation) return;
       // Merge from the latest state, not the pre-await snapshot: items removed
       // (or lists cleared) while the page was in flight must stay removed.
       set((state) => {
@@ -129,6 +148,7 @@ export const useListStore = create<ListStoreState>((set, get) => ({
         };
       });
     } catch (error) {
+      if ((generations.get(listKey) ?? 0) !== generation) return;
       console.error(`Failed to load more data for ${listKey}:`, error);
       set((state) => {
         const latest = state.lists[listKey];
@@ -193,6 +213,7 @@ export const useListStore = create<ListStoreState>((set, get) => ({
     });
   },
   clearList: (listKey: string) => {
+    generations.set(listKey, (generations.get(listKey) ?? 0) + 1);
     set((state) => {
       const newLists = { ...state.lists };
       delete newLists[listKey];
@@ -206,6 +227,7 @@ export const useListStore = create<ListStoreState>((set, get) => ({
       const newLists: Record<string, ListState<any>> = {};
       for (const [key, value] of Object.entries(state.lists)) {
         if (!key.startsWith(prefix)) newLists[key] = value;
+        else generations.set(key, (generations.get(key) ?? 0) + 1);
       }
       return { lists: newLists };
     });

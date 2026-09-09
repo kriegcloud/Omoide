@@ -1,3 +1,5 @@
+import { useUndo, useUndoRefresh } from "../context/UndoContext";
+import { refreshCachedList } from "../stores/useListStore";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import {
@@ -62,6 +64,8 @@ export default function PeopleGrid({
   onGenderChange,
 }: PeopleGridProps) {
   const navigate = useNavigate();
+  const { push, refreshVisible } = useUndo();
+  useUndoRefresh(`cache:${listKey}`, () => refreshCachedList(listKey));
   const { ref: loaderRef, inView } = useInView({ rootMargin: "200px" });
   const fetchPeople = useCallback(
     (cursor?: string | null) => getPeople(cursor ?? undefined, hidden, gender),
@@ -163,12 +167,21 @@ export default function PeopleGrid({
       const result = hidden
         ? await unhidePersonsBulk(ids)
         : await hidePersonsBulk(ids);
-      const changedIds = hidden ? result.unhidden_ids : result.hidden_ids;
+      const changedIds = [...("unhidden_ids" in result ? result.unhidden_ids : result.hidden_ids)];
       removeItems(listKey, changedIds);
       // The hidden/visible counterpart and any gender-filtered variant now
       // hold stale membership; drop them so they refetch on their next visit.
       clearPeopleGrids([listKey]);
       updateSelectionAfterRemoval(changedIds);
+      if (changedIds.length) push({
+        label: `${hidden ? "Unhidden" : "Hidden"} ${changedIds.length} people`,
+        undo: async () => {
+          const inverse = hidden ? await hidePersonsBulk(changedIds) : await unhidePersonsBulk(changedIds);
+          clearPeopleGrids();
+          await refreshVisible();
+          if (inverse.skipped_ids.length) throw new Error(`${inverse.skipped_ids.length} people could not be restored`);
+        },
+      });
       const action = hidden ? "Unhidden" : "Hidden";
       const parts = [
         `${action} ${changedIds.length} person${changedIds.length === 1 ? "" : "s"}.`,
@@ -362,9 +375,10 @@ export default function PeopleGrid({
           )}
           {selectionMode && (
             <Typography variant="body2" color="text.secondary">
-              {selectedCount} selected
+              {selectedCount} selected · {people.length} loaded
             </Typography>
           )}
+          {selectionMode && hasMore && <Chip size="small" label="Load more to select the rest" />}
           <Button variant="outlined" size="small" onClick={toggleMode}>
             {selectionMode ? "Cancel Selection" : "Select People"}
           </Button>

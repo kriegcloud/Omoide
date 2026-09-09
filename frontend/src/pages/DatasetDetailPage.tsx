@@ -1,3 +1,4 @@
+import { useUndoRefresh } from "../context/UndoContext";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import {
@@ -179,6 +180,9 @@ export default function DatasetDetailPage() {
   const poseTaskVersion = useTaskCompletionVersion(["pose_backfill"]);
   const frameMiningTaskVersion = useTaskCompletionVersion(["dataset_frame_mining"]);
   const { marqueeRect, onItemClick } = useGridSelection<number>({
+    listKey: `dataset:${datasetId}:${sort}`,
+    loadedCount: items.length,
+    hasMore: nextCursor !== null,
     containerRef: gridRef,
     itemSelector: "[data-media-card]",
     getId: (element) => Number(element.dataset.selectableId),
@@ -188,6 +192,13 @@ export default function DatasetDetailPage() {
     onExitSelection: selection.clear,
     selectedIds: selection.selectedIds,
     onSelectionChange: selection.setSelected,
+  });
+
+  useUndoRefresh(`dataset:${datasetId}`, async () => {
+    const [nextDataset, page] = await Promise.all([getDataset(datasetId), getDatasetItems(datasetId, null, sort)]);
+    setDataset(nextDataset);
+    setItems(page.items);
+    setNextCursor(page.next_cursor ?? null);
   });
 
   // The analysis is the expensive, optional part of the page: it runs after

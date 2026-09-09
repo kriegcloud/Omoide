@@ -1,3 +1,4 @@
+import { useUndo } from "../context/UndoContext";
 import { useEffect, useState } from "react";
 import {
   Alert,
@@ -19,6 +20,7 @@ import { Person } from "../types";
 import { encodeFilePath } from "../urlUtils";
 import {
   attachMediaToPersonBulk,
+  detachMediaFromPersonBulk,
   reassignMediaToPerson,
   searchPersonsByName,
 } from "../services/personActions";
@@ -38,6 +40,7 @@ export default function AssignMediaToPersonDialog({
   onClose,
   onAssigned,
 }: AssignMediaToPersonDialogProps) {
+  const { push, refreshVisible } = useUndo();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Person[]>([]);
   const [searching, setSearching] = useState(false);
@@ -87,6 +90,15 @@ export default function AssignMediaToPersonDialog({
       } else {
         const result = await attachMediaToPersonBulk(person.id, mediaIds);
         skippedCount = result.skipped_ids.length;
+        const addedIds = [...(result.added_ids ?? [])];
+        if (addedIds.length) push({
+          label: `Assigned ${addedIds.length} item(s) to ${person.name ?? "person"}`,
+          undo: async () => {
+            const inverse = await detachMediaFromPersonBulk(person.id, addedIds);
+            await refreshVisible();
+            if (inverse.skipped_ids.length) throw new Error(`${inverse.skipped_ids.length} item(s) could not be detached`);
+          },
+        });
       }
       onAssigned(person, skippedCount);
       onClose();

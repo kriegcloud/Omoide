@@ -47,6 +47,7 @@ export default function FaceGroupCard({
     <SelectableTileFrame
       id={faces[0].id}
       data-selection-group
+      keyboardReview
       selected={allSelected}
       indeterminate={someSelected}
       selecting={selecting}

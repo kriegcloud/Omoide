@@ -37,17 +37,6 @@ export default function TagDetailPage() {
   const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
   const mediaGridRef = useRef<HTMLDivElement>(null);
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
-  const { marqueeRect, onItemClick } = useGridSelection<number>({
-    containerRef: mediaGridRef,
-    itemSelector: "[data-selectable-id]",
-    getId: (element) => Number(element.dataset.selectableId),
-    selecting: isSelecting,
-    allowPlainDragOnItems: false,
-    onEnterSelection: beginSelecting,
-    onExitSelection: clear,
-    selectedIds,
-    onSelectionChange: setSelected,
-  });
 
   useEffect(() => {
     if (!id) return;
@@ -80,6 +69,21 @@ export default function TagDetailPage() {
   const isLoading = listState?.isLoading ?? defaultListState.isLoading;
   const listError = listState?.error ?? defaultListState.error;
   const { fetchInitial, loadMore, clearList } = useListStore();
+
+  const { marqueeRect, onItemClick } = useGridSelection<number>({
+    listKey,
+    loadedCount: mediaItems.length,
+    hasMore,
+    containerRef: mediaGridRef,
+    itemSelector: "[data-selectable-id]",
+    getId: (element) => Number(element.dataset.selectableId),
+    selecting: isSelecting,
+    allowPlainDragOnItems: false,
+    onEnterSelection: beginSelecting,
+    onExitSelection: clear,
+    selectedIds,
+    onSelectionChange: setSelected,
+  });
 
   useEffect(() => {
     if (!tagName || !listKey) return;

@@ -1,3 +1,5 @@
+import { useUndoRefresh } from "../context/UndoContext";
+import { refreshCachedList } from "../stores/useListStore";
 import React, { useState, useEffect, useRef } from "react";
 import { Box, CircularProgress, Autocomplete, TextField } from "@mui/material";
 import Masonry from "react-masonry-css";
@@ -43,7 +45,18 @@ export default function MediaAppearances({
   const [tagQuery, setTagQuery] = useState("");
   const gridRef = useRef<HTMLDivElement>(null);
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
+
+  const { items, hasMore, isLoading } = useListStore(
+    (state) => state.lists[mediaListKey] || defaultListState
+  );
+  const { fetchInitial, loadMore } = useListStore();
+  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
+
+  useUndoRefresh(`cache:${mediaListKey}`, () => refreshCachedList(mediaListKey));
   const { marqueeRect, onItemClick } = useGridSelection<number>({
+    listKey: mediaListKey,
+    loadedCount: items.length,
+    hasMore,
     containerRef: gridRef,
     itemSelector: "[data-selectable-id]",
     getId: (element) => Number(element.dataset.selectableId),
@@ -54,12 +67,6 @@ export default function MediaAppearances({
     selectedIds,
     onSelectionChange: setSelected,
   });
-
-  const { items, hasMore, isLoading } = useListStore(
-    (state) => state.lists[mediaListKey] || defaultListState
-  );
-  const { fetchInitial, loadMore } = useListStore();
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
 
   useEffect(() => {
     getPeople()
