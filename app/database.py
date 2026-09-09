@@ -330,20 +330,26 @@ def ensure_vec_tables():
 
 
 def safe_commit(session, retries=5, delay=0.5):
-    for i in range(retries):
-        try:
-            session.commit()
-            return
-        except OperationalError as e:
-            logger.error("OPERATION ERROR: %s", str(e))
-            if "locked" in str(e):
-                session.rollback()
-                if i < retries - 1:
-                    time.sleep(delay * (2**i))
-                    continue
-            session.rollback()
-            raise
-    raise RuntimeError("Failed to commit due to database lock.")
+    """Commit the session, or roll back and raise.
+
+    SQLite already waits up to the connection ``timeout`` for a write lock, so a
+    "database is locked" error here means another writer held the lock for the
+    whole wait. A rollback discards every pending change, so retrying the commit
+    afterwards would commit nothing while reporting success; raise instead so
+    callers (and API clients) see the failure. ``retries``/``delay`` are kept for
+    signature compatibility.
+    """
+    del retries, delay
+    try:
+        session.commit()
+    except OperationalError as e:
+        logger.error("OPERATION ERROR: %s", str(e))
+        session.rollback()
+        if "locked" in str(e):
+            raise RuntimeError(
+                "Failed to commit due to database lock; changes were rolled back."
+            ) from e
+        raise
 
 
 def safe_execute(session: Session, query, retries=5, delay=0.5) -> ScalarResult:

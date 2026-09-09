@@ -427,6 +427,10 @@ def _run_media_processing(task_id: str, *, clustering_chained: bool = False) -> 
                     task.processed += 1
                     batch_dirty = True
                     session.add(task)
+                    # Commit per item so the SQLite write lock is held for one
+                    # item's work, not a whole batch; other writers time out at
+                    # 30 s otherwise.
+                    safe_commit(session)
                     set_task_progress(task_id, current_step="idle")
 
                 batch_index += 1
@@ -596,6 +600,10 @@ def run_single_processor(
                     task.processed += 1
                     batch_dirty = True
                     session.add(task)
+                    # Commit per item so the SQLite write lock is held for one
+                    # item's work, not a whole batch; other writers time out at
+                    # 30 s otherwise.
+                    safe_commit(session)
                     set_task_progress(task_id, current_step="idle")
 
                 if batch_dirty:
