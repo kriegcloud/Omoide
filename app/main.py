@@ -105,6 +105,7 @@ from app.api import (
     tasks,
     untagged,
 )
+from app.api.person import merge_queue_router
 from app.api.processors import router as proc_router
 from app.config import get_clip_bundle, get_os_app_config_dir, settings
 from app.image_limits import apply_pillow_limits
@@ -624,6 +625,7 @@ if _workstation_browser_hardening_enabled():
 
 app.include_router(proc_router, prefix="/api", tags=["processors"])
 app.include_router(media, prefix="/api/media", tags=["media"])
+app.include_router(merge_queue_router, prefix="/api/persons", tags=["person"])
 app.include_router(person, prefix="/api/person", tags=["person"])
 app.include_router(tasks, prefix="/api/tasks", tags=["tasks"])
 app.include_router(face, prefix="/api/faces", tags=["faces"])
