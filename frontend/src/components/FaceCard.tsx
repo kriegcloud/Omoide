@@ -27,6 +27,7 @@ interface FaceCardProps {
   selecting?: boolean;
   keyboardReview?: boolean;
   onSelectionClick?: (faceId: number, event: SelectionClickEvent) => boolean;
+  footer?: React.ReactNode;
 }
 
 function FaceCard({
@@ -37,6 +38,7 @@ function FaceCard({
   selecting = selected,
   keyboardReview = false,
   onSelectionClick,
+  footer,
 }: FaceCardProps) {
   const theme = useTheme();
   const navigate = useNavigate();
@@ -65,7 +67,8 @@ function FaceCard({
       onSelectionClick={onSelectionClick ?? (() => false)}
       onOpen={handleCardClick}
       aspectRatio={1}
-      sx={{ width: 140, height: 140, flexShrink: 0, cursor: "pointer", boxShadow: 2 }}
+      sx={{ width: 140, height: footer ? "auto" : 140, flexShrink: 0, cursor: "pointer", boxShadow: 2 }}
+      footer={footer}
       menu={!isProfile && onSetProfile && (
         <Tooltip title="Set as profile">
           <IconButton

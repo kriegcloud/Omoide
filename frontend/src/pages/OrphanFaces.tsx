@@ -19,8 +19,10 @@ import {
   Avatar,
   Alert,
   Snackbar,
+  ToggleButton,
+  ToggleButtonGroup,
 } from "@mui/material";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useInView } from "react-intersection-observer";
 import { useListStore, defaultListState } from "../stores/useListStore";
 import { getOrphanFaces } from "../services/face";
@@ -36,8 +38,50 @@ import { FaceGrid } from "../components/FaceGrid"; // Import our DUMB grid compo
 import ConfirmDialog from "../components/ConfirmDialog";
 import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
+import OrphanFaceSuggestions from "../components/OrphanFaceSuggestions";
 
 export default function OrphanFacesPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const view = searchParams.get("view") === "suggestions" ? "suggestions" : "all";
+  const rawMin = searchParams.get("min");
+  const parsedMin = rawMin?.trim() ? Number(rawMin) : NaN;
+  const minScore = Number.isFinite(parsedMin)
+    ? Math.round(Math.min(0.8, Math.max(0.4, parsedMin)) * 100) / 100
+    : 0.5;
+
+  return (
+    <>
+      <Container maxWidth="xl" sx={{ pt: 4 }}>
+        <ToggleButtonGroup
+          exclusive
+          value={view}
+          aria-label="Unassigned faces view"
+          onChange={(_, nextView: string | null) => {
+            if (!nextView) return;
+            const next = new URLSearchParams(searchParams);
+            next.set("view", nextView);
+            setSearchParams(next);
+          }}
+        >
+          <ToggleButton value="all">All</ToggleButton>
+          <ToggleButton value="suggestions">Suggestions</ToggleButton>
+        </ToggleButtonGroup>
+      </Container>
+      {view === "suggestions" ? (
+        <OrphanFaceSuggestions
+          minScore={minScore}
+          onMinScoreChange={(value) => {
+            const next = new URLSearchParams(searchParams);
+            next.set("min", value.toFixed(2));
+            setSearchParams(next);
+          }}
+        />
+      ) : <AllOrphanFaces />}
+    </>
+  );
+}
+
+function AllOrphanFaces() {
   const navigate = useNavigate();
   const listKey = "orphan-faces";
   const { push, refreshVisible } = useUndo();
