@@ -1,3 +1,5 @@
+import { useUndo } from "../context/UndoContext";
+import { getAlbumMemberIds } from "../services/albums";
 import React, { useEffect, useState } from "react";
 import {
   Alert,
@@ -16,6 +18,7 @@ import {
 import AddIcon from "@mui/icons-material/Add";
 import {
   addMediaToAlbum,
+  removeMediaFromAlbum,
   createAlbum,
   getAlbums,
 } from "../services/features";
@@ -34,6 +37,7 @@ export const AddToAlbumDialog: React.FC<Props> = ({
   onClose,
   onAdded,
 }) => {
+  const { push, refreshVisible } = useUndo();
   const [albums, setAlbums] = useState<Album[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -52,11 +56,26 @@ export const AddToAlbumDialog: React.FC<Props> = ({
       .finally(() => setLoading(false));
   }, [open]);
 
+  const offerUndo = (album: Album, addedIds: number[]) => {
+    if (!addedIds.length) return;
+    push({
+      label: `Added ${addedIds.length} item(s) to ${album.name}`,
+      undo: async () => {
+        await removeMediaFromAlbum(album.id, addedIds);
+        await refreshVisible();
+      },
+    });
+  };
+
   const addTo = async (albumId: number) => {
     setBusy(true);
     setError(null);
     try {
-      const album = await addMediaToAlbum(albumId, mediaIds);
+      const requestedIds = [...mediaIds];
+      const existing = await getAlbumMemberIds(albumId);
+      const album = await addMediaToAlbum(albumId, requestedIds);
+      const addedIds = requestedIds.filter((id) => !existing.has(id));
+      offerUndo(album, addedIds);
       onAdded(album);
       onClose();
     } catch (err) {
@@ -73,7 +92,9 @@ export const AddToAlbumDialog: React.FC<Props> = ({
     setError(null);
     try {
       const album = await createAlbum(name);
-      const updated = await addMediaToAlbum(album.id, mediaIds);
+      const addedIds = [...mediaIds];
+      const updated = await addMediaToAlbum(album.id, addedIds);
+      offerUndo(updated, addedIds);
       setNewName("");
       onAdded(updated);
       onClose();
@@ -85,7 +106,7 @@ export const AddToAlbumDialog: React.FC<Props> = ({
   };
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
+    <Dialog open={open} onClose={busy ? undefined : onClose} fullWidth maxWidth="xs">
       <DialogTitle>
         Add {mediaIds.length} item{mediaIds.length === 1 ? "" : "s"} to album
       </DialogTitle>

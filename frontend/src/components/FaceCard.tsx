@@ -25,6 +25,7 @@ interface FaceCardProps {
   onSetProfile?: (faceId: number) => void;
   selected?: boolean;
   selecting?: boolean;
+  keyboardReview?: boolean;
   onSelectionClick?: (faceId: number, event: SelectionClickEvent) => boolean;
 }
 
@@ -34,6 +35,7 @@ function FaceCard({
   onSetProfile,
   selected = false,
   selecting = selected,
+  keyboardReview = false,
   onSelectionClick,
 }: FaceCardProps) {
   const theme = useTheme();
@@ -58,6 +60,7 @@ function FaceCard({
       id={face.id}
       selected={selected}
       selecting={selecting}
+      keyboardReview={keyboardReview}
       selectionEnabled={Boolean(onSelectionClick)}
       onSelectionClick={onSelectionClick ?? (() => false)}
       onOpen={handleCardClick}

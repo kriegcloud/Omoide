@@ -1,5 +1,8 @@
+import { useUndo, useUndoRefresh } from "../context/UndoContext";
+import { refreshCachedList } from "../stores/useListStore";
 import React, { useState, useEffect } from "react";
 import {
+  Chip,
   Container,
   Box,
   Typography,
@@ -23,6 +26,7 @@ import { useListStore, defaultListState } from "../stores/useListStore";
 import { getOrphanFaces } from "../services/face";
 import {
   assignFace,
+  detachFace,
   createPersonFromFaces,
   deleteFace,
 } from "../services/faceActions";
@@ -36,6 +40,8 @@ import { encodeFilePath } from "../urlUtils";
 export default function OrphanFacesPage() {
   const navigate = useNavigate();
   const listKey = "orphan-faces";
+  const { push, refreshVisible } = useUndo();
+  useUndoRefresh(`cache:${listKey}`, () => refreshCachedList(listKey));
 
   // --- State Management ---
   const {
@@ -169,6 +175,13 @@ export default function OrphanFacesPage() {
     setIsProcessing(true);
     try {
       await assignFace(faceIds, person.id);
+      push({
+        label: `Assigned ${faceIds.length} face(s) to ${person.name || `Person ${person.id}`}`,
+        undo: async () => {
+          await detachFace(faceIds);
+          await refreshVisible();
+        },
+      });
       removeItems(listKey, faceIds);
       setSelectedFaceIds([]);
       setAssignDialogOpen(false);
@@ -235,8 +248,9 @@ export default function OrphanFacesPage() {
         <Paper elevation={2} sx={{ p: 1, mb: 2, bgcolor: "action.selected" }}>
           <Stack direction="row" spacing={1} alignItems="center">
             <Typography sx={{ ml: 1 }} variant="subtitle1">
-              {selectedFaceIds.length} selected
+              {selectedFaceIds.length} selected · {orphans.length} loaded
             </Typography>
+            {hasMore && <Chip size="small" label="Load more to select the rest" />}
             <Box sx={{ flexGrow: 1 }} />
             <Button
               variant="contained"

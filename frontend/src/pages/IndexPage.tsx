@@ -87,17 +87,6 @@ export default function IndexPage() {
   const [folderError, setFolderError] = useState<string | null>(null);
   const mediaGridRef = useRef<HTMLDivElement>(null);
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
-  const { marqueeRect, onItemClick } = useGridSelection<number>({
-    containerRef: mediaGridRef,
-    itemSelector: "[data-media-card]",
-    getId: (element) => Number(element.dataset.selectableId),
-    selecting: isSelecting,
-    allowPlainDragOnItems: false,
-    onEnterSelection: beginSelecting,
-    onExitSelection: clear,
-    selectedIds,
-    onSelectionChange: setSelected,
-  });
 
   const { widgets } = useHomeWidgets();
   const recentMediaEnabled = widgets.some(
@@ -149,6 +138,21 @@ export default function IndexPage() {
   const listError = listState?.error ?? defaultListState.error;
   const { fetchInitial, loadMore, clearList, clearListsByPrefix } =
     useListStore();
+  const { marqueeRect, onItemClick } = useGridSelection<number>({
+    listKey: mediaListKey,
+    loadedCount: items.length,
+    hasMore,
+    containerRef: mediaGridRef,
+    itemSelector: "[data-media-card]",
+    getId: (element) => Number(element.dataset.selectableId),
+    selecting: isSelecting,
+    allowPlainDragOnItems: false,
+    onEnterSelection: beginSelecting,
+    onExitSelection: clear,
+    selectedIds,
+    onSelectionChange: setSelected,
+  });
+
   const refreshKey = useTaskCompletionVersion([
     "scan",
     "process_media",

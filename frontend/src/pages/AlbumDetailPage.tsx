@@ -1,3 +1,4 @@
+import { useUndo, useUndoRefresh } from "../context/UndoContext";
 import React, { useCallback, useEffect, useState } from "react";
 import {
   Alert,
@@ -24,6 +25,7 @@ import { CursorMediaGrid } from "../components/CursorMediaGrid";
 import { EmptyState } from "../components/EmptyState";
 import { useSelection } from "../context/SelectionContext";
 import {
+  addMediaToAlbum,
   deleteAlbum,
   getAlbum,
   getAlbumMedia,
@@ -36,6 +38,7 @@ export default function AlbumDetailPage() {
   const { id } = useParams<{ id: string }>();
   const albumId = Number(id);
   const navigate = useNavigate();
+  const { push, refreshVisible } = useUndo();
   const { selectedIds, clear, isSelecting, toggleSelecting } = useSelection();
 
   const [album, setAlbum] = useState<Album | null>(null);
@@ -62,6 +65,8 @@ export default function AlbumDetailPage() {
     (cursor: string | null) => getAlbumMedia(albumId, cursor),
     [albumId]
   );
+
+  useUndoRefresh(`album-info:${albumId}`, async () => { setAlbum(await getAlbum(albumId)); });
 
   const handleRename = async () => {
     const trimmed = newName.trim();
@@ -93,15 +98,23 @@ export default function AlbumDetailPage() {
 
   const handleRemoveSelected = async () => {
     if (selectedIds.size === 0) return;
+    const mediaIds = Array.from(selectedIds);
     try {
       const updated = await removeMediaFromAlbum(
         albumId,
-        Array.from(selectedIds)
+        mediaIds
       );
       setAlbum(updated);
       clear();
       setRefreshToken((t) => t + 1);
       setSnackbar("Removed from album.");
+      push({
+        label: `Removed ${mediaIds.length} item(s) from ${updated.name}`,
+        undo: async () => {
+          await addMediaToAlbum(albumId, mediaIds);
+          await refreshVisible();
+        },
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to remove media");
     }

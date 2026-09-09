@@ -4,6 +4,7 @@ import FaceCard from "./FaceCard";
 import { FaceRead } from "../types";
 import { useGridSelection } from "../hooks/useMarqueeSelection";
 import MarqueeSelectionBox from "./MarqueeSelectionBox";
+import { useRovingGridFocus } from "../hooks/useRovingGridFocus";
 
 interface FaceGridProps {
   faces: FaceRead[];
@@ -23,6 +24,7 @@ export const FaceGrid: React.FC<FaceGridProps> = ({
     [selectedFaceIds]
   );
   const containerRef = useRef<HTMLDivElement>(null);
+  useRovingGridFocus(containerRef);
   const handleSelectionChange = useCallback(
     (ids: Set<number>) => onSelectionChange(Array.from(ids)),
     [onSelectionChange],
@@ -49,6 +51,7 @@ export const FaceGrid: React.FC<FaceGridProps> = ({
         <FaceCard
           key={face.id}
           face={face}
+          keyboardReview
           isProfile={false} // Orphans can't be profile pics
           selected={selectedIdSet.has(face.id)}
           selecting={selecting}

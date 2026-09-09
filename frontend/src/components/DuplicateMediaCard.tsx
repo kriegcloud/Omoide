@@ -1,3 +1,5 @@
+import { useUndoRefresh } from "../context/UndoContext";
+import { refreshCachedList, useListStore } from "../stores/useListStore";
 // components/DuplicateMediaCard.tsx
 
 import React from "react";
@@ -45,6 +47,10 @@ export const DuplicateMediaCard: React.FC<DuplicateMediaCardProps> = ({
     ? `${API}/thumbnails/${encodeFilePath(media.thumbnail_path)}`
     : `${API}/thumbnails/${media.id}.jpg`;
 
+  useUndoRefresh("duplicate-groups", async () => {
+    const keys = Object.keys(useListStore.getState().lists).filter((key) => key.startsWith("duplicate-groups-"));
+    await Promise.all(keys.map(refreshCachedList));
+  });
   return (
     media && (
       <SelectableTileFrame

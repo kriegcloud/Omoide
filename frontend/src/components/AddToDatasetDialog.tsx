@@ -1,5 +1,7 @@
+import { useUndo } from "../context/UndoContext";
 import { useEffect, useState } from "react";
 import {
+  Alert,
   Button,
   Dialog,
   DialogActions,
@@ -11,7 +13,7 @@ import {
   Typography,
 } from "@mui/material";
 import type { TrainingDataset } from "../types";
-import { addDatasetItems, getDatasets } from "../services/datasets";
+import { addDatasetItems, getDatasets, removeDatasetItems } from "../services/datasets";
 import NewDatasetDialog from "./NewDatasetDialog";
 
 interface Props {
@@ -22,20 +24,37 @@ interface Props {
 }
 
 export default function AddToDatasetDialog({ open, mediaIds, onClose, onAdded }: Props) {
+  const { push, refreshVisible } = useUndo();
+  const [error, setError] = useState<string | null>(null);
   const [datasets, setDatasets] = useState<TrainingDataset[]>([]);
   const [newOpen, setNewOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (open) void getDatasets().then(setDatasets);
+    if (open) {
+      setError(null);
+      void getDatasets().then(setDatasets).catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to load datasets"));
+    }
   }, [open]);
 
   const add = async (dataset: TrainingDataset) => {
     setBusy(true);
+    setError(null);
     try {
       const result = await addDatasetItems(dataset.id, mediaIds);
+      const addedIds = [...result.added_ids];
+      if (addedIds.length) push({
+        label: `Added ${addedIds.length} item(s) to ${dataset.name}`,
+        undo: async () => {
+          const inverse = await removeDatasetItems(dataset.id, addedIds);
+          await refreshVisible();
+          if (inverse.skipped_ids.length) throw new Error(`${inverse.skipped_ids.length} item(s) could not be removed`);
+        },
+      });
       onAdded?.(dataset, result.added_ids.length);
       onClose();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Failed to add to dataset");
     } finally {
       setBusy(false);
     }
@@ -46,6 +65,7 @@ export default function AddToDatasetDialog({ open, mediaIds, onClose, onAdded }:
       <Dialog open={open} onClose={busy ? undefined : onClose} fullWidth maxWidth="xs">
         <DialogTitle>Add to dataset</DialogTitle>
         <DialogContent dividers>
+          {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
           {datasets.length === 0 ? (
             <Typography color="text.secondary">No datasets yet.</Typography>
           ) : (
@@ -59,8 +79,8 @@ export default function AddToDatasetDialog({ open, mediaIds, onClose, onAdded }:
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button onClick={() => setNewOpen(true)}>New dataset…</Button>
+          <Button onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button onClick={() => setNewOpen(true)} disabled={busy}>New dataset…</Button>
         </DialogActions>
       </Dialog>
       <NewDatasetDialog

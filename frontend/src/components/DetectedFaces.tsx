@@ -1,5 +1,6 @@
 import React, { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import {
+  Chip,
   Avatar,
   Box,
   Button,
@@ -32,6 +33,7 @@ import { useFaceSelection } from "../hooks/useFaceSelection";
 import { searchPersonsByName } from "../services/personActions";
 import config, { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
+import { useRovingGridFocus } from "../hooks/useRovingGridFocus";
 
 interface DetectedFacesProps {
   isProcessing: boolean;
@@ -122,6 +124,7 @@ export default function DetectedFaces({
   }, [faces]);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  useRovingGridFocus(containerRef);
   const clickedGroupRef = useRef<number[] | null>(null);
   const selectedIdSet = useMemo(() => new Set(selectedFaceIds), [selectedFaceIds]);
   const handleSelectionChange = useCallback((ids: Set<number>) => {
@@ -359,6 +362,7 @@ export default function DetectedFaces({
               >
                 {item.faces.map((face) => (
                   <FaceCard
+                    keyboardReview
                     key={face.id}
                     face={face}
                     isProfile={face.id === profileFaceId}
@@ -378,6 +382,7 @@ export default function DetectedFaces({
             ref={!disableInternalScroll && isLastGroup ? lastCardRef : null}
           >
             <FaceCard
+              keyboardReview
               face={item.faces[0]}
               isProfile={item.faces[0].id === profileFaceId}
               onSetProfile={canMutate ? onSetProfile : undefined}
@@ -396,6 +401,7 @@ export default function DetectedFaces({
             ref={!disableInternalScroll && isLast ? lastCardRef : null}
           >
             <FaceCard
+              keyboardReview
               face={face}
               isProfile={face.id === profileFaceId}
               onSetProfile={canMutate ? onSetProfile : undefined}
@@ -423,8 +429,9 @@ export default function DetectedFaces({
         {isAnythingSelected && canMutate && (
           <Stack direction="row" spacing={1} alignItems="center">
             <Button size="small" onClick={onClearSelection}>
-              {selectedFaceIds.length} selected
+              {selectedFaceIds.length} selected · {new Set([...faces, ...(pinnedFaces ?? [])].map((face) => face.id)).size} loaded
             </Button>
+            {hasMore && <Chip size="small" label="Load more to select the rest" />}
             <Box sx={{ flexGrow: 1 }} />
             <Button
               variant="contained"
@@ -612,6 +619,7 @@ export default function DetectedFaces({
             <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
               {pinnedFaces.map((face) => (
                 <FaceCard
+                  keyboardReview
                   key={face.id}
                   face={face}
                   isProfile={face.id === profileFaceId}

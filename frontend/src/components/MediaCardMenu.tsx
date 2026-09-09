@@ -33,7 +33,8 @@ import {
   renameMedia,
   setMediaFavorite,
 } from "../services/mediaActions";
-import { useListStore } from "../stores/useListStore";
+import { useUndoRefresh } from "../context/UndoContext";
+import { refreshCachedList, useListStore } from "../stores/useListStore";
 import AssignMediaToPersonDialog from "./AssignMediaToPersonDialog";
 import ConfirmDialog from "./ConfirmDialog";
 import FolderPickerDialog from "./FolderPickerDialog";
@@ -66,6 +67,7 @@ export default function MediaCardMenu({
   onMediaChange,
   onDeleted,
 }: MediaCardMenuProps) {
+  useUndoRefresh(mediaListKey ? `cache:${mediaListKey}` : undefined, () => refreshCachedList(mediaListKey!));
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [repairAnchorEl, setRepairAnchorEl] = useState<HTMLElement | null>(null);
   const [dialog, setDialog] = useState<DialogKind>(null);

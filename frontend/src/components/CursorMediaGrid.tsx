@@ -1,3 +1,4 @@
+import { useUndoRefresh } from "../context/UndoContext";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Masonry from "react-masonry-css";
 import { Alert, Box, CircularProgress } from "@mui/material";
@@ -44,6 +45,9 @@ export function CursorMediaGrid({
   const gridRef = useRef<HTMLDivElement>(null);
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
   const { marqueeRect, onItemClick } = useGridSelection<number>({
+    listKey,
+    loadedCount: items.length,
+    hasMore,
     containerRef: gridRef,
     itemSelector: "[data-selectable-id]",
     getId: (element) => Number(element.dataset.selectableId),
@@ -56,7 +60,7 @@ export function CursorMediaGrid({
   });
 
   const loadPage = useCallback(
-    async (fromCursor: string | null, replace: boolean) => {
+    async (fromCursor: string | null, replace: boolean, throwOnError = false) => {
       if (inFlightRef.current) return;
       const seq = ++requestSeq.current;
       inFlightRef.current = true;
@@ -76,6 +80,7 @@ export function CursorMediaGrid({
         if (seq !== requestSeq.current) return;
         setError(err instanceof Error ? err.message : "Failed to load media");
         setHasMore(false);
+        if (throwOnError) throw err;
       } finally {
         if (seq === requestSeq.current) {
           inFlightRef.current = false;
@@ -85,6 +90,12 @@ export function CursorMediaGrid({
     },
     [fetcher, onItemsChange]
   );
+
+  useUndoRefresh(`cursor:${listKey}`, async () => {
+    requestSeq.current += 1;
+    inFlightRef.current = false;
+    await loadPage(null, true, true);
+  });
 
   useEffect(() => {
     // Invalidate any previous list request. A new list must be allowed to

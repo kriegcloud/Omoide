@@ -1,3 +1,5 @@
+import { useUndoRefresh } from "../context/UndoContext";
+import { refreshCachedList } from "../stores/useListStore";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Masonry from "react-masonry-css";
 import SortIcon from "@mui/icons-material/Sort";
@@ -84,7 +86,11 @@ export default function MediaListPage({
   const hasNewItems = refreshKey !== seenRefreshKey;
   const gridRef = useRef<HTMLDivElement>(null);
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
+  useUndoRefresh(`cache:${listKey}`, () => refreshCachedList(listKey));
   const { marqueeRect, onItemClick } = useGridSelection<number>({
+    listKey,
+    loadedCount: items.length,
+    hasMore,
     containerRef: gridRef,
     itemSelector: "[data-selectable-id]",
     getId: (element) => Number(element.dataset.selectableId),

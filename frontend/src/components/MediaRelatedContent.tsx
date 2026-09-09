@@ -1,3 +1,4 @@
+import { useUndoRefresh } from "../context/UndoContext";
 import React, { useEffect, useState, useMemo, useRef } from "react";
 import { Box, CircularProgress, Typography } from "@mui/material";
 import { Media } from "../types";
@@ -10,10 +11,13 @@ import MarqueeSelectionBox from "./MarqueeSelectionBox";
 export default function SimilarContent({ mediaId }: { mediaId: number }) {
   const [similar, setSimilar] = useState<Media[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  useUndoRefresh(`similar:${mediaId}`, async () => { setSimilar(await getSimilarMedia(mediaId)); });
   const similarIds = useMemo(() => similar.map((item) => item.id), [similar]);
   const gridRef = useRef<HTMLDivElement>(null);
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
   const { marqueeRect, onItemClick } = useGridSelection<number>({
+    listKey: `similar:${mediaId}`,
+    loadedCount: similar.length,
     containerRef: gridRef,
     itemSelector: "[data-media-card]",
     getId: (element) => Number(element.dataset.selectableId),

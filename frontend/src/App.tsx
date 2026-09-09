@@ -4,6 +4,7 @@ import { ThemeProvider as MuiThemeProvider, CssBaseline } from "@mui/material";
 import { useThemeContext } from "./ThemeContext";
 import { getTheme } from "./theme";
 import { TaskEventsProvider } from "./TaskEventsContext";
+import { UndoProvider } from "./context/UndoContext";
 import { SelectionProvider } from "./context/SelectionContext";
 import { ScrollToTop } from "./components/ScrollToTop";
 import { AppRoutes } from "./routes";
@@ -16,12 +17,14 @@ export default function App() {
     <TaskEventsProvider>
       <MuiThemeProvider theme={theme}>
         <CssBaseline />
-        <SelectionProvider>
-          <Router>
-            <ScrollToTop />
-            <AppRoutes />
-          </Router>
-        </SelectionProvider>
+        <UndoProvider>
+          <SelectionProvider>
+            <Router>
+              <ScrollToTop />
+              <AppRoutes />
+            </Router>
+          </SelectionProvider>
+        </UndoProvider>
       </MuiThemeProvider>
     </TaskEventsProvider>
   );

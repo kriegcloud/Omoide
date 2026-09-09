@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
+import { useSelection, useSelectionList } from "../context/SelectionContext";
 
 export interface MarqueeRect {
   left: number;
@@ -17,6 +19,9 @@ export interface SelectionClickEvent {
 }
 
 interface UseGridSelectionOptions<TId extends number | string> {
+  listKey?: string;
+  loadedCount?: number;
+  hasMore?: boolean;
   containerRef: React.RefObject<HTMLElement | null>;
   itemSelector?: string;
   getId?: (element: HTMLElement) => TId;
@@ -40,6 +45,9 @@ const ROW_TOLERANCE_PX = 24;
 const defaultGetId = (element: HTMLElement) => Number(element.dataset.selectableId);
 
 export function useGridSelection<TId extends number | string = number>({
+  listKey,
+  loadedCount,
+  hasMore = false,
   containerRef,
   itemSelector = "[data-selectable-id]",
   getId = defaultGetId as (element: HTMLElement) => TId,
@@ -61,6 +69,22 @@ export function useGridSelection<TId extends number | string = number>({
   const onEnterSelectionRef = useRef(onEnterSelection);
   const cancelMarqueeRef = useRef<(() => void) | null>(null);
   const [container, setContainer] = useState<HTMLElement | null>(null);
+  const [mountedCount, setMountedCount] = useState(0);
+  const selection = useSelection();
+  const { pathname } = useLocation();
+  const ownsMediaSelection = onSelectionChange === selection.setSelected;
+  useSelectionList(ownsMediaSelection ? listKey ?? pathname : null, loadedCount ?? mountedCount, hasMore);
+
+  useEffect(() => {
+    if (!container || !ownsMediaSelection || loadedCount !== undefined) return;
+    const update = () => setMountedCount(new Set(Array.from(
+      container.querySelectorAll<HTMLElement>(itemSelector), getIdRef.current,
+    )).size);
+    update();
+    const observer = new MutationObserver(update);
+    observer.observe(container, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [container, itemSelector, ownsMediaSelection, loadedCount]);
 
   // Some grids mount only after their asynchronous results arrive.
   useEffect(() => {
@@ -272,6 +296,33 @@ export function useGridSelection<TId extends number | string = number>({
       stop();
     };
   }, [container, disabled, itemSelector, allowPlainDragOnItems]);
+
+  useEffect(() => {
+    if (!container || disabled) return;
+    const handleSelectAll = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "a") return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.closest("input, textarea, select, [contenteditable]:not([contenteditable=false])") || target.isContentEditable)) return;
+      // A modal or another focused grid owns its keyboard events.
+      if (target instanceof Element && target.closest("[role=dialog], [role=menu]")) return;
+      const focusedGrid = target instanceof Element ? target.closest("[data-selection-grid]") : null;
+      if (focusedGrid && focusedGrid !== container) return;
+      if (container.getClientRects().length === 0) return;
+      const next = new Set(Array.from(container.querySelectorAll<HTMLElement>(itemSelector), getIdRef.current));
+      if (!next.size) return;
+      event.preventDefault();
+      cancelMarqueeRef.current?.();
+      onEnterSelectionRef.current?.();
+      selectedIdsRef.current = next;
+      onSelectionChangeRef.current(next);
+    };
+    container.setAttribute("data-selection-grid", "");
+    window.addEventListener("keydown", handleSelectAll);
+    return () => {
+      container.removeAttribute("data-selection-grid");
+      window.removeEventListener("keydown", handleSelectAll);
+    };
+  }, [container, disabled, itemSelector]);
 
   useEffect(() => {
     if (!selecting || disabled) return;
