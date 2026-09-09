@@ -1,3 +1,6 @@
+import base64
+import binascii
+
 from fastapi import (
     APIRouter,
     Body,
@@ -14,8 +17,21 @@ from app.config import settings
 from app.database import get_session, safe_commit, safe_execute
 from app.logger import logger
 from app.models import Face, Person, PersonMediaLink, PersonRelationship, PersonTagLink
-from app.schemas.face import CursorPage, FaceAssign
+from app.schemas.face import (
+    AssignSuggestedFaces,
+    AssignSuggestedFacesResult,
+    CursorPage,
+    FaceAssign,
+    OrphanFaceSuggestion,
+    OrphanFaceSuggestionsPage,
+    SkippedFaceAssignment,
+)
 from app.schemas.person import PersonMinimal
+from app.services.face_matching import (
+    load_prototype_index,
+    load_unassigned_face_embeddings,
+    score_faces,
+)
 from app.utils import (
     auto_select_profile_face,
     recalculate_person_appearance_counts,
@@ -23,6 +39,26 @@ from app.utils import (
 )
 
 router = APIRouter()
+
+
+def _assign_face(
+    session: Session, face: Face, person: Person, affected_person_ids: set[int]
+) -> None:
+    """Apply the shared per-face assignment path for manual review endpoints."""
+    original_person_id = face.person_id
+    if original_person_id == person.id:
+        return
+    affected_person_ids.add(person.id)
+    if original_person_id is not None:
+        affected_person_ids.add(original_person_id)
+
+    face.person = person
+    face.person_id = person.id
+    session.add(face)
+    if original_person_id is not None:
+        old_person_can_be_deleted(session, original_person_id)
+    update_face_embedding(session, face.id, person.id)
+
 
 @router.post(
     "/assign",
@@ -53,24 +89,50 @@ async def assign_faces(
             logger.warning(f"Face with ID {face_id} not found, skipping assignment.")
             continue
 
-        original_person_id = face.person_id
-        if original_person_id == new_person_id:
-            continue
-        if original_person_id is not None:
-            affected_person_ids.add(original_person_id)
-
-        face.person = new_person
-        session.add(face)
-
-        if original_person_id and original_person_id != body.person_id:
-            old_person_can_be_deleted(session, original_person_id)
-        update_face_embedding(session, face_id, new_person_id)
+        _assign_face(session, face, new_person, affected_person_ids)
 
     recalculate_person_appearance_counts(session, affected_person_ids)
     if new_person_id and new_person_id > 0:
         update_person_embedding(session, new_person_id)
     safe_commit(session)
     return {"message": "Faces assigned successfully"}
+
+
+@router.post("/assign-suggested", response_model=AssignSuggestedFacesResult)
+async def assign_suggested_faces(
+    body: AssignSuggestedFaces,
+    session: Session = Depends(get_session),
+) -> AssignSuggestedFacesResult:
+    if settings.general.presentation_mode:
+        raise HTTPException(
+            status_code=403,
+            detail="Not allowed in settings.general.presentation_mode mode.",
+        )
+    assigned = 0
+    skipped: list[SkippedFaceAssignment] = []
+    affected_person_ids: set[int] = set()
+    for assignment in body.assignments:
+        face = session.get(Face, assignment.face_id)
+        if face is None:
+            reason = "unknown_face"
+        elif face.person_id is not None:
+            reason = "face_already_assigned"
+        elif (person := session.get(Person, assignment.person_id)) is None:
+            reason = "unknown_person"
+        else:
+            _assign_face(session, face, person, affected_person_ids)
+            assigned += 1
+            continue
+        skipped.append(
+            SkippedFaceAssignment(face_id=assignment.face_id, reason=reason)
+        )
+
+    recalculate_person_appearance_counts(session, affected_person_ids)
+    for person_id in sorted(affected_person_ids):
+        update_person_embedding(session, person_id)
+    safe_commit(session)
+    return AssignSuggestedFacesResult(assigned=assigned, skipped=skipped)
+
 
 @router.post(
     "/detach",
@@ -188,6 +250,65 @@ def delete_faces(
 
 class FaceCreatePerson(BaseModel):
     name: str | None = None
+
+
+@router.get("/orphans/suggestions", response_model=OrphanFaceSuggestionsPage)
+def get_orphan_face_suggestions(
+    session: Session = Depends(get_session),
+    cursor: str | None = None,
+    limit: int = Query(48, ge=1, le=200),
+    min_score: float = Query(0.0, ge=-1.0, le=1.0),
+) -> OrphanFaceSuggestionsPage:
+    offset = 0
+    if cursor:
+        try:
+            decoded = base64.b64decode(
+                cursor, altchars=b"-_", validate=True
+            ).decode("ascii")
+            if not decoded.isdecimal():
+                raise ValueError("Cursor must be a non-negative integer")
+            offset = int(decoded)
+        except (ValueError, UnicodeError, binascii.Error) as exc:
+            raise HTTPException(
+                status_code=400, detail="Invalid suggestions cursor"
+            ) from exc
+
+    index = load_prototype_index(session)
+    face_ids, embeddings, frontalities = load_unassigned_face_embeddings(session)
+    ranked = sorted(
+        (
+            match
+            for match in score_faces(index, face_ids, embeddings, frontalities)
+            if match.score >= min_score
+        ),
+        key=lambda match: (-match.score, match.face_id),
+    )
+    page = ranked[offset : offset + limit]
+    faces = {
+        face.id: face
+        for face in session.exec(
+            select(Face).where(Face.id.in_([match.face_id for match in page]))
+        ).all()
+    }
+    next_offset = offset + len(page)
+    return OrphanFaceSuggestionsPage(
+        items=[
+            OrphanFaceSuggestion(
+                face=faces[match.face_id],
+                person_id=match.person_id,
+                person_name=index.names[match.person_id],
+                score=match.score,
+                pose_bin=match.pose_bin,
+            )
+            for match in page
+        ],
+        next_cursor=(
+            base64.urlsafe_b64encode(str(next_offset).encode("ascii")).decode("ascii")
+            if next_offset < len(ranked)
+            else None
+        ),
+    )
+
 
 @router.get("/orphans/count", summary="Count faces not assigned to a person")
 def get_orphan_count(session: Session = Depends(get_session)) -> dict[str, int]:

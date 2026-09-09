@@ -64,7 +64,11 @@ def summarize_task(task: ProcessingTask) -> str:
         return _plural(task.processed, "new file")
 
     if task_type in ("process_media", "run_processor", "run_processor_for_media"):
-        return "Nothing to do" if task.total == 0 else _plural(task.processed, "file") + " processed"
+        summary = "Nothing to do" if task.total == 0 else _plural(task.processed, "file") + " processed"
+        matched = _count(result.get("faces_matched")) or 0
+        if matched:
+            summary += ", " + _plural(matched, "face") + " matched to people"
+        return summary
 
     if task_type == "cluster_persons":
         keys = ("new_persons", "matched", "merged")

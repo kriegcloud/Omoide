@@ -26,6 +26,16 @@ from app.models import (
     ProcessingTask,
     TimelineEvent,
 )
+# Keep the private helper names available for existing callers and tests.
+from app.services.face_matching import (
+    PrototypeIndex,
+    _bulk_assign_faces_to_persons,
+    _compute_person_prototypes,
+    _load_person_prototype_matrix,
+    _quality_seed_filter,
+    matching_thresholds,
+    score_faces,
+)
 from app.utils import (
     _distance_to_similarity,
     complete_task,
@@ -44,30 +54,6 @@ __all__ = [
     "rebuild_person_embedding",
     "run_person_clustering",
 ]
-
-
-def _quality_seed_filter() -> tuple[str, dict[str, float]]:
-    """
-    SQL fragment (aliased on ``f``) excluding low-confidence and hard-profile
-    faces from seeding new clusters: their embeddings are unreliable and tend
-    to agglomerate into junk "people". They stay unassigned and are picked up
-    by the leftover matching pass instead. Faces without quality data (NULL,
-    extracted before the quality columns existed) are kept.
-    """
-    return (
-        """
-           AND (f.det_score IS NULL OR f.det_score >= :min_det_score)
-           AND (f.frontality IS NULL OR f.frontality >= :min_frontality)
-        """,
-        {
-            "min_det_score": float(
-                settings.face_recognition.cluster_seed_min_det_score
-            ),
-            "min_frontality": float(
-                settings.face_recognition.cluster_seed_min_frontality
-            ),
-        },
-    )
 
 
 def _fetch_faces_and_embeddings(
@@ -1027,249 +1013,6 @@ def _is_task_cancelled(session: Session, task_id: str) -> bool:
     return str(status) == "cancelled"
 
 
-def _iter_chunks(values: list[int], chunk_size: int) -> Iterable[list[int]]:
-    size = max(1, int(chunk_size))
-    for i in range(0, len(values), size):
-        yield values[i : i + size]
-
-
-def _build_in_clause_params(
-    values: list[int], *, prefix: str
-) -> tuple[str, dict[str, int]]:
-    placeholders: list[str] = []
-    params: dict[str, int] = {}
-    for idx, value in enumerate(values):
-        key = f"{prefix}{idx}"
-        placeholders.append(f":{key}")
-        params[key] = int(value)
-    return ", ".join(placeholders), params
-
-
-def _compute_person_prototypes(vectors: np.ndarray, k: int) -> np.ndarray:
-    """
-    Reduce a person's face embeddings (L2-normalized, shape (n, d)) to up to
-    ``k`` prototype vectors via farthest-point seeding + a few spherical
-    k-means iterations. Multiple prototypes capture pose modes (frontal,
-    left/right profile) that a single centroid — dominated by frontal shots —
-    washes out.
-    """
-
-    def _norm_rows(matrix: np.ndarray) -> np.ndarray:
-        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-        norms[norms == 0.0] = 1.0
-        return matrix / norms
-
-    centroid = _norm_rows(vectors.mean(axis=0, keepdims=True))
-    if k <= 1 or vectors.shape[0] <= 1:
-        return centroid.astype(np.float32, copy=False)
-
-    centers = [centroid[0]]
-    for _ in range(k - 1):
-        sims = vectors @ np.vstack(centers).T
-        best_sim = sims.max(axis=1)
-        centers.append(vectors[int(np.argmin(best_sim))])
-    centers_arr = np.vstack(centers)
-
-    for _ in range(4):
-        assignment = np.argmax(vectors @ centers_arr.T, axis=1)
-        for j in range(centers_arr.shape[0]):
-            members = vectors[assignment == j]
-            if members.shape[0]:
-                centers_arr[j] = members.mean(axis=0)
-        centers_arr = _norm_rows(centers_arr)
-
-    return centers_arr.astype(np.float32, copy=False)
-
-
-def _load_person_prototype_matrix(
-    session: Session,
-    *,
-    per_person_cap: int | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Build the matching matrix from per-person prototypes computed over the
-    persons' face embeddings (instead of the single stored centroid). Returns
-    (person_ids, matrix) where person_ids has one entry per prototype row and
-    may contain the same person several times.
-    """
-    max_prototypes = max(
-        1,
-        int(
-            getattr(settings.face_recognition, "person_matching_max_prototypes", 3)
-        ),
-    )
-    if per_person_cap is None:
-        per_person_cap = int(
-            getattr(settings.face_recognition, "person_prototype_sample_cap", 64)
-        )
-    per_person_cap = max(1, int(per_person_cap))
-    pose_prototypes_enabled = bool(
-        getattr(settings.face_recognition, "person_pose_prototypes_enabled", True)
-    )
-    pose_min_faces = max(
-        1,
-        int(
-            getattr(
-                settings.face_recognition, "person_pose_prototype_min_faces", 4
-            )
-        ),
-    )
-    pose_sample_cap = max(
-        1,
-        int(
-            getattr(
-                settings.face_recognition, "person_pose_prototype_sample_cap", 256
-            )
-        ),
-    )
-    # Prefer quality faces for the prototypes so junk members (blurry/profile
-    # faces mistakenly attached to a person) do not become attachment anchors.
-    # Persons with no quality-rated faces fall back to all of their faces.
-    quality_filter, quality_params = _quality_seed_filter()
-    rows = session.exec(
-        text(
-            f"""
-            SELECT f.person_id, f.frontality, fe.embedding,
-                   CASE WHEN 1=1 {quality_filter} THEN 1 ELSE 0 END AS is_quality
-              FROM face            AS f
-              JOIN face_embeddings AS fe ON fe.face_id = f.id
-             WHERE f.person_id IS NOT NULL
-            """
-        ).bindparams(**quality_params)
-    ).all()
-
-    quality_grouped: dict[int, list[np.ndarray]] = {}
-    fallback_grouped: dict[int, list[np.ndarray]] = {}
-    pose_grouped: dict[int, dict[str, list[np.ndarray]]] = {}
-    for person_id, frontality, raw_embedding, is_quality in rows:
-        if person_id is None:
-            continue
-        vec = vector_from_stored(raw_embedding)
-        if vec is None or vec.size == 0:
-            continue
-        if not np.all(np.isfinite(vec)) or not np.any(vec):
-            continue
-        norm = float(np.linalg.norm(vec))
-        if not np.isfinite(norm) or norm == 0.0:
-            continue
-        person_id = int(person_id)
-        normalized = (vec / norm).astype(np.float32, copy=False)
-        target = quality_grouped if is_quality else fallback_grouped
-        target.setdefault(person_id, []).append(normalized)
-
-        if frontality is not None:
-            frontality = float(frontality)
-            if not np.isfinite(frontality):
-                continue
-            if frontality >= 0.5:
-                pose_bin = "frontal"
-            elif frontality >= 0.25:
-                pose_bin = "quarter"
-            else:
-                pose_bin = "profile"
-            pose_grouped.setdefault(person_id, {}).setdefault(
-                pose_bin, []
-            ).append(normalized)
-
-    grouped: dict[int, list[np.ndarray]] = dict(fallback_grouped)
-    grouped.update(
-        {pid: vecs for pid, vecs in quality_grouped.items() if vecs}
-    )
-
-    proto_person_ids: list[int] = []
-    proto_vectors: list[np.ndarray] = []
-    prototype_counts = {"frontal": 0, "quarter": 0, "profile": 0, "kmeans": 0}
-    all_person_ids = sorted(set(grouped) | set(pose_grouped))
-    for person_id in all_person_ids:
-        vecs = grouped.get(person_id, [])
-        rng = np.random.default_rng(person_id)
-        if len(vecs) > per_person_cap:
-            indices = rng.choice(len(vecs), size=per_person_cap, replace=False)
-            sampled = np.vstack([vecs[int(index)] for index in indices])
-        else:
-            sampled = np.vstack(vecs)
-
-        # only spend extra prototypes on persons with enough faces to
-        # actually exhibit distinct pose modes (~4 faces per prototype)
-        k = min(max_prototypes, max(1, sampled.shape[0] // 4))
-        for proto in _compute_person_prototypes(sampled, k):
-            proto_person_ids.append(person_id)
-            proto_vectors.append(proto)
-            prototype_counts["kmeans"] += 1
-
-        if not pose_prototypes_enabled:
-            continue
-
-        for pose_bin in ("frontal", "quarter", "profile"):
-            bin_vecs = pose_grouped.get(person_id, {}).get(pose_bin, [])
-            if len(bin_vecs) < pose_min_faces:
-                continue
-            if len(bin_vecs) > pose_sample_cap:
-                indices = rng.choice(
-                    len(bin_vecs), size=pose_sample_cap, replace=False
-                )
-                pose_sample = np.vstack(
-                    [bin_vecs[int(index)] for index in indices]
-                )
-            else:
-                pose_sample = np.vstack(bin_vecs)
-            pose_mean = pose_sample.mean(axis=0)
-            pose_norm = float(np.linalg.norm(pose_mean))
-            if not np.isfinite(pose_norm) or pose_norm == 0.0:
-                continue
-            proto_person_ids.append(person_id)
-            proto_vectors.append(
-                (pose_mean / pose_norm).astype(np.float32, copy=False)
-            )
-            prototype_counts[pose_bin] += 1
-
-    logger.info(
-        "prototypes: %d persons, %d rows "
-        "(frontal=%d quarter=%d profile=%d kmeans=%d)",
-        len(all_person_ids),
-        len(proto_person_ids),
-        prototype_counts["frontal"],
-        prototype_counts["quarter"],
-        prototype_counts["profile"],
-        prototype_counts["kmeans"],
-    )
-
-    if not proto_person_ids:
-        return np.array([], dtype=np.int64), np.empty((0, 0), dtype=np.float32)
-
-    return np.array(proto_person_ids, dtype=np.int64), np.vstack(
-        proto_vectors
-    ).astype(np.float32, copy=False)
-
-
-def _bulk_assign_faces_to_persons(
-    session: Session,
-    assignments: dict[int, int],
-    *,
-    chunk_size: int = 500,
-) -> None:
-    if not assignments:
-        return
-
-    by_person_id: dict[int, list[int]] = {}
-    for face_id, person_id in assignments.items():
-        by_person_id.setdefault(int(person_id), []).append(int(face_id))
-
-    for person_id, person_face_ids in by_person_id.items():
-        for face_chunk in _iter_chunks(person_face_ids, chunk_size):
-            placeholders, params = _build_in_clause_params(face_chunk, prefix="f")
-            sql_face = text(
-                f"UPDATE face SET person_id = :pid WHERE id IN ({placeholders})"
-            ).bindparams(pid=person_id, **params)
-            session.exec(sql_face)
-
-            sql_face_embedding = text(
-                "UPDATE face_embeddings SET person_id = :pid"
-                f" WHERE face_id IN ({placeholders})"
-            ).bindparams(pid=person_id, **params)
-            session.exec(sql_face_embedding)
-
-
 def _match_unassigned_to_existing(
     session: Session,
     face_ids: list[int],
@@ -1305,20 +1048,8 @@ def _match_unassigned_to_existing(
         )
         return face_ids
 
-    threshold_cosine = float(
-        getattr(settings.face_recognition, "existing_person_cosine_threshold", 0.0)
-    )
-    if threshold_cosine <= 0.0 or threshold_cosine > 1.0:
-        threshold_cosine = float(
-            getattr(settings.face_recognition, "person_merge_percent_similarity", 75.0)
-        ) / 100.0
-    threshold_cosine = float(np.clip(threshold_cosine, 0.0, 1.0))
-    min_margin = float(
-        max(
-            0.0,
-            getattr(settings.face_recognition, "existing_person_min_cosine_margin", 0),
-        )
-    )
+    threshold_cosine, min_margin = matching_thresholds()
+    index = PrototypeIndex(person_ids, person_matrix, {})
 
     unassigned_after_match = []
     assignments: dict[int, int] = {}
@@ -1348,46 +1079,18 @@ def _match_unassigned_to_existing(
             break
 
         chunk_face_ids = face_ids[start:end]
-        chunk_embs = embeddings[start:end].astype(np.float32, copy=False)
-        chunk_size_real = len(chunk_face_ids)
-
-        norms = np.linalg.norm(chunk_embs, axis=1)
-        valid_mask = np.isfinite(norms) & (norms > 0.0)
-        assigned_person_for_chunk = np.full(chunk_size_real, -1, dtype=np.int64)
-
-        if np.any(valid_mask):
-            valid_indices = np.flatnonzero(valid_mask)
-            normed_chunk = chunk_embs[valid_mask] / norms[valid_mask][:, None]
-            similarities = normed_chunk @ person_matrix.T
-
-            best_indices = np.argmax(similarities, axis=1)
-            best_scores = similarities[np.arange(similarities.shape[0]), best_indices]
-            best_persons = person_ids[best_indices]
-
-            # The margin must be against the best *other* person — several
-            # prototype rows can belong to the winning person, so mask all of
-            # its rows out before taking the runner-up score.
-            same_person_mask = person_ids[None, :] == best_persons[:, None]
-            other_similarities = np.where(same_person_mask, -np.inf, similarities)
-            second_scores = np.max(other_similarities, axis=1)
-            second_scores = np.where(
-                np.isfinite(second_scores), second_scores, -1.0
-            )
-
-            accept_mask = (best_scores >= threshold_cosine) & (
-                (best_scores - second_scores) >= min_margin
-            )
-            accepted_global_indices = valid_indices[accept_mask]
-            assigned_person_for_chunk[accepted_global_indices] = best_persons[
-                accept_mask
-            ]
-
-        for local_idx, face_id in enumerate(chunk_face_ids):
-            assigned_person_id = int(assigned_person_for_chunk[local_idx])
-            if assigned_person_id > 0:
-                assignments[int(face_id)] = assigned_person_id
-            else:
-                unassigned_after_match.append(int(face_id))
+        matches = score_faces(
+            index, chunk_face_ids, embeddings[start:end], [None] * len(chunk_face_ids)
+        )
+        accepted = {
+            match.face_id: match.person_id
+            for match in matches
+            if match.score >= threshold_cosine and match.margin >= min_margin
+        }
+        assignments.update(accepted)
+        unassigned_after_match.extend(
+            int(face_id) for face_id in chunk_face_ids if face_id not in accepted
+        )
 
         if start == 0 or (start // chunk_size) % 8 == 0:
             set_task_progress(

@@ -625,6 +625,7 @@ FACE_RECOGNITION_PRESETS: dict[
     FaceClusteringPreset, dict[str, float | int | str | bool]
 ] = {
     FaceClusteringPreset.STRICT: {
+        "match_new_faces_on_index": True,
         "face_recognition_min_confidence": 0.6,
         "existing_person_cosine_threshold": 0.68,
         "existing_person_min_cosine_margin": 0.07,
@@ -650,6 +651,7 @@ FACE_RECOGNITION_PRESETS: dict[
         "cw_min_member_similarity": 0.55,
     },
     FaceClusteringPreset.NORMAL: {
+        "match_new_faces_on_index": True,
         "face_recognition_min_confidence": 0.5,
         "existing_person_cosine_threshold": 0.62,
         "existing_person_min_cosine_margin": 0.05,
@@ -675,6 +677,7 @@ FACE_RECOGNITION_PRESETS: dict[
         "cw_min_member_similarity": 0.50,
     },
     FaceClusteringPreset.LOOSE: {
+        "match_new_faces_on_index": True,
         "face_recognition_min_confidence": 0.4,
         "existing_person_cosine_threshold": 0.56,
         "existing_person_min_cosine_margin": 0.03,
@@ -703,6 +706,8 @@ FACE_RECOGNITION_PRESETS: dict[
 
 
 class FaceRecognitionSettings(BaseModel):
+    # Attach newly indexed faces to existing people when no clustering follows.
+    match_new_faces_on_index: bool = True
     embedding_backend: FaceEmbeddingBackend = FaceEmbeddingBackend.BUFFALO_L
     inference_socket_path: Path = Path("/app/data/run/omoide-ml.sock")
     inference_timeout_seconds: float = Field(default=180.0, gt=0.0, le=600.0)

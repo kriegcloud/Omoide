@@ -17,8 +17,9 @@ from app.config import settings
 from app.image_limits import apply_pillow_limits
 from app.database import safe_commit
 from app.logger import logger
-from app.models import Media, ProcessingTask, Status
+from app.models import Face, Media, ProcessingTask, Status
 from app.processor_registry import load_processors, processors
+from app.services.face_matching import match_faces_to_persons, matching_thresholds
 from app.utils import split_video
 from .state import clear_task_progress, set_task_progress
 
@@ -225,11 +226,46 @@ def _apply_processors(
     return success
 
 
+def _latest_face_id(session: Session) -> int:
+    # Flush reset deletions first: SQLite may reuse the deleted highest row ID.
+    session.flush()
+    return session.exec(select(func.max(Face.id))).one() or 0
+
+
+def _created_face_ids(session: Session, media_id: int, after_id: int) -> list[int]:
+    session.flush()
+    return session.exec(
+        select(Face.id).where(Face.media_id == media_id, Face.id > after_id)
+    ).all()
+
+
+def _record_face_matches(
+    session: Session, task: ProcessingTask, face_ids: set[int]
+) -> None:
+    matched = 0
+    if (
+        face_ids
+        and settings.face_recognition.match_new_faces_on_index
+        and task.status != Status.CANCELLED
+    ):
+        set_task_progress(task.id, current_step="matching_known_persons")
+        threshold, min_margin = matching_thresholds()
+        matched = len(
+            match_faces_to_persons(
+                session, sorted(face_ids), threshold=threshold, min_margin=min_margin
+            )
+        )
+    task.result = {**(task.result or {}), "faces_matched": matched}
+
+
 def run_media_processing_and_chain(task_id: str) -> None:
-    run_media_processing(task_id)
+    clustering_chained = (
+        settings.general.enable_people and settings.scan.auto_cluster_on_scan
+    )
+    run_media_processing(task_id, clustering_chained=clustering_chained)
 
     logger.info("Media processing finished.")
-    if settings.general.enable_people and settings.scan.auto_cluster_on_scan:
+    if clustering_chained:
         logger.info("Starting Person Clustering...")
         with Session(db.engine) as new_session:
             next_task = ProcessingTask(
@@ -245,10 +281,10 @@ def run_media_processing_and_chain(task_id: str) -> None:
     logger.info("Task chain completed")
 
 
-def run_media_processing(task_id: str) -> None:
+def run_media_processing(task_id: str, *, clustering_chained: bool = False) -> None:
     apply_pillow_limits(settings.scan.max_image_pixels)
     try:
-        _run_media_processing(task_id)
+        _run_media_processing(task_id, clustering_chained=clustering_chained)
     except Exception:
         logger.exception("Unhandled error in run_media_processing (task %s)", task_id)
         try:
@@ -264,7 +300,7 @@ def run_media_processing(task_id: str) -> None:
         clear_task_progress(task_id)
 
 
-def _run_media_processing(task_id: str) -> None:
+def _run_media_processing(task_id: str, *, clustering_chained: bool = False) -> None:
     configured_batch_size = getattr(
         settings.processors, "media_batch_size", None
     )
@@ -312,6 +348,12 @@ def _run_media_processing(task_id: str) -> None:
                 proc.active = False
                 proc.load_model()
 
+            collect_faces = (
+                settings.face_recognition.match_new_faces_on_index
+                and not clustering_chained
+                and any(proc.name == "faces" and proc.active for proc in processors)
+            )
+            new_face_ids: set[int] = set()
             task.total = _count_media_to_process(session)
             session.add(task)
             safe_commit(session)
@@ -374,7 +416,12 @@ def _run_media_processing(task_id: str) -> None:
                         set_task_progress(task_id, current_step="idle")
                         continue
 
+                    before_id = _latest_face_id(session) if collect_faces else None
                     _apply_processors(media, scenes, session, task_id=task_id)
+                    if before_id is not None:
+                        new_face_ids.update(
+                            _created_face_ids(session, media.id, before_id)
+                        )
                     session.add(media)
 
                     task.processed += 1
@@ -404,6 +451,7 @@ def _run_media_processing(task_id: str) -> None:
             session.refresh(task)
             remaining = _count_media_to_process(session)
             task.total = task.processed + remaining
+            _record_face_matches(session, task, new_face_ids)
             task.status = (
                 "completed" if task.status != "cancelled" else "cancelled"
             )
@@ -640,6 +688,7 @@ def run_processors_for_media(
                 clear_task_progress(task_id)
                 return
 
+            new_face_ids: set[int] = set()
             for target in targets:
                 if _is_task_cancelled(task_id):
                     break
@@ -698,7 +747,17 @@ def run_processors_for_media(
                                 current_item=os.fspath(media.path),
                                 current_step=target.name,
                             )
+                            before_id = (
+                                _latest_face_id(session)
+                                if target.name == "faces"
+                                and settings.face_recognition.match_new_faces_on_index
+                                else None
+                            )
                             target.process(media, session, scenes=scenes)
+                            if before_id is not None:
+                                new_face_ids.update(
+                                    _created_face_ids(session, media.id, before_id)
+                                )
                             session.add(media)
 
                         task.processed += 1
@@ -720,11 +779,11 @@ def run_processors_for_media(
                 if cancelled_processor:
                     break
 
-            task.status = (
-                Status.CANCELLED
-                if _is_task_cancelled(task_id)
-                else Status.COMPLETED
-            )
+            if _is_task_cancelled(task_id):
+                task.status = Status.CANCELLED
+            _record_face_matches(session, task, new_face_ids)
+            if task.status != Status.CANCELLED:
+                task.status = Status.COMPLETED
             task.finished_at = datetime.now(timezone.utc)
             session.add(task)
             safe_commit(session)
