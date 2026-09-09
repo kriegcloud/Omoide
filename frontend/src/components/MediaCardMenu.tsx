@@ -268,12 +268,10 @@ export default function MediaCardMenu({
             <span>{openApplicationItem}</span>
           </Tooltip>
         ) : openApplicationItem}
-        {personContext && (
-          <MenuItem onClick={() => openDialog("assign")}>
-            <ListItemIcon><PersonAddIcon /></ListItemIcon>
-            Assign to person…
-          </MenuItem>
-        )}
+        <MenuItem onClick={() => openDialog("assign")}>
+          <ListItemIcon><PersonAddIcon /></ListItemIcon>
+          Assign to person…
+        </MenuItem>
         <MenuItem onClick={() => openDialog("dataset")}>
           <ListItemIcon><DatasetIcon /></ListItemIcon>
           Add to dataset…
@@ -345,9 +343,11 @@ export default function MediaCardMenu({
         sourcePersonId={personContext?.personId}
         onClose={() => setDialog(null)}
         onAssigned={(person) => {
-          if (personContext && mediaListKey) removeItem(mediaListKey, media.id);
+          if (personContext) {
+            if (mediaListKey) removeItem(mediaListKey, media.id);
+            onDeleted?.();
+          }
           setSnackbar({ message: `Assigned to ${person.name ?? "person"}`, severity: "success" });
-          onDeleted?.();
         }}
       />
       <AddToDatasetDialog

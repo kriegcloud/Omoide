@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import {
   Typography,
@@ -19,8 +19,22 @@ import { DuplicateGroup } from "../components/DuplicateGroup"; // Our new smart 
 import { DuplicateStats } from "../types";
 import { useTaskCompletionVersion, useTaskEvents } from "../TaskEventsContext";
 import { formatBytes } from "../formatUtils";
+import { useSelection } from "../context/SelectionContext";
+import { useGridSelection } from "../hooks/useMarqueeSelection";
+import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 
 const DuplicatesPage: React.FC = () => {
+  const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
+  const gridRef = useRef<HTMLDivElement>(null);
+  const { marqueeRect, onItemClick } = useGridSelection({
+    containerRef: gridRef,
+    selecting: isSelecting,
+    selectedIds,
+    onSelectionChange: setSelected,
+    onEnterSelection: beginSelecting,
+    onExitSelection: clear,
+    allowPlainDragOnItems: false,
+  });
   const [sortBy, setSortBy] = useState<"count" | "size">("count");
   const [mediaType, setMediaType] = useState<"" | "image" | "video">("");
   const [minCount, setMinCount] = useState<number>(2);
@@ -106,6 +120,10 @@ const DuplicatesPage: React.FC = () => {
 
   // This handler will be passed down to remove a whole group from the UI once it's resolved
   const handleGroupResolved = (groupId: number) => {
+    const group = duplicateGroups.find((candidate) => candidate.group_id === groupId);
+    const next = new Set(selectedIds);
+    for (const media of group?.items ?? []) next.delete(media.id);
+    setSelected(next);
     removeItem(listKey, groupId);
     setIsLoadingStats(true);
     getDuplicateStats()
@@ -183,7 +201,7 @@ const DuplicatesPage: React.FC = () => {
             </Typography>
           )}
           <Grid container spacing={2}>
-            <Grid item xs={12} sm={6} md={3}>
+            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
               <Paper variant="outlined" sx={{ p: 2 }}>
                 <Typography variant="subtitle2" color="text.secondary">
                   Duplicate Groups
@@ -193,7 +211,7 @@ const DuplicatesPage: React.FC = () => {
                 </Typography>
               </Paper>
             </Grid>
-            <Grid item xs={12} sm={6} md={3}>
+            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
               <Paper variant="outlined" sx={{ p: 2 }}>
                 <Typography variant="subtitle2" color="text.secondary">
                   Duplicate Files
@@ -203,7 +221,7 @@ const DuplicatesPage: React.FC = () => {
                 </Typography>
               </Paper>
             </Grid>
-            <Grid item xs={12} sm={6} md={3}>
+            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
               <Paper variant="outlined" sx={{ p: 2 }}>
                 <Typography variant="subtitle2" color="text.secondary">
                   Duplicate Size
@@ -213,7 +231,7 @@ const DuplicatesPage: React.FC = () => {
                 </Typography>
               </Paper>
             </Grid>
-            <Grid item xs={12} sm={6} md={3}>
+            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
               <Paper variant="outlined" sx={{ p: 2 }}>
                 <Typography variant="subtitle2" color="text.secondary">
                   Potential Reclaim
@@ -235,7 +253,7 @@ const DuplicatesPage: React.FC = () => {
             ) : (
               <Grid container spacing={2}>
                 {stats.type_breakdown.map((entry) => (
-                  <Grid key={entry.type} item xs={12} sm={6} md={4}>
+                  <Grid key={entry.type} size={{ xs: 12, sm: 6, md: 4 }}>
                     <Box sx={{ display: "flex", flexDirection: "column" }}>
                       <Typography variant="body1">
                         {typeLabel(entry.type)}
@@ -346,13 +364,26 @@ const DuplicatesPage: React.FC = () => {
           No duplicates found.
         </Typography>
       ) : (
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+        <Box ref={gridRef} sx={{ position: "relative", display: "flex", flexDirection: "column", gap: 3 }}>
+          <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
           {duplicateGroups.map(
             (group) =>
               group.items.length > 1 && (
                 <DuplicateGroup
                   key={group.group_id}
                   group={group}
+                  selecting={isSelecting}
+                  selectedIds={selectedIds}
+                  onSelectionClick={onItemClick}
+                  onSelectGroup={(checked) => {
+                    const next = new Set(selectedIds);
+                    for (const media of group.items) {
+                      if (checked) next.add(media.id);
+                      else next.delete(media.id);
+                    }
+                    beginSelecting();
+                    setSelected(next);
+                  }}
                   onGroupResolved={() => handleGroupResolved(group.group_id)}
                 />
               )

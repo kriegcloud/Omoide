@@ -12,16 +12,23 @@ import {
   DialogActions,
   Snackbar,
   Alert,
+  Checkbox,
+  FormControlLabel,
 } from "@mui/material";
 import Grid from "@mui/material/Grid";
 import { DuplicateGroup as GroupType } from "../types";
 import { DuplicateMediaCard } from "./DuplicateMediaCard";
 import { resolveDuplicates } from "../services/duplicates";
 import { CircularProgress } from "@mui/material";
+import type { SelectionClickEvent } from "../hooks/useMarqueeSelection";
 
 interface DuplicateGroupProps {
   group: GroupType;
   onGroupResolved: () => void;
+  selecting: boolean;
+  selectedIds: Set<number>;
+  onSelectionClick: (id: number, event: SelectionClickEvent) => boolean;
+  onSelectGroup: (checked: boolean) => void;
 }
 
 type ActionType = "DELETE_FILES" | "DELETE_RECORDS" | "BLACKLIST_RECORDS";
@@ -30,7 +37,12 @@ type ExtendedActionType = ActionType | "MARK_NOT_DUPLICATE";
 export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
   group,
   onGroupResolved,
+  selecting,
+  selectedIds,
+  onSelectionClick,
+  onSelectGroup,
 }) => {
+  const selectedCount = group.items.filter((media) => selectedIds.has(media.id)).length;
   // The ID of the media item selected as the "master" to keep
   const [masterId, setMasterId] = useState<number>(group.items[0].id);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -89,9 +101,24 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
           gap: 2,
         }}
       >
-        <Typography variant="h6">
-          Group {group.group_id} ({group.items.length} items)
-        </Typography>
+        <Box>
+          <Typography variant="h6">
+            Group {group.group_id} ({group.items.length} items)
+          </Typography>
+          <FormControlLabel
+            data-no-marquee
+            control={
+              <Checkbox
+                size="small"
+                checked={selectedCount === group.items.length}
+                indeterminate={selectedCount > 0 && selectedCount < group.items.length}
+                onChange={(_, checked) => onSelectGroup(checked)}
+                inputProps={{ "aria-label": `Select all in group ${group.group_id}` }}
+              />
+            }
+            label={<Typography variant="body2">Select all in group</Typography>}
+          />
+        </Box>
         <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
           <Button
             size="small"
@@ -136,8 +163,12 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
           <Grid key={media.id} size={{ xs: 6, sm: 4, md: 3, lg: 2 }}>
             <DuplicateMediaCard
               media={media}
+              groupId={group.group_id}
               isSelectedAsMaster={media.id === masterId}
               onSelectMaster={() => setMasterId(media.id)}
+              selecting={selecting}
+              selected={selectedIds.has(media.id)}
+              onSelectionClick={onSelectionClick}
             />
           </Grid>
         ))}
