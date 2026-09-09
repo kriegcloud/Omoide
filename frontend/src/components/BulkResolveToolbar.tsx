@@ -15,7 +15,9 @@ import BlockIcon from "@mui/icons-material/Block";
 import SelectAllIcon from "@mui/icons-material/SelectAll";
 import ClearAllIcon from "@mui/icons-material/ClearAll";
 import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
+import PersonAddIcon from "@mui/icons-material/PersonAdd";
 
+import AssignMediaToPersonDialog from "./AssignMediaToPersonDialog";
 import ConfirmDialog from "./ConfirmDialog";
 import { formatBytes } from "../formatUtils";
 
@@ -60,6 +62,7 @@ interface BulkResolveToolbarProps {
     selectAll?: boolean;
   }) => Promise<{ removed: number }>;
   onResolved: (removedIds: number[], removed: number, selectAll: boolean) => void;
+  onAssigned?: (mediaIds: number[], skippedCount: number) => void;
   onFeedback: (message: string, severity: FeedbackSeverity) => void;
   extraActions?: React.ReactNode;
 }
@@ -74,12 +77,14 @@ const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
   onClearSelection,
   resolve,
   onResolved,
+  onAssigned,
   onFeedback,
   extraActions,
 }) => {
   const [pending, setPending] = useState<{ action: BulkResolveAction; selectAll: boolean } | null>(null);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [allMenuAnchor, setAllMenuAnchor] = useState<null | HTMLElement>(null);
+  const [assignIds, setAssignIds] = useState<number[] | null>(null);
 
   const selectedCount = selectedIds.size;
 
@@ -153,6 +158,15 @@ const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
               disabled={selectedCount === 0}
             >
               Clear selection
+            </Button>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<PersonAddIcon />}
+              onClick={() => setAssignIds(Array.from(selectedIds))}
+              disabled={selectedCount === 0 || isActionLoading}
+            >
+              Assign to person…
             </Button>
             {extraActions}
             <Divider flexItem orientation="vertical" sx={{ display: { xs: "none", sm: "block" } }} />
@@ -228,6 +242,22 @@ const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
           </Stack>
         </Stack>
       </Paper>
+
+      <AssignMediaToPersonDialog
+        open={assignIds !== null}
+        mediaIds={assignIds ?? []}
+        onClose={() => setAssignIds(null)}
+        onAssigned={(person, skippedCount) => {
+          const ids = assignIds ?? [];
+          const assignedCount = ids.length - skippedCount;
+          onAssigned?.(ids, skippedCount);
+          onClearSelection();
+          onFeedback(
+            `Assigned ${assignedCount} item(s) to ${person.name ?? "person"}${skippedCount ? `; ${skippedCount} skipped` : ""}`,
+            skippedCount ? "warning" : "success"
+          );
+        }}
+      />
 
       <ConfirmDialog
         open={Boolean(pending)}

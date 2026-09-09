@@ -105,6 +105,18 @@ const NopersonsPage: React.FC = () => {
     [refetch, removeItems]
   );
 
+  const handleAssigned = useCallback(
+    (mediaIds: number[], skippedCount: number) => {
+      if (skippedCount) {
+        // The dialog exposes a count, so refetch to reconcile skipped items.
+        void refetch();
+      } else {
+        removeItems(mediaIds);
+      }
+    },
+    [refetch, removeItems]
+  );
+
   const totalSize = items.reduce((sum, i) => sum + (i.size || 0), 0);
   const selectedCount = selectedIds.size;
 
@@ -162,6 +174,7 @@ const NopersonsPage: React.FC = () => {
         onClearSelection={clearSelection}
         resolve={resolveSelection}
         onResolved={handleResolved}
+        onAssigned={handleAssigned}
         onFeedback={showFeedback}
         extraActions={
           <Button
