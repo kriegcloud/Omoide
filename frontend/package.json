@@ -29,6 +29,7 @@
         "react-masonry-css": "1.0.16",
         "react-player": "2.16.0",
         "react-router-dom": "^7.12.0",
+        "react-window": "1.8.11",
         "styled-components": "5.3.11",
         "use-resize-observer": "9.1.0",
         "zustand": "^5.0.5"
@@ -36,6 +37,7 @@
     "devDependencies": {
         "@tailwindcss/aspect-ratio": "^0.4.2",
         "@types/leaflet": "^1.9.17",
+        "@types/react-window": "1.8.8",
         "@typescript-eslint/eslint-plugin": "^8.35.1",
         "@typescript-eslint/parser": "^8.35.1",
         "@vitejs/plugin-react": "^4.0.0",
