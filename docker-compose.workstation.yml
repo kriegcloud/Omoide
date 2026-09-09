@@ -78,6 +78,17 @@ services:
         target: /app/data
         bind:
           create_host_path: false
+      # Built SPA lives on the host so a frontend-only change is
+      # `scripts/deploy-frontend.sh` (build + rsync), not an image rebuild
+      # and restart that kills in-process tasks. The mount shadows the copy
+      # baked into the image, so run the deploy script once before the
+      # first `docker compose up` or the SPA answers "Frontend not found".
+      - type: bind
+        source: "${HOST_DATA_DIR:?HOST_DATA_DIR must be set}/static"
+        target: /app/static
+        read_only: true
+        bind:
+          create_host_path: true
     healthcheck:
       test:
         - CMD
