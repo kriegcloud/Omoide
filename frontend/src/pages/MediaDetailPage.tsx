@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import React, { lazy, Suspense, useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
   Container,
@@ -15,7 +15,8 @@ import {
   useTheme,
   useMediaQuery,
 } from "@mui/material";
-import { ArrowBackIosNew, ArrowForwardIos } from "@mui/icons-material";
+import ArrowBackIosNew from "@mui/icons-material/ArrowBackIosNew";
+import ArrowForwardIos from "@mui/icons-material/ArrowForwardIos";
 import CloseIcon from "@mui/icons-material/Close";
 
 import { useListStore } from "../stores/useListStore";
@@ -26,7 +27,6 @@ import { MediaDisplay } from "../components/MediaDisplay";
 import { MediaHeader } from "../components/MediaHeader";
 import { MediaContentTabs } from "../components/MediaContentTabs";
 import { SwipeHint } from "../components/SwipeHint";
-import ImageEditorDialog from "../components/ImageEditorDialog";
 import BeforeAfterCompare from "../components/BeforeAfterCompare";
 import { listRepairs } from "../services/repairs";
 
@@ -41,6 +41,8 @@ import {
   openMediaFile,
 } from "../services/mediaActions";
 import { getTask } from "../services/task";
+
+const ImageEditorDialog = lazy(() => import("../components/ImageEditorDialog"));
 
 export default function MediaDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -594,39 +596,41 @@ export default function MediaDetailPage() {
                 onConfirmDeleteRecord={confirmDeleteRecord}
                 onConfirmDeleteFile={confirmDeleteFile}
               />
-              {typeof detail.media.duration !== "number" && (
-                <ImageEditorDialog
-                  open={editorOpen}
-                  media={detail.media}
-                  mediaListKey={mediaListKey}
-                  onClose={() => setEditorOpen(false)}
-                  onSaved={(savedDetail, mode) => {
-                    if (mode === "overwrite") {
-                      const cacheVersion = Date.now();
-                      const updatedMedia = {
-                        ...savedDetail.media,
-                        cache_version: cacheVersion,
-                      };
-                      handleMediaUpdate(updatedMedia);
-                      if (mediaListKey) updateItem(mediaListKey, updatedMedia);
-                      void fetchDetail().then(() => {
-                        setDetail((current) =>
-                          current
-                            ? {
-                                ...current,
-                                media: { ...current.media, cache_version: cacheVersion },
-                              }
-                            : current
-                        );
-                      });
-                      setSnackbar({
-                        open: true,
-                        message: "Original image updated; face processing has started",
-                        severity: "success",
-                      });
-                    }
-                  }}
-                />
+              {editorOpen && typeof detail.media.duration !== "number" && (
+                <Suspense fallback={<CircularProgress size={24} />}>
+                  <ImageEditorDialog
+                    open={editorOpen}
+                    media={detail.media}
+                    mediaListKey={mediaListKey}
+                    onClose={() => setEditorOpen(false)}
+                    onSaved={(savedDetail, mode) => {
+                      if (mode === "overwrite") {
+                        const cacheVersion = Date.now();
+                        const updatedMedia = {
+                          ...savedDetail.media,
+                          cache_version: cacheVersion,
+                        };
+                        handleMediaUpdate(updatedMedia);
+                        if (mediaListKey) updateItem(mediaListKey, updatedMedia);
+                        void fetchDetail().then(() => {
+                          setDetail((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  media: { ...current.media, cache_version: cacheVersion },
+                                }
+                              : current
+                          );
+                        });
+                        setSnackbar({
+                          open: true,
+                          message: "Original image updated; face processing has started",
+                          severity: "success",
+                        });
+                      }
+                    }}
+                  />
+                </Suspense>
               )}
               {isDetailLoading ? (
                 <Box

@@ -3,6 +3,7 @@ import { Box, Paper } from "@mui/material";
 import { VideoWithPreview } from "./VideoPlayer";
 import { ImageLightbox } from "./ImageLightbox";
 import { Media } from "../types";
+import { MediaImage } from "./MediaImage";
 import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 
@@ -44,10 +45,11 @@ export function MediaDisplay({ media, initialTime, autoplay, seekRequest, onProg
             onProgress={onProgress}
           />
         ) : (
-          <Box
-            component="img"
+          <MediaImage
             src={mediaUrl}
             alt={filename}
+            width={media?.width || undefined}
+            height={media?.height || undefined}
             onClick={() => setLightboxOpen(true)}
             sx={{
               width: "100%",

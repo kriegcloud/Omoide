@@ -1,6 +1,7 @@
-import { MouseEvent, useEffect, useState } from "react";
+import { lazy, Suspense, MouseEvent, useEffect, useState } from "react";
 import {
   Alert,
+  CircularProgress,
   Divider,
   IconButton,
   ListItemIcon,
@@ -37,11 +38,12 @@ import AssignMediaToPersonDialog from "./AssignMediaToPersonDialog";
 import ConfirmDialog from "./ConfirmDialog";
 import FolderPickerDialog from "./FolderPickerDialog";
 import RenameMediaDialog from "./RenameMediaDialog";
-import ImageEditorDialog from "./ImageEditorDialog";
 import AddToDatasetDialog from "./AddToDatasetDialog";
 import RepairDialog from "./RepairDialog";
 import { startRepair } from "../services/repairs";
 import type { RepairProfile } from "../types";
+
+const ImageEditorDialog = lazy(() => import("./ImageEditorDialog"));
 
 export interface MediaPersonContext {
   personId: number;
@@ -316,20 +318,22 @@ export default function MediaCardMenu({
         onClose={() => setDialog(null)}
         onConfirm={(filename) => void confirmRename(filename)}
       />
-      {editorMedia && (
-        <ImageEditorDialog
-          open={dialog === "edit"}
-          media={editorMedia}
-          mediaListKey={mediaListKey}
-          onClose={() => setDialog(null)}
-          onSaved={(detail, mode) => {
-            if (mode === "overwrite") applyMedia(detail.media);
-            setSnackbar({
-              message: mode === "overwrite" ? "Original image updated" : "Edited copy saved",
-              severity: "success",
-            });
-          }}
-        />
+      {editorMedia && dialog === "edit" && (
+        <Suspense fallback={<CircularProgress size={24} />}>
+          <ImageEditorDialog
+            open={dialog === "edit"}
+            media={editorMedia}
+            mediaListKey={mediaListKey}
+            onClose={() => setDialog(null)}
+            onSaved={(detail, mode) => {
+              if (mode === "overwrite") applyMedia(detail.media);
+              setSnackbar({
+                message: mode === "overwrite" ? "Original image updated" : "Edited copy saved",
+                severity: "success",
+              });
+            }}
+          />
+        </Suspense>
       )}
       <FolderPickerDialog
         open={dialog === "move"}

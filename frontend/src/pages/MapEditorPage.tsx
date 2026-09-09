@@ -8,7 +8,6 @@ import {
   useMapEvents,
   useMap,
 } from "react-leaflet";
-import "leaflet/dist/leaflet.css";
 import {
   Box,
   Typography,
@@ -28,8 +27,9 @@ import {
 } from "../services/mapEditor";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import CancelIcon from "@mui/icons-material/Cancel";
-import L from "leaflet";
+import L from "../utils/leaflet";
 import { useListStore, defaultListState } from "../stores/useListStore";
+import { MediaImage } from "../components/MediaImage";
 import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 
@@ -261,12 +261,13 @@ export default function MapEditorPage() {
                 : `${API}/thumbnails/${m.id}.jpg`;
 
               return (
-                <Box
+                <MediaImage
                   key={m.id}
-                  component="img"
                   // Use the correctly determined URL
                   src={thumbUrl}
                   alt={`Un-located media ${m.id}`}
+                  width={m.width || undefined}
+                  height={m.height || undefined}
                   onClick={() => handleSelectMedia(m)}
                   sx={{
                     width: "100%",
@@ -329,8 +330,9 @@ export default function MapEditorPage() {
                   <Typography variant="body2" gutterBottom>
                     Set location for this photo?
                   </Typography>
-                  <Box
-                    component="img"
+                  <MediaImage
+                    width={selectedMedia.width || undefined}
+                    height={selectedMedia.height || undefined}
                     src={
                       selectedMedia.thumbnail_path
                         ? `${API}/thumbnails/${encodeFilePath(selectedMedia.thumbnail_path)}`

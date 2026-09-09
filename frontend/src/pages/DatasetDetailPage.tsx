@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import {
   Alert,
@@ -26,7 +26,6 @@ import {
 import SaveIcon from "@mui/icons-material/Save";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
 import { useNavigate, useParams } from "react-router-dom";
-import ImageEditorDialog from "../components/ImageEditorDialog";
 import BatchCropDialog from "../components/BatchCropDialog";
 import RepairDialog from "../components/RepairDialog";
 import TrainingRunsPanel from "../components/TrainingRunsPanel";
@@ -65,6 +64,8 @@ import { getMedia } from "../services/media";
 import { useTaskCompletionVersion } from "../TaskEventsContext";
 
 const COMPOSITION_COLORS = ["primary.main", "success.main", "warning.main", "secondary.main", "info.main"];
+
+const ImageEditorDialog = lazy(() => import("../components/ImageEditorDialog"));
 
 function CompositionPanel({ analysis, gaps, items, onPreview }: {
   analysis: DatasetAnalysis;
@@ -479,12 +480,12 @@ export default function DatasetDetailPage() {
       />
 
       <Dialog open={Boolean(captionItem)} onClose={() => setCaptionItem(null)} fullWidth maxWidth="sm"><DialogTitle>Edit caption</DialogTitle><DialogContent><TextField autoFocus multiline minRows={3} fullWidth value={caption} onChange={(event) => setCaption(event.target.value)} sx={{ mt: 1 }} /></DialogContent><DialogActions><Button onClick={() => setCaptionItem(null)}>Cancel</Button><Button variant="contained" onClick={async () => { if (captionItem) await patchItem(captionItem, { caption_override: caption.trim() || null }); setCaptionItem(null); }}>Save caption</Button></DialogActions></Dialog>
-      {cropItem && <ImageEditorDialog
+      {cropItem && <Suspense fallback={<CircularProgress size={24} />}><ImageEditorDialog
         open media={{ ...cropItem.media, tags: [], faces: [], extracted_scenes: false } as Media}
         mode="virtual" loadableDesignState={(cropItem.edit_design_state as FilerobotDesignState | null) ?? null}
         onClose={() => setCropItem(null)}
         onOpsReady={(ops, designState) => { void patchItem(cropItem, { edit_ops: ops, edit_design_state: designState }); setCropItem(null); }}
-      />}
+      /></Suspense>}
     </Container>
   );
 }

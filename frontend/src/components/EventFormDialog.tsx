@@ -12,6 +12,8 @@ import {
   FormControlLabel,
 } from "@mui/material";
 import { TimelineEvent } from "../types";
+import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
+import { AdapterDateFns } from "@mui/x-date-pickers/AdapterDateFns";
 import { MobileDatePicker } from "@mui/x-date-pickers/MobileDatePicker";
 import { TimelineEventCreate } from "../types"; // Assuming this type is defined
 
@@ -104,19 +106,21 @@ export const EventFormDialog: React.FC<EventFormDialogProps> = ({
             value={eventData.title}
             onChange={handleChange}
           />
-          <MobileDatePicker
-            label="Event Date"
-            value={eventData.event_date}
-            onChange={handleDateChange}
-            renderInput={(params) => (
-              <TextField
-                {...params}
-                margin="dense"
-                fullWidth
-                variant="standard"
-              />
-            )}
-          />
+          <LocalizationProvider dateAdapter={AdapterDateFns}>
+            <MobileDatePicker
+              label="Event Date"
+              value={eventData.event_date}
+              onChange={handleDateChange}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  margin="dense"
+                  fullWidth
+                  variant="standard"
+                />
+              )}
+            />
+          </LocalizationProvider>
           <TextField
             margin="dense"
             name="description"

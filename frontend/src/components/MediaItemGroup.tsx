@@ -4,6 +4,7 @@ import RemoveCircleIcon from "@mui/icons-material/RemoveCircle";
 import PersonSearchIcon from "@mui/icons-material/PersonSearch";
 import PhotoLibraryIcon from "@mui/icons-material/PhotoLibrary";
 import { MediaPreview } from "../types";
+import { MediaImage } from "./MediaImage";
 import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 
@@ -48,8 +49,9 @@ export const MediaItemGroup: React.FC<MediaItemGroupProps> = ({
               },
             }}
           >
-            <Box
-              component="img"
+            <MediaImage
+              width={media.width || undefined}
+              height={media.height || undefined}
               src={`${API}/thumbnails/${media.thumbnail_path ? encodeFilePath(media.thumbnail_path) : `${media.id}.jpg`}`}
               onClick={onViewAll}
               sx={{

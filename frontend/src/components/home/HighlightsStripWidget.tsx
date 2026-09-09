@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Box } from "@mui/material";
 import StarIcon from "@mui/icons-material/Star";
 import { Link, useLocation } from "react-router-dom";
+import { MediaImage } from "../MediaImage";
 import { API } from "../../config";
 import { encodeFilePath } from "../../urlUtils";
 import { getHighlightYears, getHighlights } from "../../services/features";
@@ -63,10 +64,11 @@ export function HighlightsStripWidget() {
             to={`/medium/${media.id}`}
             state={{ backgroundLocation: location }}
           >
-            <Box
-              component="img"
+            <MediaImage
               src={thumbUrl(media)}
               alt={media.filename}
+              width={media.width || undefined}
+              height={media.height || undefined}
               loading="lazy"
               sx={{
                 height: 120,

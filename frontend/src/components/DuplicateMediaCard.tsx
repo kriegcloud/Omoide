@@ -99,6 +99,8 @@ export const DuplicateMediaCard: React.FC<DuplicateMediaCardProps> = ({
           component="img"
           image={thumbUrl}
           alt={filename}
+          width={media.width || undefined}
+          height={media.height || undefined}
           draggable={!selecting}
           sx={{ width: "100%", height: "100%", objectFit: "cover" }}
         />

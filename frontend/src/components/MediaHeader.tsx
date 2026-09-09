@@ -4,7 +4,13 @@ import {
   IconButton,
   Tooltip,
 } from "@mui/material";
-import { Vrpano, Delete, DeleteForever, FolderOpen, OpenInNew, Favorite, FavoriteBorder } from "@mui/icons-material";
+import Vrpano from "@mui/icons-material/Vrpano";
+import Delete from "@mui/icons-material/Delete";
+import DeleteForever from "@mui/icons-material/DeleteForever";
+import FolderOpen from "@mui/icons-material/FolderOpen";
+import OpenInNew from "@mui/icons-material/OpenInNew";
+import Favorite from "@mui/icons-material/Favorite";
+import FavoriteBorder from "@mui/icons-material/FavoriteBorder";
 import EditIcon from "@mui/icons-material/Edit";
 import { Button } from "@mui/material";
 import { Media } from "../types";

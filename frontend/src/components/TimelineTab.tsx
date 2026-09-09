@@ -246,6 +246,8 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia,
                   <img
                     src={`${API}/thumbnails/${media.thumbnail_path ? encodeFilePath(media.thumbnail_path) : `${media.id}.jpg`}`}
                     alt={media.filename}
+                    width={media.width || undefined}
+                    height={media.height || undefined}
                     style={{ height: 180, objectFit: "cover", width: "100%" }}
                   />
                   {(onDetachMedia || onJumpToFace) && (

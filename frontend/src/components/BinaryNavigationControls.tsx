@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Fade, IconButton, Tooltip, SxProps, Theme } from "@mui/material";
-import { ArrowBackIosNew, ArrowForwardIos } from "@mui/icons-material";
+import ArrowBackIosNew from "@mui/icons-material/ArrowBackIosNew";
+import ArrowForwardIos from "@mui/icons-material/ArrowForwardIos";
 import { useLocation, useNavigate } from "react-router-dom";
 import type { Location } from "react-router-dom";
 import { getConfig } from "../services/config";

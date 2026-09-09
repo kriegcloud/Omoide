@@ -4,6 +4,7 @@ import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { Link, useLocation } from "react-router-dom";
+import { MediaImage } from "./MediaImage";
 import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 import { getMemories } from "../services/features";
@@ -99,10 +100,11 @@ export function MemoriesRail() {
                   to={`/medium/${media.id}`}
                   state={{ backgroundLocation: location }}
                 >
-                  <Box
-                    component="img"
+                  <MediaImage
                     src={thumbUrl(media)}
                     alt={media.filename}
+                    width={media.width || undefined}
+                    height={media.height || undefined}
                     loading="lazy"
                     sx={{
                       height: 120,

@@ -144,3 +144,5 @@ omoide.env
 .gemini
 .aider*
 .data
+# Local frontend bundle analysis
+/frontend/bundle-stats.html

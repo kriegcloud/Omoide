@@ -40,7 +40,7 @@ export default defineConfig(({ mode, command }) => {
       },
     },
     build: {
-      minify: false,
+      minify: "esbuild",
     },
     resolve: {
       alias: {

@@ -1,7 +1,7 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { lazy, Suspense, useState, useRef, useEffect } from "react";
 import { useLocation } from "react-router-dom";
-import ReactPlayer from "react-player";
 import {
+  CircularProgress,
   CardMedia,
   Box,
   Chip,
@@ -18,6 +18,8 @@ import MediaCardMenu, { MediaPersonContext } from "./MediaCardMenu";
 import DatasetItemMenu from "./DatasetItemMenu";
 import SelectableTileFrame from "./SelectableTileFrame";
 import type { SelectionClickEvent } from "../hooks/useMarqueeSelection";
+
+const ReactPlayer = lazy(() => import("react-player"));
 
 export interface MediaDatasetContext {
   caption?: string | null;
@@ -299,6 +301,8 @@ export default function MediaCard({
               draggable={false}
               src={thumbUrl}
               alt={filename}
+              width={media?.width || undefined}
+              height={media?.height || undefined}
               sx={{
                 width: "100%",
                 height: "100%",
@@ -321,24 +325,26 @@ export default function MediaCard({
                   // Keep pointer events to allow ReactPlayer to be interactive
                 }}
               >
-                <ReactPlayer
-                  url={playerUrl}
-                  playing={isPlayerActive}
-                  loop
-                  muted
-                  width="100%"
-                  height="100%"
-                  playsinline
-                  config={{
-                    file: {
-                      attributes: {
-                        crossOrigin: "anonymous",
-                        preload: "metadata",
+                <Suspense fallback={<CircularProgress size={24} sx={{ position: "absolute", top: "calc(50% - 12px)", left: "calc(50% - 12px)" }} />}>
+                  <ReactPlayer
+                    url={playerUrl}
+                    playing={isPlayerActive}
+                    loop
+                    muted
+                    width="100%"
+                    height="100%"
+                    playsinline
+                    config={{
+                      file: {
+                        attributes: {
+                          crossOrigin: "anonymous",
+                          preload: "metadata",
+                        },
                       },
-                    },
-                  }}
-                  style={{ position: "absolute", top: 0, left: 0 }}
-                />
+                    }}
+                    style={{ position: "absolute", top: 0, left: 0 }}
+                  />
+                </Suspense>
               </Box>
             )}
           </Box>
