@@ -103,7 +103,8 @@ export function TaskEventsProvider({
           task &&
             (task.status === "completed" ||
               task.status === "failed" ||
-              task.status === "cancelled")
+              task.status === "cancelled" ||
+              task.status === "interrupted")
         )
     );
     const completedTasks = resolvedTasks.filter(

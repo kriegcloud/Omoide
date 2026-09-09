@@ -115,6 +115,7 @@ from app.logger import configure_file_logging, logger
 from app.models import ProcessingTask
 from app.processor_registry import load_processors
 from app.services.releases import get_latest_release_info
+from app.tasks.resume import is_resumable, resume_task
 
 # Configure uvicorn loggers' verbosity
 logging.getLogger("uvicorn.error").setLevel(logging.INFO)
@@ -438,16 +439,13 @@ def configure_training_reconcile_job() -> None:
 
 
 def _cleanup_tasks_on_startup():
-    """Cancel 'running' tasks and delete 'pending' tasks left from a previous run."""
+    """Interrupt resumable work, cancel other running work, and drop pending jobs."""
     with Session(db.engine) as session:
-        # Fetch all tasks; we'll resolve running/pending below
-        tasks = session.exec(
-            select(ProcessingTask).where(ProcessingTask.status != "finished")
-        ).all()
+        tasks = session.exec(select(ProcessingTask)).all()
         changed = False
         for t in tasks:
             if t.status == "running":
-                t.status = "cancelled"
+                t.status = "interrupted" if is_resumable(t) else "cancelled"
                 t.finished_at = datetime.now()
                 session.add(t)
                 changed = True
@@ -457,16 +455,44 @@ def _cleanup_tasks_on_startup():
         if changed:
             session.commit()
 
+        _clear_deleted_resume_links(session, tasks)
+        if settings.scan.auto_resume_interrupted_tasks:
+            for task in tasks:
+                if (
+                    task.status == "interrupted"
+                    and is_resumable(task)
+                    and not (task.result or {}).get("resumed_by")
+                ):
+                    try:
+                        resume_task(session, task)
+                    except HTTPException as exc:
+                        # An active successor/type or presentation mode must not
+                        # stop other eligible types from being considered.
+                        logger.info("Auto-resume skipped task %s: %s", task.id, exc.detail)
+
+
+def _clear_deleted_resume_links(session: Session, tasks: list[ProcessingTask]) -> None:
+    """Allow retry if shutdown/startup removed a successor before it could start."""
+    deleted_ids = {task.id for task in tasks if task.status == "pending"}
+    changed = False
+    for task in tasks:
+        if task.status != "pending" and (task.result or {}).get("resumed_by") in deleted_ids:
+            task.result = {key: value for key, value in task.result.items() if key != "resumed_by"}
+            session.add(task)
+            changed = True
+    if changed:
+        session.commit()
+
 
 def _cleanup_tasks_on_shutdown():
-    """Delete 'pending' tasks and cancel any 'running' tasks on shutdown."""
+    """Delete pending jobs and interrupt resumable work before shutdown."""
     try:
         with Session(db.engine) as session:
             tasks = session.exec(select(ProcessingTask)).all()
             changed = False
             for t in tasks:
                 if t.status == "running":
-                    t.status = "cancelled"
+                    t.status = "interrupted" if is_resumable(t) else "cancelled"
                     t.finished_at = datetime.now()
                     session.add(t)
                     changed = True
@@ -475,6 +501,7 @@ def _cleanup_tasks_on_shutdown():
                     changed = True
             if changed:
                 session.commit()
+            _clear_deleted_resume_links(session, tasks)
     except Exception as e:
         logger.warning("Task cleanup on shutdown failed: %s", e)
 

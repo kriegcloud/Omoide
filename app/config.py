@@ -521,6 +521,8 @@ class RepairSettings(BaseModel):
 
 
 class ScanSettings(BaseModel):
+    # Opt in explicitly: interrupted processors can include expensive CLIP backfills.
+    auto_resume_interrupted_tasks: bool = False
     # enables automatic background scans for new files
     auto_scan: bool = False
     # How often to scan for files in minutes

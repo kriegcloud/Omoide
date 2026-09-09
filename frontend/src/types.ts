@@ -66,7 +66,8 @@ export type ImageRepairStatus =
   | "running"
   | "succeeded"
   | "failed"
-  | "cancelled";
+  | "cancelled"
+  | "interrupted";
 
 export interface ImageRepairJob {
   id: string;
@@ -268,6 +269,7 @@ export type AnnotationAttemptStatus =
   | "succeeded"
   | "failed"
   | "cancelled"
+  | "interrupted"
   | "lost"
   | "unknown";
 export type AnnotationReviewStatus =
@@ -361,6 +363,7 @@ export type TaskStatus =
   | "running"
   | "completed"
   | "cancelled"
+  | "interrupted"
   | "failed";
 
 export interface MemoryGroup {
@@ -449,6 +452,9 @@ export interface Task {
   merge_processed?: number;
   merge_pending?: number;
   result?: Record<string, unknown> | null;
+  resumable?: boolean;
+  resumed_by?: string | null;
+  params?: Record<string, unknown> | null;
   summary?: string | null;
   duration_seconds?: number | null;
   started_at?: string | null;

@@ -54,6 +54,17 @@ export const cancelTask = async (id: string): Promise<void> => {
   if (!res.ok) throw new Error(`Failed to cancel task ${id}`);
 };
 
+export const resumeTask = async (id: string): Promise<Task> => {
+  const res = await fetch(`${API}/api/tasks/${id}/resume`, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(
+      typeof body?.detail === "string" ? body.detail : "Failed to resume task"
+    );
+  }
+  return res.json();
+};
+
 export const getTaskFailures = async (id: string): Promise<TaskFailure[]> => {
   const res = await fetch(`${API}/api/tasks/${id}/failures`);
   if (!res.ok) throw new Error(`Failed to fetch failures for task ${id}`);

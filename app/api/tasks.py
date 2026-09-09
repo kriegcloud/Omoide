@@ -41,6 +41,7 @@ from app.tasks import (
     state as task_state,
 )
 from app.utils import get_image_taken_date, get_video_taken_date
+from app.tasks.resume import is_resumable, resume_task
 
 router = APIRouter()
 
@@ -54,6 +55,8 @@ def _to_read(
     base["failure_count"] = task_state.get_failure_count(task.id)
     base["summary"] = summarize_task(task)
     base["duration_seconds"] = task_duration_seconds(task)
+    base["resumable"] = is_resumable(task)
+    base["resumed_by"] = (task.result or {}).get("resumed_by")
     return ProcessingTaskRead(**base)
 
 
@@ -72,6 +75,7 @@ async def start_media_processing(
         background_tasks=background_tasks,
         task_type="process_media",
         callable_task=run_media_processing,
+        params={},
     )
 
 
@@ -126,6 +130,7 @@ def start_person_clustering(
         background_tasks,
         "cluster_persons",
         callable_task=run_person_clustering,
+        params={},
     )
     return task
 
@@ -144,6 +149,7 @@ def start_scan(
         background_tasks=background_tasks,
         task_type="scan",
         callable_task=run_scan,
+        params={},
     )
     return task
 
@@ -163,6 +169,7 @@ def start_duplicate_detection(
         background_tasks=background_tasks,
         task_type="find_duplicates",
         callable_task=lambda task_id: run_duplicate_detection(task_id, threshold),
+        params={} if threshold == 2 else {"threshold": threshold},
     )
     return task
 
@@ -181,6 +188,7 @@ async def start_missing_files_cleanup(
         background_tasks=background_tasks,
         task_type="clean_missing_files",
         callable_task=clean_missing_files,
+        params={},
     )
 
 
@@ -198,6 +206,7 @@ async def start_blur_scoring(
         background_tasks=background_tasks,
         task_type="compute_blur_scores",
         callable_task=compute_blur_scores,
+        params={},
     )
 
 
@@ -215,6 +224,7 @@ async def start_build_events(
         background_tasks=background_tasks,
         task_type="build_events",
         callable_task=run_build_events,
+        params={},
     )
 
 
@@ -232,6 +242,7 @@ async def start_geocode_places(
         background_tasks=background_tasks,
         task_type="geocode_places",
         callable_task=run_geocode_places,
+        params={},
     )
 
 
@@ -258,6 +269,7 @@ async def start_single_processor(
         callable_task=lambda task_id: run_single_processor(
             task_id, processor_name, force=force
         ),
+        params={"processor_name": processor_name, "force": force},
     )
 
 
@@ -287,6 +299,7 @@ async def start_processors_for_media(
         callable_task=lambda task_id: run_processors_for_media(
             task_id, body.processor_names, body.media_ids
         ),
+        params={"processor_names": body.processor_names, "media_ids": body.media_ids},
     )
 
 
@@ -304,6 +317,7 @@ async def start_backfill_demographics(
         background_tasks=background_tasks,
         task_type="backfill_demographics",
         callable_task=run_backfill_demographics,
+        params={},
     )
 
 
@@ -321,6 +335,7 @@ async def start_backfill_face_timestamps(
         background_tasks=background_tasks,
         task_type="backfill_face_timestamps",
         callable_task=run_backfill_face_timestamps,
+        params={},
     )
 
 
@@ -338,6 +353,7 @@ async def start_backfill_face_quality(
         background_tasks=background_tasks,
         task_type="backfill_face_quality",
         callable_task=run_backfill_face_quality,
+        params={},
     )
 
 
@@ -386,9 +402,23 @@ def cancel_task(
     return task
 
 
-@router.get("/", response_model=list[ProcessingTask], summary="List all tasks")
+@router.post(
+    "/{task_id}/resume",
+    response_model=ProcessingTaskRead,
+    status_code=201,
+    summary="Resume an interrupted, cancelled, or failed task",
+)
+def resume_task_endpoint(task_id: str, session: Session = Depends(get_session)):
+    task = session.get(ProcessingTask, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return _to_read(resume_task(session, task))
+
+
+@router.get("/", response_model=list[ProcessingTaskRead], summary="List all tasks")
 def list_tasks(session: Session = Depends(get_session)):
-    return session.exec(select(ProcessingTask)).all()
+    progress_map = task_state.get_task_progress()
+    return [_to_read(task, progress_map) for task in session.exec(select(ProcessingTask)).all()]
 
 
 @router.get(
@@ -426,7 +456,7 @@ def list_recent_tasks(
 ):
     clamped_limit = min(50, max(1, limit))
     query = select(ProcessingTask).where(
-        ProcessingTask.status.in_(("completed", "failed", "cancelled"))
+        ProcessingTask.status.in_(("completed", "failed", "cancelled", "interrupted"))
     )
     if task_type is not None:
         query = query.where(ProcessingTask.task_type == task_type)

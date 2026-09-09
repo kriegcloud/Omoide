@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy.exc import OperationalError
@@ -73,6 +73,7 @@ def create_and_run_task(
     callable_task: Callable[[str], None],
     *,
     reuse_running: bool = True,
+    params: dict[str, Any] | None = None,
 ) -> ProcessingTask:
     """
     Creates a processing task in the database and adds the actual job to the
@@ -100,7 +101,7 @@ def create_and_run_task(
         logger.info("%s is already running. Reusing existing task.", task_type)
         return existing_task
 
-    task = ProcessingTask(task_type=task_type, total=0, processed=0)
+    task = ProcessingTask(task_type=task_type, total=0, processed=0, params=params)
     session.add(task)
     session.commit()
     session.refresh(task)

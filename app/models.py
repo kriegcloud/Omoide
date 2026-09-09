@@ -13,6 +13,7 @@ class Status(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     CANCELLED = "cancelled"
+    INTERRUPTED = "interrupted"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -704,6 +705,9 @@ class ProcessingTask(SQLModel, table=True):
     result: dict[str, Any] | None = Field(
         default=None, sa_column=Column(JSON, nullable=True)
     )
+    params: dict[str, Any] | None = Field(
+        default=None, sa_column=sa.Column(sa.JSON, nullable=True)
+    )
 
     class Config:
         from_attributes = True
@@ -721,6 +725,9 @@ class ProcessingTaskRead(SQLModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     result: dict[str, Any] | None = None
+    params: dict[str, Any] | None = None
+    resumable: bool = False
+    resumed_by: str | None = None
     summary: str | None = None
     duration_seconds: float | None = None
     current_item: str | None = None
