@@ -193,6 +193,27 @@ export interface FaceRead {
   similarity?: number;
 }
 
+export interface OrphanFaceSuggestion {
+  face: FaceRead;
+  person_id: number;
+  person_name: string;
+  score: number;
+  pose_bin: "frontal" | "quarter" | "profile" | "unknown";
+}
+
+export interface SuggestedFaceAssignment {
+  face_id: number;
+  person_id: number;
+}
+
+export interface AssignSuggestedFacesResult {
+  assigned: number;
+  skipped: {
+    face_id: number;
+    reason: "unknown_face" | "face_already_assigned" | "unknown_person";
+  }[];
+}
+
 export interface SceneSearchResult {
   scene_id: number;
   media_id: number;
