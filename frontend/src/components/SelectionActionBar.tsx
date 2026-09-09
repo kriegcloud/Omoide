@@ -27,6 +27,7 @@ import AssignMediaToPersonDialog from "./AssignMediaToPersonDialog";
 import FolderPickerDialog from "./FolderPickerDialog";
 import { batchEditMedia, bulkMoveMedia } from "../services/mediaActions";
 import { attachMediaToPersonBulk, detachMediaFromPersonBulk } from "../services/personActions";
+import { assignFace } from "../services/faceActions";
 import { useListStore } from "../stores/useListStore";
 import AddToDatasetDialog from "./AddToDatasetDialog";
 import { useLastEditStore } from "../stores/useLastEditStore";
@@ -197,7 +198,7 @@ export const SelectionActionBar: React.FC = () => {
                 try {
                   const result = await detachMediaFromPersonBulk(personId, Array.from(selectedIds));
                   setSnackbar({
-                    open: true,
+                    open: !result.detached_ids?.length,
                     message: `Detached ${result.detached_ids?.length ?? 0} item(s).`,
                     severity: "success",
                   });
@@ -207,12 +208,19 @@ export const SelectionActionBar: React.FC = () => {
                     }
                   }
                   const detachedIds = [...(result.detached_ids ?? [])];
+                  const detachedFaces = result.detached_faces ?? [];
                   if (detachedIds.length) push({
                     label: `Detached ${detachedIds.length} item(s) from this person`,
                     undo: async () => {
+                      if (detachedFaces.length) {
+                        await assignFace(detachedFaces.map((face) => face.id), personId);
+                      }
                       const inverse = await attachMediaToPersonBulk(personId, detachedIds);
                       await refreshVisible();
-                      if (inverse.skipped_ids.length) throw new Error(`${inverse.skipped_ids.length} item(s) could not be reattached`);
+                      // Face-backed appearances are intentionally skipped by attach.
+                      const faceMediaIds = new Set(detachedFaces.map((face) => face.media_id));
+                      const skipped = inverse.skipped_ids.filter((id) => !faceMediaIds.has(id));
+                      if (skipped.length) throw new Error(`${skipped.length} item(s) could not be reattached`);
                     },
                   });
                   clear();

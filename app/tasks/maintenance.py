@@ -40,12 +40,13 @@ def reset_processing(session: Session) -> str:
         session.exec(delete(PersonTagLink))
         session.exec(delete(TimelineEvent))
         session.exec(delete(PersonRelationship))
-        session.exec(delete(Person))
+        deleted_people = session.exec(delete(Person)).rowcount
 
         session.exec(text("DELETE FROM face_embeddings"))
         session.exec(text("DELETE FROM media_embeddings"))
         session.exec(delete(Face))
         safe_commit(session)
+        logger.info("persons deleted count=%s reason=reset-processing", deleted_people)
 
         for _, thumb_path in face_rows:
             if not thumb_path:
@@ -74,8 +75,9 @@ def reset_clustering(session: Session) -> str:
         session.exec(delete(TimelineEvent))
         session.exec(delete(PersonTagLink))
         session.exec(delete(PersonRelationship))
-        session.exec(delete(Person))
+        deleted_people = session.exec(delete(Person)).rowcount
         safe_commit(session)
+        logger.info("persons deleted count=%s reason=reset-clustering", deleted_people)
     return "OK"
 
 

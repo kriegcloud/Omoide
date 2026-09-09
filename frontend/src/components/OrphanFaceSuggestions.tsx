@@ -48,7 +48,7 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange }: {
   const [pendingAssignments, setPendingAssignments] = useState<SuggestedFaceAssignment[] | null>(null);
   const [snackbar, setSnackbar] = useState<{
     message: string;
-    severity: "success" | "warning" | "error";
+    severity: "warning" | "error";
   } | null>(null);
 
   const fetchPage = useCallback(async (cursor: string | null = null) => {
@@ -99,7 +99,7 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange }: {
       const acceptedIds = assignments.map((item) => item.face_id).filter((id) => !skippedIds.has(id));
       if (acceptedIds.length) {
         push({
-          label: `Accepted ${result.assigned} face suggestion(s)`,
+          label: `Assigned ${result.assigned} face${result.assigned === 1 ? "" : "s"}`,
           undo: async () => {
             await detachFace(acceptedIds);
             await refreshVisible();
@@ -111,7 +111,7 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange }: {
       const message = `Accepted ${result.assigned} suggestion(s).${result.skipped.length
         ? ` Skipped ${result.skipped.length}: ${result.skipped.map((item) => `Face ${item.face_id}: ${skippedReasons[item.reason]}`).join("; ")}.`
         : ""}`;
-      setSnackbar({ message, severity: result.skipped.length ? "warning" : "success" });
+      setSnackbar(result.skipped.length ? { message, severity: "warning" } : null);
       try {
         // The cursor is a ranking offset; assignment changes both membership and
         // prototypes. Restart pagination instead of continuing a stale offset.
@@ -247,7 +247,7 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange }: {
       />
       <Snackbar
         open={snackbar !== null}
-        autoHideDuration={snackbar?.severity === "success" ? 4000 : null}
+        autoHideDuration={null}
         onClose={(_, reason) => { if (reason !== "clickaway") setSnackbar(null); }}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >

@@ -1,4 +1,5 @@
 import json
+import logging
 import math
 import os
 import subprocess
@@ -65,6 +66,8 @@ from app.models import (
 from app.subprocess_helpers import run_silent
 
 pillow_heif.register_heif_opener()
+
+audit_logger = logging.getLogger(__name__)
 
 
 def _coerce_vector_array(value: Any) -> np.ndarray | None:
@@ -1698,7 +1701,20 @@ def delete_file(session: Session, media_id: int):
         logger.warning("Failed to delete thumbnail %s: %s", thumb, exc)
 
 
-def remove_person(person_id, session):
+def log_person_deleted(person: Person, *, reason: str, **context) -> None:
+    """Record a committed person deletion and its operation-specific context."""
+    details = "".join(f" {key}={value}" for key, value in context.items())
+    audit_logger.info(
+        "person deleted id=%s name=%r reason=%s appearance_count=%s%s",
+        person.id,
+        person.name,
+        reason,
+        person.appearance_count,
+        details,
+    )
+
+
+def remove_person(person_id, session, *, reason="delete", **context):
     if settings.general.presentation_mode:
         raise HTTPException(
             status_code=403,
@@ -1748,6 +1764,7 @@ def remove_person(person_id, session):
     )
     session.delete(person)
     safe_commit(session)
+    log_person_deleted(person, reason=reason, **context)
 
 
 def _distance_to_similarity(dist: float) -> float:

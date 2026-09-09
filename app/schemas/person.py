@@ -2,7 +2,7 @@ from datetime import datetime
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from app.schemas.face import FaceRead
 from sqlmodel import SQLModel
 
@@ -188,9 +188,15 @@ class PersonMediaBulkAttachResponse(BaseModel):
     skipped_ids: list[int]
 
 
+class DetachedFace(BaseModel):
+    id: int
+    media_id: int
+
+
 class PersonMediaBulkDetachResponse(BaseModel):
     detached_ids: list[int]
     skipped_ids: list[int]
+    detached_faces: list[DetachedFace] = Field(default_factory=list)
 
 
 class PersonMediaReassignRequest(BaseModel):

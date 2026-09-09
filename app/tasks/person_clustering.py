@@ -501,7 +501,7 @@ def rebuild_person_embedding(session: Session, person_id: int) -> None:
             else int(faces_count_row)
         )
         if faces_count == 0:
-            remove_person(person_id, session)
+            remove_person(person_id, session, reason="empty-after-centroid-rebuild")
         else:
             logger.debug(
                 "Skipping centroid rebuild for person %s; no embeddings available yet",
@@ -576,7 +576,7 @@ def _merge_person_pair(
         .values(person_id=keep_id)
     )
 
-    remove_person(drop_id, session)
+    remove_person(drop_id, session, reason="merge-source", target_id=keep_id)
 
     safe_commit(session)
     recalculate_person_appearance_counts(session, [keep_id])

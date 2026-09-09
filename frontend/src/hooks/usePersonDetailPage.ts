@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
+import { useUndo, useUndoRefresh } from "../context/UndoContext";
 import { getPerson, getPersonMediaAppearances } from "../services/person";
 import {
   autoMergeSimilarPersons,
+  attachMediaToPersonBulk,
   deletePerson as deletePersonService,
   detachMediaFromPerson,
   getPersonFaces,
@@ -20,7 +22,7 @@ import {
 import { getConfig } from "../services/config";
 import appConfig from "../config";
 import type { MergeResult } from "../services/personActions";
-import { defaultListState, useListStore } from "../stores/useListStore";
+import { defaultListState, refreshCachedList, useListStore } from "../stores/useListStore";
 import {
   clearPeopleGrids,
   patchPersonInGrids,
@@ -46,6 +48,7 @@ export const usePersonDetailPage = () => {
   const { id } = useParams<{ id: string }>();
   const location = useLocation();
   const navigate = useNavigate();
+  const { push, refreshVisible } = useUndo();
 
   const [person, setPerson] = useState<Person | null>(null);
   const [loading, setLoading] = useState(true);
@@ -325,6 +328,16 @@ export const usePersonDetailPage = () => {
     }
   }, [hasLoadedRelationships, id, loadRelationshipGraph, relationshipDepth]);
 
+  useUndoRefresh(id ? `cache:${mediaListKey}` : undefined, () => refreshCachedList(mediaListKey));
+  useUndoRefresh(id ? `person-detail:${id}` : undefined, async () => {
+    await Promise.all([
+      refreshDetectedFaces(),
+      loadDetail(),
+      refreshSuggestedFaces(),
+      reloadRelationshipGraphIfLoaded(),
+    ]);
+  });
+
   const forceRefresh = Boolean(location.state?.forceRefresh);
 
   useEffect(() => {
@@ -465,8 +478,23 @@ export const usePersonDetailPage = () => {
 
   const handleDetachMediaWrapper = async (mediaId: number) => {
     if (!id) return;
+    const personId = Number(id);
     try {
-      await detachMediaFromPerson(Number(id), mediaId);
+      const { detached_faces: detachedFaces } = await detachMediaFromPerson(personId, mediaId);
+      setSnackbar((previous) => ({ ...previous, open: false }));
+      push({
+        label: "Removed media from person",
+        undo: async () => {
+          if (detachedFaces.length) {
+            await assignFace(detachedFaces.map((face) => face.id), personId);
+          }
+          const inverse = await attachMediaToPersonBulk(personId, [mediaId]);
+          await refreshVisible();
+          const faceMediaIds = new Set(detachedFaces.map((face) => face.media_id));
+          const skipped = inverse.skipped_ids.filter((id) => !faceMediaIds.has(id));
+          if (skipped.length) throw new Error(`${skipped.length} item(s) could not be reattached`);
+        },
+      });
       await Promise.all([
         refreshDetectedFaces(),
         refreshMediaAppearances(),
@@ -474,7 +502,6 @@ export const usePersonDetailPage = () => {
         refreshSuggestedFaces(),
         reloadRelationshipGraphIfLoaded(),
       ]);
-      showMessage("Removed media from person");
     } catch (err) {
       console.error("Failed to detach media from person:", err);
       showMessage("Failed to remove media from person", "error");

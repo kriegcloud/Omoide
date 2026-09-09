@@ -40,6 +40,7 @@ from app.models import (
 from app.schemas.face import CursorPage as FaceCursorPage
 from app.schemas.person import (
     CursorPage,
+    DetachedFace,
     FaceRead,
     MediaCursorPage,
     MergeCandidate,
@@ -82,6 +83,7 @@ from app.utils import (
     _distance_to_similarity,
     auto_select_profile_face,
     get_person_embedding,
+    log_person_deleted,
     recalculate_person_appearance_counts,
     remove_person,
     update_person_demographics,
@@ -558,6 +560,7 @@ def detach_media_from_person(
         select(Face).where(Face.person_id == person_id, Face.media_id == media_id),
     ).all()
 
+    detached_faces = [DetachedFace(id=face.id, media_id=face.media_id) for face in faces]
     for face in faces:
         face.person_id = None
         session.add(face)
@@ -577,7 +580,10 @@ def detach_media_from_person(
     if session.get(Person, person_id):
         update_person_embedding(session, person_id)
     safe_commit(session)
-    return {"message": "Media detached from person"}
+    return {
+        "message": "Media detached from person",
+        "detached_faces": detached_faces,
+    }
 
 
 @router.post(
@@ -649,6 +655,7 @@ def detach_media_from_person_bulk(
 
     detached_ids: list[int] = []
     skipped_ids: list[int] = []
+    detached_faces: list[DetachedFace] = []
     for media_id in dict.fromkeys(body.media_ids):
         if session.get(Media, media_id) is None:
             skipped_ids.append(media_id)
@@ -669,6 +676,7 @@ def detach_media_from_person_bulk(
             skipped_ids.append(media_id)
             continue
         for face in faces:
+            detached_faces.append(DetachedFace(id=face.id, media_id=face.media_id))
             face.person_id = None
             session.add(face)
             update_face_embedding(session, face.id, -1)
@@ -683,6 +691,7 @@ def detach_media_from_person_bulk(
     return PersonMediaBulkDetachResponse(
         detached_ids=detached_ids,
         skipped_ids=skipped_ids,
+        detached_faces=detached_faces,
     )
 
 
@@ -747,7 +756,7 @@ def reassign_media_to_person(
         recalculate_person_appearance_counts(
             session, {person_id, body.target_person_id}
         )
-        old_person_can_be_deleted(session, person_id)
+        old_person_can_be_deleted(session, person_id, reason="person-media-reassign")
         for affected_id in (person_id, body.target_person_id):
             if session.get(Person, affected_id):
                 update_person_embedding(session, affected_id)
@@ -1368,6 +1377,7 @@ def _merge_person_into_target(
 
     session.delete(source)
     safe_commit(session)
+    log_person_deleted(source, reason="merge-source", target_id=target_id)
 
     update_person_embedding(session, target_id)
     session.exec(
@@ -1463,7 +1473,7 @@ def delete_persons_bulk(
         seen.add(person_id)
 
         try:
-            result = remove_person(person_id, session)
+            result = remove_person(person_id, session, reason="bulk-delete")
             if isinstance(result, HTTPException):
                 raise result
             deleted_ids.append(person_id)
@@ -1579,7 +1589,7 @@ def unhide_person(person_id: int, session: Session = Depends(get_session)):
     status_code=status.HTTP_204_NO_CONTENT,
 )
 def delete_person(person_id: int, session: Session = Depends(get_session)):
-    return remove_person(person_id, session)
+    return remove_person(person_id, session, reason="delete")
 
 
 @router.get(

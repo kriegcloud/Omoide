@@ -34,6 +34,7 @@ from app.services.face_matching import (
 )
 from app.utils import (
     auto_select_profile_face,
+    log_person_deleted,
     recalculate_person_appearance_counts,
     update_person_embedding,
 )
@@ -56,7 +57,7 @@ def _assign_face(
     face.person_id = person.id
     session.add(face)
     if original_person_id is not None:
-        old_person_can_be_deleted(session, original_person_id)
+        old_person_can_be_deleted(session, original_person_id, reason="faces-assign")
     update_face_embedding(session, face.id, person.id)
 
 
@@ -165,7 +166,7 @@ async def detach_faces(
         session.add(face)
 
         if person_id:
-            old_person_can_be_deleted(session, person_id)
+            old_person_can_be_deleted(session, person_id, reason="faces-detach")
         update_face_embedding(
             session, face_id, -1
         )  # -1 detaches face from person in embedding table
@@ -239,7 +240,7 @@ def delete_faces(
 
         update_face_embedding(session, face_id, person_id, delete_face=True)
         if person_id:
-            old_person_can_be_deleted(session, person_id)
+            old_person_can_be_deleted(session, person_id, reason="faces-delete")
     recalculate_person_appearance_counts(session, affected_person_ids)
     for pid in affected_person_ids:
         if session.get(Person, pid):
@@ -391,7 +392,7 @@ async def create_person_from_faces(
         session.add(face)
         if previous_person and previous_person.id != person_id:
             previous_person_ids.add(previous_person.id)
-            old_person_can_be_deleted(session, previous_person.id)
+            old_person_can_be_deleted(session, previous_person.id, reason="face-reassign")
         update_face_embedding(session, face.id, person_id)
     target_person_ids = set(previous_person_ids)
     target_person_ids.add(person_id)
@@ -402,7 +403,9 @@ async def create_person_from_faces(
     session.close()
     return PersonMinimal(id=person_id)
 
-def old_person_can_be_deleted(session: Session, person_id: int | None):
+def old_person_can_be_deleted(
+    session: Session, person_id: int | None, *, reason: str
+):
     if person_id is None:
         return True
     remaining = safe_execute(
@@ -417,12 +420,15 @@ def old_person_can_be_deleted(session: Session, person_id: int | None):
     if remaining_manual_link:
         return False
 
+    person = session.get(Person, person_id)
+    if person is None:
+        return True
+
     # delete any tag links
     safe_execute(
         session,
         delete(PersonTagLink).where(PersonTagLink.person_id == person_id),
     )
-    person = session.get(Person, person_id)
     session.exec(
         delete(PersonRelationship).where(
             or_(
@@ -433,4 +439,5 @@ def old_person_can_be_deleted(session: Session, person_id: int | None):
     )
     session.delete(person)
     safe_commit(session)
+    log_person_deleted(person, reason=f"empty-after-{reason}")
     return True

@@ -39,6 +39,7 @@ export interface AddMediaAppearanceResult {
 export interface PersonMediaBulkResult {
   added_ids?: number[];
   detached_ids?: number[];
+  detached_faces?: { id: number; media_id: number }[];
   skipped_ids: number[];
 }
 
@@ -378,12 +379,13 @@ export const getPersonFaces = async (
 export const detachMediaFromPerson = async (
   personId: number,
   mediaId: number
-): Promise<void> => {
+): Promise<{ message: string; detached_faces: { id: number; media_id: number }[] }> => {
   const res = await fetch(
     `${API}/api/person/${personId}/media/${mediaId}/detach`,
     { method: "POST" }
   );
   if (!res.ok) throw new Error("Failed to detach media from person");
+  return res.json();
 };
 
 export const setProfileFace = async (faceId: number, personId: number) => {

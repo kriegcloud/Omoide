@@ -184,8 +184,9 @@ function AllOrphanFaces() {
     setIsProcessing(true);
     try {
       await assignFace(faceIds, person.id);
+      setSnackbar((previous) => ({ ...previous, open: false }));
       push({
-        label: `Assigned ${faceIds.length} face(s) to ${person.name || `Person ${person.id}`}`,
+        label: `Assigned ${faceIds.length} face${faceIds.length === 1 ? "" : "s"} to ${person.name || `Person ${person.id}`}`,
         undo: async () => {
           await detachFace(faceIds);
           await refreshVisible();
@@ -194,11 +195,6 @@ function AllOrphanFaces() {
       removeItems(listKey, faceIds);
       setSelectedFaceIds([]);
       setAssignDialogOpen(false);
-      showMessage(
-        `Assigned ${faceIds.length} face${faceIds.length === 1 ? "" : "s"} to ${
-          person.name || `Person ${person.id}`
-        }.`
-      );
     } catch (err) {
       console.error("Failed to assign faces:", err);
       showMessage("Failed to assign faces.", "error");
