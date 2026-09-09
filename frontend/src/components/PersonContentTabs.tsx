@@ -1,4 +1,5 @@
-import React, { Suspense, useEffect, useState } from "react";
+import React, { Suspense, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Box,
   Button,
@@ -30,6 +31,8 @@ const PersonRelationshipGraph = React.lazy(
 import type { MergeResult } from "../services/personActions";
 
 const DetectedFaces = React.lazy(() => import("./DetectedFaces"));
+const PERSON_TABS = ["media", "faces", "similar", "graph", "timeline", "tags"];
+const FACE_TABS = ["confirmed", "suggested"];
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -129,22 +132,20 @@ export function PersonContentTabs({
   onFacesSortChange,
   onFetchFacesForMedia,
 }: PersonContentTabsProps) {
-  const [tabValue, setTabValue] = useState(0);
-  const [faceTabValue, setFaceTabValue] = useState(0);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabValue = Math.max(0, PERSON_TABS.indexOf(searchParams.get("tab") ?? ""));
+  const faceTabValue = Math.max(0, FACE_TABS.indexOf(searchParams.get("faces") ?? ""));
   const [hasLoadedSimilar, setHasLoadedSimilar] = useState(false);
-  const [hasRequestedRelationships, setHasRequestedRelationships] =
-    useState(false);
+  const hasRequestedRelationships = useRef(false);
   const [isProcessingFaces, setIsProcessingFaces] = useState(false);
   const [pinnedFaces, setPinnedFaces] = useState<FaceRead[] | null>(null);
   const [isLoadingSimilarTab, setIsLoadingSimilarTab] = useState(false);
   const [selectedSimilarIds, setSelectedSimilarIds] = useState<number[]>([]);
 
-  const createActionHandler = <
-    T extends (...args: any[]) => Promise<unknown> | void,
-  >(
-    action: T,
-  ): ((...args: Parameters<T>) => Promise<void>) => {
-    return async (...args: Parameters<T>) => {
+  const createActionHandler = <TArgs extends unknown[],>(
+    action: (...args: TArgs) => Promise<unknown> | void,
+  ): ((...args: TArgs) => Promise<void>) => {
+    return async (...args: TArgs) => {
       setIsProcessingFaces(true);
       try {
         await Promise.resolve(action(...args));
@@ -200,54 +201,66 @@ export function PersonContentTabs({
   };
 
   const handleJumpToFace = async (mediaId: number) => {
-    setTabValue(1);
-    setFaceTabValue(0);
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.set("tab", "faces");
+      next.set("faces", "confirmed");
+      return next;
+    }, { replace: true });
     const faces = await onFetchFacesForMedia(mediaId);
     setPinnedFaces(faces.length > 0 ? faces : null);
   };
 
   const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
-    setTabValue(newValue);
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.set("tab", PERSON_TABS[newValue]);
+      return next;
+    }, { replace: true });
     if (newValue !== 1) setPinnedFaces(null);
-
-    if (newValue === 2 && !hasLoadedSimilar) {
-      setHasLoadedSimilar(true);
-      setIsLoadingSimilarTab(true);
-      Promise.resolve(onLoadSimilar())
-        .catch((error) =>
-          console.error("Failed to load similar persons:", error),
-        )
-        .finally(() => setIsLoadingSimilarTab(false));
-    }
-
-    if (
-      newValue === 3 &&
-      !hasRequestedRelationships &&
-      !hasLoadedRelationships
-    ) {
-      setHasRequestedRelationships(true);
-      Promise.resolve(onLoadRelationships()).catch((error) => {
-        console.error("Failed to load relationship graph:", error);
-        setHasRequestedRelationships(false);
-      });
-    }
   };
 
   const handleFaceTabChange = (
     _event: React.SyntheticEvent,
     newValue: number,
   ) => {
-    setFaceTabValue(newValue);
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.set("faces", FACE_TABS[newValue]);
+      return next;
+    }, { replace: true });
   };
 
   useEffect(() => {
     setHasLoadedSimilar(false);
-    setHasRequestedRelationships(false);
+    hasRequestedRelationships.current = false;
     setIsLoadingSimilarTab(false);
-    setTabValue(0);
-    setFaceTabValue(0);
     setSelectedSimilarIds([]);
+    setPinnedFaces(null);
   }, [person.id]);
+
+  // URL landings and browser navigation must trigger the same lazy data loads
+  // as clicking a tab. Face data is already fetched by usePersonDetailPage.
+  useEffect(() => {
+    if (tabValue !== 2 || hasLoadedSimilar) return;
+    setHasLoadedSimilar(true);
+    setIsLoadingSimilarTab(true);
+    Promise.resolve().then(() => onLoadSimilar())
+      .catch((error) => console.error("Failed to load similar persons:", error))
+      .finally(() => setIsLoadingSimilarTab(false));
+  }, [tabValue, hasLoadedSimilar, onLoadSimilar]);
+
+  useEffect(() => {
+    if (tabValue !== 3) {
+      hasRequestedRelationships.current = false;
+      return;
+    }
+    if (hasRequestedRelationships.current || hasLoadedRelationships) return;
+    hasRequestedRelationships.current = true;
+    Promise.resolve().then(() => onLoadRelationships()).catch((error) => {
+      console.error("Failed to load relationship graph:", error);
+    });
+  }, [tabValue, person.id, hasLoadedRelationships, onLoadRelationships]);
 
   useEffect(() => {
     setSelectedSimilarIds((prev) =>

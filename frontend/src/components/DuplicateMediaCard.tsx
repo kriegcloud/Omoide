@@ -1,9 +1,8 @@
 // components/DuplicateMediaCard.tsx
 
 import React from "react";
-import { Link, useLocation } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import {
-  Card,
   CardMedia,
   CardContent,
   Typography,
@@ -15,17 +14,28 @@ import { MediaDuplicate } from "../types";
 import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 import { formatBytes } from "../formatUtils";
+import SelectableTileFrame from "./SelectableTileFrame";
+import MediaCardMenu from "./MediaCardMenu";
+import type { SelectionClickEvent } from "../hooks/useMarqueeSelection";
 
 interface DuplicateMediaCardProps {
   media: MediaDuplicate;
+  groupId: number;
   isSelectedAsMaster: boolean;
   onSelectMaster: () => void;
+  selecting: boolean;
+  selected: boolean;
+  onSelectionClick: (id: number, event: SelectionClickEvent) => boolean;
 }
 
 export const DuplicateMediaCard: React.FC<DuplicateMediaCardProps> = ({
   media,
+  groupId,
   isSelectedAsMaster,
   onSelectMaster,
+  selecting,
+  selected,
+  onSelectionClick,
 }) => {
   const location = useLocation();
   const theme = useTheme();
@@ -37,7 +47,15 @@ export const DuplicateMediaCard: React.FC<DuplicateMediaCardProps> = ({
 
   return (
     media && (
-      <Card
+      <SelectableTileFrame
+        id={media.id}
+        selected={selected}
+        selecting={selecting}
+        onSelectionClick={onSelectionClick}
+        href={`/medium/${media.id}`}
+        linkState={{ backgroundLocation: location }}
+        aspectRatio="4 / 3"
+        menu={<MediaCardMenu media={media} />}
         sx={{
           height: "100%",
           border: isSelectedAsMaster
@@ -45,48 +63,46 @@ export const DuplicateMediaCard: React.FC<DuplicateMediaCardProps> = ({
             : `2px solid transparent`,
           boxShadow: isSelectedAsMaster ? theme.shadows[4] : theme.shadows[1],
         }}
+        footer={
+          <CardContent>
+            <FormControlLabel
+              data-tile-control
+              data-no-marquee
+              control={
+                <Radio
+                  checked={isSelectedAsMaster}
+                  onChange={onSelectMaster}
+                  name={`master-select-${groupId}`}
+                />
+              }
+              label="Keep this one"
+            />
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              noWrap
+              title={media.path}
+            >
+              {media.path}
+            </Typography>
+            {/* Displaying more metadata helps the user choose */}
+            <Typography variant="caption" color="text.secondary" display="block">
+              {media.width}x{media.height}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" display="block">
+              {formatBytes(media.size)}
+            </Typography>
+          </CardContent>
+        }
       >
-        <Link
-          to={`/medium/${media.id}`}
-          state={{ backgroundLocation: location }}
-          style={{ textDecoration: "none", color: "inherit" }}
-        >
-          <CardMedia
-            component="img"
-            height="200"
-            image={thumbUrl}
-            alt={filename}
-            sx={{ objectFit: "cover" }}
-          />
-        </Link>
-        <CardContent>
-          <FormControlLabel
-            control={
-              <Radio
-                checked={isSelectedAsMaster}
-                onChange={onSelectMaster}
-                name={`master-select-${media.group_id}`}
-              />
-            }
-            label="Keep this one"
-          />
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            noWrap
-            title={media.path}
-          >
-            {media.path}
-          </Typography>
-          {/* Displaying more metadata helps the user choose */}
-          <Typography variant="caption" color="text.secondary" display="block">
-            {media.width}x{media.height}
-          </Typography>
-          <Typography variant="caption" color="text.secondary" display="block">
-            {formatBytes(media.size)}
-          </Typography>
-        </CardContent>
-      </Card>
+        <CardMedia
+          component="img"
+          image={thumbUrl}
+          alt={filename}
+          draggable={!selecting}
+          sx={{ width: "100%", height: "100%", objectFit: "cover" }}
+        />
+      </SelectableTileFrame>
     )
   );
 };
