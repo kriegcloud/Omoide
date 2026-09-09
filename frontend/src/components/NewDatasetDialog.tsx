@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
-  Autocomplete,
   Button,
   Dialog,
   DialogActions,
@@ -8,10 +7,11 @@ import {
   DialogTitle,
   Stack,
   TextField,
+  Typography,
 } from "@mui/material";
 import type { Person, TrainingDataset } from "../types";
 import { createDataset } from "../services/datasets";
-import { searchPersonsByName } from "../services/personActions";
+import PersonPicker from "./PersonPicker";
 
 interface Props {
   open: boolean;
@@ -24,21 +24,7 @@ export default function NewDatasetDialog({ open, onClose, onCreated }: Props) {
   const [trigger, setTrigger] = useState("");
   const [classToken, setClassToken] = useState("person");
   const [person, setPerson] = useState<Person | null>(null);
-  const [people, setPeople] = useState<Person[]>([]);
-  const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (!open || query.trim().length < 2) return;
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => {
-      searchPersonsByName(query.trim(), controller.signal).then(setPeople).catch(() => undefined);
-    }, 250);
-    return () => {
-      controller.abort();
-      window.clearTimeout(timer);
-    };
-  }, [open, query]);
 
   const submit = async () => {
     setBusy(true);
@@ -69,14 +55,20 @@ export default function NewDatasetDialog({ open, onClose, onCreated }: Props) {
             <TextField fullWidth label="Trigger word" value={trigger} onChange={(event) => setTrigger(event.target.value)} helperText="Leave blank to derive from the name" />
             <TextField fullWidth label="Class" value={classToken} onChange={(event) => setClassToken(event.target.value)} />
           </Stack>
-          <Autocomplete
-            options={people}
-            value={person}
-            onChange={(_, value) => setPerson(value)}
-            onInputChange={(_, value) => setQuery(value)}
-            getOptionLabel={(option) => option.name ?? `Person ${option.id}`}
-            renderInput={(params) => <TextField {...params} label="Person (optional)" />}
-          />
+          {open && (
+            <PersonPicker
+              label="Person (optional)"
+              selectedId={person?.id}
+              disabled={busy}
+              onSelect={setPerson}
+            />
+          )}
+          {person && (
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Typography>Selected: {person.name || `Person ${person.id}`}</Typography>
+              <Button disabled={busy} onClick={() => setPerson(null)}>Clear person</Button>
+            </Stack>
+          )}
         </Stack>
       </DialogContent>
       <DialogActions>

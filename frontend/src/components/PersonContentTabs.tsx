@@ -400,6 +400,7 @@ export function PersonContentTabs({
             <DetectedFaces
               isProcessing={isProcessingFaces || isLoadingSuggestedFaces}
               title="Suggested Faces"
+              assignToCurrentPerson
               faces={suggestedFaces}
               onAssign={handleAssign}
               onDelete={handleDelete}
