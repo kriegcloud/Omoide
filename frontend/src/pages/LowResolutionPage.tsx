@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -17,6 +17,7 @@ import PhotoSizeSelectSmallIcon from "@mui/icons-material/PhotoSizeSelectSmall";
 import { LowResMediaItem } from "../types";
 import { getLowResMedia, resolveLowRes } from "../services/lowresolution";
 import { useCursorList } from "../hooks/useCursorList";
+import { useGridSelection } from "../hooks/useMarqueeSelection";
 import BulkResolveToolbar, {
   BulkResolveAction,
   FeedbackSeverity,
@@ -67,12 +68,22 @@ const LowResolutionPage: React.FC = () => {
     error,
     loaderRef,
     selectedIds,
-    toggleSelected,
+    setSelectedIds,
     selectVisible,
     clearSelection,
     removeItems,
     refetch,
   } = useCursorList<LowResMediaItem>(fetcher);
+
+  const gridRef = useRef<HTMLDivElement>(null);
+  const selecting = selectedIds.size > 0;
+  const { marqueeRect, onItemClick } = useGridSelection({
+    containerRef: gridRef,
+    selectedIds,
+    onSelectionChange: setSelectedIds,
+    selecting,
+    allowPlainDragOnItems: false,
+  });
 
   const showFeedback = useCallback(
     (message: string, severity: FeedbackSeverity) => setSnackbar({ open: true, message, severity }),
@@ -173,6 +184,8 @@ const LowResolutionPage: React.FC = () => {
       />
 
       <ReviewMediaGrid
+        gridRef={gridRef}
+        marqueeRect={marqueeRect}
         itemCount={items.length}
         isLoading={isLoading}
         hasMore={hasMore}
@@ -193,7 +206,8 @@ const LowResolutionPage: React.FC = () => {
             filename={item.filename}
             thumbnailPath={item.thumbnail_path}
             selected={selectedIds.has(item.id)}
-            onToggle={toggleSelected}
+            selecting={selecting}
+            onSelectionClick={onItemClick}
             badgeLabel={formatMp(item.pixel_count)}
             badgeColor="warning"
             caption={`${item.width}×${item.height}${item.duration != null ? " · video" : ""} · ${formatBytes(item.size)}`}

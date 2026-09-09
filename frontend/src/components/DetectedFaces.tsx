@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect, useMemo } from "react";
+import React, { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import {
   Avatar,
   Box,
@@ -25,6 +25,8 @@ import ViewModuleIcon from "@mui/icons-material/ViewModule";
 import { FaceRead, Person } from "../types";
 import FaceCard from "./FaceCard";
 import FaceMediaGroup from "./FaceMediaGroup";
+import MarqueeSelectionBox from "./MarqueeSelectionBox";
+import { useGridSelection, type SelectionClickEvent } from "../hooks/useMarqueeSelection";
 import ConfirmDialog from "./ConfirmDialog";
 import { useFaceSelection } from "../hooks/useFaceSelection";
 import { searchPersonsByName } from "../services/personActions";
@@ -76,7 +78,6 @@ export default function DetectedFaces({
   const theme = useTheme();
   const {
     selectedFaceIds,
-    onToggleSelect,
     onSelectAll,
     onClearSelection,
     setSelectedFaceIds,
@@ -120,19 +121,45 @@ export default function DetectedFaces({
     return Array.from(map.entries()).map(([mediaId, fs]) => ({ mediaId, faces: fs }));
   }, [faces]);
 
-  const handleToggleGroupSelect = useCallback(
-    (faceIds: number[]) => {
-      const allSelected = faceIds.every((id) => selectedFaceIds.includes(id));
-      setSelectedFaceIds((prev) => {
-        if (allSelected) {
-          return prev.filter((id) => !faceIds.includes(id));
-        } else {
-          return [...new Set([...prev, ...faceIds])];
-        }
-      });
-    },
-    [selectedFaceIds, setSelectedFaceIds],
-  );
+  const containerRef = useRef<HTMLDivElement>(null);
+  const clickedGroupRef = useRef<number[] | null>(null);
+  const selectedIdSet = useMemo(() => new Set(selectedFaceIds), [selectedFaceIds]);
+  const handleSelectionChange = useCallback((ids: Set<number>) => {
+    const next = new Set(ids);
+    // Collapsed cards are one visual target containing several real face IDs.
+    // Complete endpoint groups in a range and preserve group checkbox toggles.
+    const groups = clickedGroupRef.current
+      ? [clickedGroupRef.current]
+      : groupByVideo
+        ? groupedItems.filter((group) => !expandedGroupIds.has(group.mediaId))
+            .map((group) => group.faces.map((face) => face.id))
+        : [];
+    for (const group of groups) {
+      const added = group.some((id) => next.has(id) && !selectedIdSet.has(id));
+      const removed = group.some((id) => !next.has(id) && selectedIdSet.has(id));
+      if (added) group.forEach((id) => next.add(id));
+      else if (removed) group.forEach((id) => next.delete(id));
+    }
+    setSelectedFaceIds(Array.from(next));
+  }, [groupByVideo, groupedItems, expandedGroupIds, selectedIdSet, setSelectedFaceIds]);
+  const { marqueeRect, onItemClick } = useGridSelection({
+    containerRef,
+    itemSelector: "[data-selectable-id]:not([data-selection-group])",
+    selectedIds: selectedIdSet,
+    onSelectionChange: handleSelectionChange,
+    selecting: isAnythingSelected,
+    disabled: !canMutate,
+  });
+  const handleGroupSelectionClick = (faceIds: number[], event: SelectionClickEvent) => {
+    // A partially selected group adds its remaining faces on a normal toggle.
+    const targetId = faceIds.find((id) => !selectedIdSet.has(id)) ?? faceIds[0];
+    clickedGroupRef.current = faceIds;
+    try {
+      return onItemClick(targetId, event);
+    } finally {
+      clickedGroupRef.current = null;
+    }
+  };
 
   const resolveProfileThumb = useCallback((person: Person) => {
     const thumbPath = person.profile_face?.thumbnail_path;
@@ -309,7 +336,9 @@ export default function DetectedFaces({
               <FaceMediaGroup
                 faces={item.faces}
                 selectedFaceIds={selectedFaceIds}
-                onToggleGroupSelect={handleToggleGroupSelect}
+                selecting={isAnythingSelected}
+                expanded={isExpanded}
+                onSelectionClick={handleGroupSelectionClick}
                 canMutate={canMutate}
                 onToggleExpand={() => toggleGroupExpand(item.mediaId)}
               />
@@ -331,11 +360,12 @@ export default function DetectedFaces({
                 {item.faces.map((face) => (
                   <FaceCard
                     key={face.id}
-                    face={face as any}
+                    face={face}
                     isProfile={face.id === profileFaceId}
                     onSetProfile={canMutate ? onSetProfile : undefined}
                     selected={canMutate && selectedFaceIds.includes(face.id)}
-                    onToggleSelect={canMutate ? onToggleSelect : undefined}
+                    selecting={isAnythingSelected}
+                    onSelectionClick={canMutate ? onItemClick : undefined}
                   />
                 ))}
               </Box>
@@ -348,11 +378,12 @@ export default function DetectedFaces({
             ref={!disableInternalScroll && isLastGroup ? lastCardRef : null}
           >
             <FaceCard
-              face={item.faces[0] as any}
+              face={item.faces[0]}
               isProfile={item.faces[0].id === profileFaceId}
               onSetProfile={canMutate ? onSetProfile : undefined}
               selected={canMutate && selectedFaceIds.includes(item.faces[0].id)}
-              onToggleSelect={canMutate ? onToggleSelect : undefined}
+              selecting={isAnythingSelected}
+              onSelectionClick={canMutate ? onItemClick : undefined}
             />
           </div>,
         ];
@@ -365,11 +396,12 @@ export default function DetectedFaces({
             ref={!disableInternalScroll && isLast ? lastCardRef : null}
           >
             <FaceCard
-              face={face as any}
+              face={face}
               isProfile={face.id === profileFaceId}
               onSetProfile={canMutate ? onSetProfile : undefined}
               selected={canMutate && selectedFaceIds.includes(face.id)}
-              onToggleSelect={canMutate ? onToggleSelect : undefined}
+              selecting={isAnythingSelected}
+              onSelectionClick={canMutate ? onItemClick : undefined}
             />
           </div>
         );
@@ -559,54 +591,58 @@ export default function DetectedFaces({
         </DialogActions>
       </Dialog>
 
-      {/* Pinned faces (jumped from timeline) */}
-      {pinnedFaces && pinnedFaces.length > 0 && (
-        <Paper
-          variant="outlined"
-          sx={{ p: 2, mb: 2, borderColor: "primary.main", borderWidth: 2 }}
-        >
-          <Box
-            sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1 }}
+      <Box ref={containerRef} sx={{ position: "relative" }}>
+        {/* Pinned faces (jumped from timeline) */}
+        {pinnedFaces && pinnedFaces.length > 0 && (
+          <Paper
+            variant="outlined"
+            sx={{ p: 2, mb: 2, borderColor: "primary.main", borderWidth: 2 }}
           >
-            <Typography variant="body2" color="primary">
-              Jumped from timeline — {pinnedFaces.length} face
-              {pinnedFaces.length !== 1 ? "s" : ""} from this photo
-            </Typography>
-            <Button size="small" onClick={onClearPinned}>
-              Clear
-            </Button>
-          </Box>
-          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
-            {pinnedFaces.map((face) => (
-              <FaceCard
-                key={face.id}
-                face={face as any}
-                isProfile={face.id === profileFaceId}
-                onSetProfile={canMutate ? onSetProfile : undefined}
-                selected={canMutate && selectedFaceIds.includes(face.id)}
-                onToggleSelect={canMutate ? onToggleSelect : undefined}
-              />
-            ))}
-          </Box>
-        </Paper>
-      )}
+            <Box
+              sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1 }}
+            >
+              <Typography variant="body2" color="primary">
+                Jumped from timeline — {pinnedFaces.length} face
+                {pinnedFaces.length !== 1 ? "s" : ""} from this photo
+              </Typography>
+              <Button size="small" onClick={onClearPinned}>
+                Clear
+              </Button>
+            </Box>
+            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
+              {pinnedFaces.map((face) => (
+                <FaceCard
+                  key={face.id}
+                  face={face}
+                  isProfile={face.id === profileFaceId}
+                  onSetProfile={canMutate ? onSetProfile : undefined}
+                  selected={canMutate && selectedFaceIds.includes(face.id)}
+                  selecting={isAnythingSelected}
+                  onSelectionClick={canMutate ? onItemClick : undefined}
+                />
+              ))}
+            </Box>
+          </Paper>
+        )}
 
-      {/* Faces grid — grouped by media */}
-      <Box sx={scrollContainerSx}>
-        {faces.length === 0 && !isLoadingMore ? (
-          <Typography sx={{ textAlign: "center", p: 4, color: "text.secondary" }}>
-            No faces to display.
-          </Typography>
-        ) : (
-          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, alignItems: "flex-start" }}>
-            {faceItems}
-          </Box>
-        )}
-        {isLoadingMore && (
-          <Box sx={{ display: "flex", justifyContent: "center", p: 2 }}>
-            <CircularProgress size={24} />
-          </Box>
-        )}
+        {/* Faces grid — grouped by media */}
+        <Box sx={scrollContainerSx}>
+          {faces.length === 0 && !isLoadingMore ? (
+            <Typography sx={{ textAlign: "center", p: 4, color: "text.secondary" }}>
+              No faces to display.
+            </Typography>
+          ) : (
+            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, alignItems: "flex-start" }}>
+              {faceItems}
+            </Box>
+          )}
+          {isLoadingMore && (
+            <Box sx={{ display: "flex", justifyContent: "center", p: 2 }}>
+              <CircularProgress size={24} />
+            </Box>
+          )}
+        </Box>
+        <MarqueeSelectionBox container={containerRef.current} rect={marqueeRect} />
       </Box>
     </Paper>
   );

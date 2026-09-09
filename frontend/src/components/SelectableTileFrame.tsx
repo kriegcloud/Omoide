@@ -1,5 +1,5 @@
 import type { HTMLAttributes, ReactNode } from "react";
-import { Box, Checkbox } from "@mui/material";
+import { Box, Checkbox, useTheme } from "@mui/material";
 import type { SxProps, Theme } from "@mui/material";
 import { Link as RouterLink } from "react-router-dom";
 import type { SelectionClickEvent } from "../hooks/useMarqueeSelection";
@@ -9,6 +9,8 @@ interface SelectableTileFrameProps
   id: number;
   selected: boolean;
   selecting: boolean;
+  indeterminate?: boolean;
+  selectionEnabled?: boolean;
   // Omit for navigation-only card consumers: no selection checkbox is shown.
   onSelectionClick?: (id: number, event: SelectionClickEvent) => boolean;
   href?: string;
@@ -20,6 +22,8 @@ interface SelectableTileFrameProps
   bottomLeft?: ReactNode;
   bottomRight?: ReactNode;
   aspectRatio?: number | string;
+  /** Corner radius as a theme multiplier (theme.shape.borderRadius × radius). */
+  radius?: number;
   sx?: SxProps<Theme>;
   children: ReactNode;
   footer?: ReactNode;
@@ -28,6 +32,7 @@ interface SelectableTileFrameProps
 }
 
 const CONTROL_SELECTOR = "[data-tile-control], button, input, select, textarea, [contenteditable]";
+const CONTROL_SIZE = 32;
 
 const selectionToggleEvent: SelectionClickEvent = {
   ctrlKey: true,
@@ -38,18 +43,22 @@ const selectionToggleEvent: SelectionClickEvent = {
   stopPropagation() {},
 };
 
-const scrim = {
-  position: "absolute",
-  top: 6,
-  zIndex: 20,
-  bgcolor: "rgba(0,0,0,.45)",
-  borderRadius: "8px",
-} as const;
+/**
+ * Distance from the tile edge at which a square control clears a rounded
+ * corner: the corner arc of radius R leaves the point (d, d) outside unless
+ * d ≥ R·(1 − 1/√2) ≈ 0.3R. Anything smaller is clipped by overflow:hidden,
+ * which is how the old checkbox/menu buttons lost their outer corners.
+ */
+function chromeInset(radiusPx: number): number {
+  return Math.max(6, Math.ceil(radiusPx * 0.3));
+}
 
 export default function SelectableTileFrame({
   id,
   selected,
   selecting,
+  indeterminate = false,
+  selectionEnabled = true,
   onSelectionClick,
   href,
   linkState,
@@ -60,21 +69,38 @@ export default function SelectableTileFrame({
   bottomLeft,
   bottomRight,
   aspectRatio,
+  radius = 3,
   sx = [],
   children,
   footer,
   linkFooter = false,
   ...rest
 }: SelectableTileFrameProps) {
+  const theme = useTheme();
+  const radiusPx =
+    typeof theme.shape.borderRadius === "number"
+      ? theme.shape.borderRadius * radius
+      : parseFloat(String(theme.shape.borderRadius)) * radius;
+  const inset = chromeInset(radiusPx);
+  const badgeLeft = inset + CONTROL_SIZE + 6;
+  const scrim = {
+    position: "absolute",
+    top: inset,
+    zIndex: 20,
+    bgcolor: "rgba(0,0,0,.45)",
+    borderRadius: "8px",
+  } as const;
+  const showCheckbox = selectionEnabled && !!onSelectionClick;
+  const isSelecting = selectionEnabled && selecting;
   const content = <Box sx={{ position: "relative", aspectRatio }}>{children}</Box>;
 
   return (
     <Box
       {...rest}
       data-selectable-id={id}
-      role={selecting ? "checkbox" : undefined}
-      aria-checked={selecting ? selected : undefined}
-      tabIndex={selecting || (!href && onOpen) ? 0 : undefined}
+      role={isSelecting ? "checkbox" : undefined}
+      aria-checked={isSelecting ? (indeterminate ? "mixed" : selected) : undefined}
+      tabIndex={isSelecting || (!href && onOpen) ? 0 : undefined}
       onClickCapture={(event) => {
         const target = event.target;
         // Menus can render portals; their actions and the checkbox own clicks.
@@ -83,7 +109,7 @@ export default function SelectableTileFrame({
           !event.currentTarget.contains(target) ||
           target.closest(CONTROL_SELECTOR)
         ) return;
-        if (onSelectionClick?.(id, event)) {
+        if (selectionEnabled && onSelectionClick?.(id, event)) {
           event.preventDefault();
           event.stopPropagation();
         }
@@ -97,11 +123,11 @@ export default function SelectableTileFrame({
       }}
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return;
-        if (selecting && event.key === " ") {
+        if (isSelecting && event.key === " ") {
           event.preventDefault();
           event.stopPropagation();
           onSelectionClick?.(id, selectionToggleEvent);
-        } else if (!selecting && onOpen && (event.key === "Enter" || event.key === " ")) {
+        } else if (!isSelecting && onOpen && (event.key === "Enter" || event.key === " ")) {
           event.preventDefault();
           onOpen();
         }
@@ -110,25 +136,25 @@ export default function SelectableTileFrame({
         {
           position: "relative",
           overflow: "hidden",
-          borderRadius: 3,
+          borderRadius: radius,
           bgcolor: "background.paper",
           outline: selected ? "3px solid" : "none",
           outlineColor: "primary.main",
           outlineOffset: "-3px",
           transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
           "&:hover": {
-            transform: selecting ? "none" : "translateY(-4px)",
-            boxShadow: selecting ? "none" : "0 12px 24px -8px rgba(0, 0, 0, 0.15)",
+            transform: isSelecting ? "none" : "translateY(-4px)",
+            boxShadow: isSelecting ? "none" : "0 12px 24px -8px rgba(0, 0, 0, 0.15)",
             zIndex: 10,
           },
           "&:hover .tile-checkbox, &:focus-within .tile-checkbox": {
             opacity: 1,
             pointerEvents: "auto",
           },
-          "&:hover .tile-top-left, &:focus-within .tile-top-left": { left: 44 },
+          "&:hover .tile-top-left, &:focus-within .tile-top-left": { left: badgeLeft },
           "@media (hover: none)": {
             "& .tile-checkbox": { opacity: 1, pointerEvents: "auto" },
-            "& .tile-top-left": { left: 44 },
+            "& .tile-top-left": { left: badgeLeft },
           },
         },
         ...(Array.isArray(sx) ? sx : [sx]),
@@ -141,50 +167,62 @@ export default function SelectableTileFrame({
             state={linkState}
             replace={replace}
             draggable={false}
-            tabIndex={selecting ? -1 : undefined}
+            tabIndex={isSelecting ? -1 : undefined}
             style={{ display: "block", textDecoration: "none", color: "inherit" }}
           >
             {content}
           </RouterLink>
         ) : content}
-        {onSelectionClick && <Checkbox
-          className="tile-checkbox"
-          data-tile-control
-          data-no-marquee
-          checked={selected}
-          tabIndex={selecting ? -1 : 0}
-          inputProps={{ "aria-label": `Select item ${id}`, readOnly: true }}
-          onClick={(event) => {
-            // This control is a sibling of the link, so native checkbox behavior
-            // can finish without navigating or reaching the tile click handler.
-            event.stopPropagation();
-            onSelectionClick(id, selectionToggleEvent);
-          }}
-          sx={{
-            ...scrim,
-            left: 6,
-            width: 32,
-            height: 32,
-            p: 0.5,
-            color: "common.white",
-            opacity: selecting || selected ? 1 : 0,
-            pointerEvents: selecting || selected ? "auto" : "none",
-            "&.Mui-checked": { color: "primary.main" },
-            "&:hover": { bgcolor: "rgba(0,0,0,.65)" },
-          }}
-        />}
-        {!selecting && topLeft && (
-          <Box className="tile-top-left" sx={{ position: "absolute", top: 6, left: selected ? 44 : 6, zIndex: 19, pointerEvents: "none" }}>
+        {showCheckbox && (
+          <Checkbox
+            className="tile-checkbox"
+            data-tile-control
+            data-no-marquee
+            checked={selected}
+            indeterminate={indeterminate}
+            tabIndex={isSelecting ? -1 : 0}
+            inputProps={{ "aria-label": `Select item ${id}`, readOnly: true }}
+            onClick={(event) => {
+              // This control is a sibling of the link, so native checkbox behavior
+              // can finish without navigating or reaching the tile click handler.
+              event.stopPropagation();
+              onSelectionClick?.(id, selectionToggleEvent);
+            }}
+            sx={{
+              ...scrim,
+              left: inset,
+              width: CONTROL_SIZE,
+              height: CONTROL_SIZE,
+              p: 0.5,
+              color: "common.white",
+              opacity: isSelecting || selected ? 1 : 0,
+              pointerEvents: isSelecting || selected ? "auto" : "none",
+              "&.Mui-checked, &.MuiCheckbox-indeterminate": { color: "primary.main" },
+              "&:hover": { bgcolor: "rgba(0,0,0,.65)" },
+            }}
+          />
+        )}
+        {!isSelecting && topLeft && (
+          <Box
+            className="tile-top-left"
+            sx={{
+              position: "absolute",
+              top: inset,
+              left: selected && showCheckbox ? badgeLeft : inset,
+              zIndex: 19,
+              pointerEvents: "none",
+            }}
+          >
             {topLeft}
           </Box>
         )}
-        {!selecting && menu && (
-          <Box data-tile-control data-no-marquee sx={{ ...scrim, right: 6 }}>
+        {!isSelecting && menu && (
+          <Box data-tile-control data-no-marquee sx={{ ...scrim, right: inset }}>
             {menu}
           </Box>
         )}
-        {bottomLeft && <Box sx={{ position: "absolute", bottom: 6, left: 6 }}>{bottomLeft}</Box>}
-        {bottomRight && <Box sx={{ position: "absolute", bottom: 6, right: 6 }}>{bottomRight}</Box>}
+        {bottomLeft && <Box sx={{ position: "absolute", bottom: inset, left: inset }}>{bottomLeft}</Box>}
+        {bottomRight && <Box sx={{ position: "absolute", bottom: inset, right: inset }}>{bottomRight}</Box>}
       </Box>
       {linkFooter && href ? (
         <RouterLink

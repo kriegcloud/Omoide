@@ -4,10 +4,8 @@ import React from "react";
 import {
   Avatar,
   Box,
-  Card,
   IconButton,
   Tooltip,
-  Checkbox,
   Typography,
   useTheme,
 } from "@mui/material";
@@ -18,13 +16,16 @@ import AccessTimeIcon from "@mui/icons-material/AccessTime";
 import { API } from "../config";
 import { Face } from "../types";
 import { encodeFilePath } from "../urlUtils";
+import SelectableTileFrame from "./SelectableTileFrame";
+import type { SelectionClickEvent } from "../hooks/useMarqueeSelection";
 
 interface FaceCardProps {
   face: Face;
   isProfile: boolean;
   onSetProfile?: (faceId: number) => void;
   selected?: boolean;
-  onToggleSelect?: (faceId: number) => void;
+  selecting?: boolean;
+  onSelectionClick?: (faceId: number, event: SelectionClickEvent) => boolean;
 }
 
 function FaceCard({
@@ -32,7 +33,8 @@ function FaceCard({
   isProfile,
   onSetProfile,
   selected = false,
-  onToggleSelect,
+  selecting = selected,
+  onSelectionClick,
 }: FaceCardProps) {
   const theme = useTheme();
   const navigate = useNavigate();
@@ -51,110 +53,58 @@ function FaceCard({
     });
   };
 
-  const handleCheckboxClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onToggleSelect?.(face.id);
-  };
-
   return (
-    <Card
-      elevation={selected ? 8 : 2}
-      sx={{
-        width: 140,
-        height: 140,
-        bgcolor: "background.paper",
-        position: "relative",
-        transition: "box-shadow 0.2s ease-in-out",
-        cursor: "pointer",
-      }}
-      onClick={handleCardClick}
-    >
-      <Avatar
-        src={thumbUrl}
-        variant="rounded"
-        slotProps={{ img: { loading: "lazy" } }}
-        sx={{
-          width: "100%",
-          height: "100%",
-          border: isProfile
-            ? `3px solid ${theme.palette.primary.main}`
-            : "none",
-        }}
-      />
-
-      <Checkbox
-        checked={selected}
-        onClick={handleCheckboxClick}
-        sx={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          color: (theme) => theme.palette.common.white,
-          "&.Mui-checked": { color: (theme) => theme.palette.common.white },
-          p: 0.5,
-          backgroundColor: (theme) => alpha(theme.palette.common.black, 0.3),
-          borderRadius: "20%",
-        }}
-      />
-      <Box sx={{ position: "absolute", top: 4, right: 4 }}>
-        {!isProfile && onSetProfile && (
-          <Tooltip title="Set as profile">
-            <IconButton
-              size="small"
-              sx={{
-                bgcolor: (theme) => alpha(theme.palette.common.black, 0.4),
-                "&:hover": {
-                  bgcolor: (theme) => alpha(theme.palette.common.black, 0.6),
-                },
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                onSetProfile(face.id);
-              }}
-            >
-              <StarIcon fontSize="small" sx={{ color: "accent.main" }} />
-            </IconButton>
-          </Tooltip>
-        )}
-      </Box>
-      {typeof face.similarity === "number" && (
-        <Box
-          sx={{
-            position: "absolute",
-            bottom: 4,
-            left: 4,
-            bgcolor: (theme) => alpha(theme.palette.common.black, 0.6),
-            borderRadius: 1,
-            px: 0.5,
-            py: 0.25,
-          }}
-        >
-          <Typography
-            variant="caption"
-            sx={{ color: (theme) => theme.palette.common.white, fontWeight: 600 }}
+    <SelectableTileFrame
+      id={face.id}
+      selected={selected}
+      selecting={selecting}
+      selectionEnabled={Boolean(onSelectionClick)}
+      onSelectionClick={onSelectionClick ?? (() => false)}
+      onOpen={handleCardClick}
+      aspectRatio={1}
+      sx={{ width: 140, height: 140, flexShrink: 0, cursor: "pointer", boxShadow: 2 }}
+      menu={!isProfile && onSetProfile && (
+        <Tooltip title="Set as profile">
+          <IconButton
+            size="small"
+            aria-label="Set as profile"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSetProfile(face.id);
+            }}
           >
+            <StarIcon fontSize="small" sx={{ color: "accent.main" }} />
+          </IconButton>
+        </Tooltip>
+      )}
+      bottomLeft={typeof face.similarity === "number" && (
+        <Box sx={{ bgcolor: (theme) => alpha(theme.palette.common.black, 0.6), borderRadius: 1, px: 0.5, py: 0.25 }}>
+          <Typography variant="caption" sx={{ color: "common.white", fontWeight: 600 }}>
             {`${face.similarity.toFixed(1)}%`}
           </Typography>
         </Box>
       )}
-      {face.timestamp != null && (
+      bottomRight={face.timestamp != null && (
         <Tooltip title={`Detected at ${Math.floor(face.timestamp / 60)}:${String(Math.floor(face.timestamp % 60)).padStart(2, "0")} — click to jump`}>
-          <Box
-            sx={{
-              position: "absolute",
-              bottom: 4,
-              right: 4,
-              bgcolor: (theme) => alpha(theme.palette.common.black, 0.6),
-              borderRadius: "50%",
-              p: 0.25,
-              display: "flex",
-            }}
-          >
+          <Box sx={{ bgcolor: (theme) => alpha(theme.palette.common.black, 0.6), borderRadius: "50%", p: 0.25, display: "flex" }}>
             <AccessTimeIcon sx={{ fontSize: 14, color: "common.white" }} />
           </Box>
         </Tooltip>
       )}
-    </Card>
+    >
+      <Avatar
+        src={thumbUrl}
+        variant="rounded"
+        slotProps={{ img: { loading: "lazy", draggable: false } }}
+        sx={{
+          width: "100%",
+          height: "100%",
+          boxSizing: "border-box",
+          borderRadius: 3,
+          border: isProfile ? `3px solid ${theme.palette.primary.main}` : "none",
+        }}
+      />
+    </SelectableTileFrame>
   );
 }
 

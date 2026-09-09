@@ -1,16 +1,19 @@
-import { Box, Card, Checkbox, IconButton, Typography } from "@mui/material";
-import { alpha } from "@mui/material/styles";
+import { Box, IconButton, Typography } from "@mui/material";
 import VideoLibraryIcon from "@mui/icons-material/VideoLibrary";
 import UnfoldMoreIcon from "@mui/icons-material/UnfoldMore";
 import { useNavigate, useLocation } from "react-router-dom";
 import { FaceRead } from "../types";
 import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
+import SelectableTileFrame from "./SelectableTileFrame";
+import type { SelectionClickEvent } from "../hooks/useMarqueeSelection";
 
 interface FaceGroupCardProps {
   faces: FaceRead[];
   selectedFaceIds: number[];
-  onToggleGroupSelect: (faceIds: number[]) => void;
+  onSelectionClick: (faceIds: number[], event: SelectionClickEvent) => boolean;
+  selecting: boolean;
+  expanded: boolean;
   canMutate: boolean;
   onToggleExpand: () => void;
 }
@@ -18,7 +21,9 @@ interface FaceGroupCardProps {
 export default function FaceGroupCard({
   faces,
   selectedFaceIds,
-  onToggleGroupSelect,
+  onSelectionClick,
+  selecting,
+  expanded,
   canMutate,
   onToggleExpand,
 }: FaceGroupCardProps) {
@@ -39,24 +44,54 @@ export default function FaceGroupCard({
   };
 
   return (
-    <Card
-      elevation={someSelected || allSelected ? 8 : 2}
+    <SelectableTileFrame
+      id={faces[0].id}
+      data-selection-group
+      selected={allSelected}
+      indeterminate={someSelected}
+      selecting={selecting}
+      selectionEnabled={canMutate}
+      onSelectionClick={(_, event) => onSelectionClick(faceIds, event)}
+      onOpen={handleCardClick}
+      aspectRatio={1}
       sx={{
         width: 140,
         height: 140,
-        position: "relative",
         cursor: "pointer",
-        overflow: "hidden",
         flexShrink: 0,
-        outline: allSelected
-          ? "2px solid"
-          : someSelected
-          ? "2px solid"
-          : "none",
-        outlineColor: allSelected ? "primary.main" : "primary.light",
+        boxShadow: 2,
+        ...(someSelected && { outline: "3px solid", outlineColor: "primary.light" }),
       }}
-      onClick={handleCardClick}
+      bottomLeft={
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.4, bgcolor: "rgba(0,0,0,.6)", borderRadius: 1, p: 0.5 }}>
+          <VideoLibraryIcon sx={{ fontSize: 13, color: "white" }} />
+          <Typography variant="caption" sx={{ color: "white", fontWeight: 700, lineHeight: 1 }}>
+            {faces.length}
+          </Typography>
+        </Box>
+      }
+      bottomRight={
+        <IconButton
+          data-tile-control
+          data-no-marquee
+          size="small"
+          aria-label={expanded ? "Collapse faces" : "Expand faces"}
+          aria-expanded={expanded}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleExpand();
+          }}
+          sx={{ color: "white", bgcolor: "rgba(0,0,0,.45)", borderRadius: "8px", "&:hover": { bgcolor: "rgba(0,0,0,.65)" } }}
+        >
+          <UnfoldMoreIcon sx={{ fontSize: 16 }} />
+        </IconButton>
+      }
     >
+      {/* All collapsed faces share the collage bounds for marquee/range selection.
+          Expanded faces supply their own tile bounds instead. */}
+      {!expanded && faces.map((face) => (
+        <Box key={face.id} data-selectable-id={face.id} aria-hidden sx={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
+      ))}
       {/* 2×2 thumbnail collage */}
       <Box
         sx={{
@@ -76,80 +111,14 @@ export default function FaceGroupCard({
               key={i}
               component="img"
               loading="lazy"
+              draggable={false}
+              alt=""
               src={`${API}/thumbnails/${encodeFilePath(face.thumbnail_path)}`}
               sx={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
             />
           );
         })}
       </Box>
-
-      {/* Bottom gradient + count */}
-      <Box
-        sx={{
-          position: "absolute",
-          bottom: 0,
-          left: 0,
-          right: 0,
-          background: "linear-gradient(transparent, rgba(0,0,0,0.75))",
-          px: 0.5,
-          pb: 0.5,
-          pt: 1.5,
-          display: "flex",
-          alignItems: "center",
-          gap: 0.4,
-        }}
-      >
-        <VideoLibraryIcon sx={{ fontSize: 13, color: "white" }} />
-        <Typography variant="caption" sx={{ color: "white", fontWeight: 700, lineHeight: 1 }}>
-          {faces.length}
-        </Typography>
-      </Box>
-
-      {/* Checkbox */}
-      {canMutate && (
-        <Checkbox
-          checked={allSelected}
-          indeterminate={someSelected}
-          size="small"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleGroupSelect(faceIds);
-          }}
-          sx={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            color: "white",
-            "&.Mui-checked": { color: "white" },
-            p: 0.5,
-            bgcolor: (theme) => alpha(theme.palette.common.black, 0.3),
-            borderRadius: "20%",
-          }}
-        />
-      )}
-
-      {/* Expand button */}
-      <IconButton
-        size="small"
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggleExpand();
-        }}
-        sx={{
-          position: "absolute",
-          top: 0,
-          right: 0,
-          color: "white",
-          p: 0.5,
-          bgcolor: (theme) => alpha(theme.palette.common.black, 0.3),
-          borderRadius: "20%",
-          "&:hover": {
-            bgcolor: (theme) => alpha(theme.palette.common.black, 0.5),
-          },
-        }}
-      >
-        <UnfoldMoreIcon sx={{ fontSize: 16 }} />
-      </IconButton>
-    </Card>
+    </SelectableTileFrame>
   );
 }

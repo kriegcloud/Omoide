@@ -1,7 +1,12 @@
 import React from "react";
 import { Box, CircularProgress, Paper } from "@mui/material";
 
+import MarqueeSelectionBox from "./MarqueeSelectionBox";
+import type { MarqueeRect } from "../hooks/useMarqueeSelection";
+
 interface ReviewMediaGridProps {
+  gridRef?: React.RefObject<HTMLDivElement | null>;
+  marqueeRect?: MarqueeRect | null;
   itemCount: number;
   isLoading: boolean;
   hasMore: boolean;
@@ -11,6 +16,8 @@ interface ReviewMediaGridProps {
 }
 
 const ReviewMediaGrid: React.FC<ReviewMediaGridProps> = ({
+  gridRef,
+  marqueeRect = null,
   itemCount,
   isLoading,
   hasMore,
@@ -27,7 +34,9 @@ const ReviewMediaGrid: React.FC<ReviewMediaGridProps> = ({
       <Box sx={{ py: 6, textAlign: "center" }}>{empty}</Box>
     ) : (
       <Box
+        ref={gridRef}
         sx={{
+          position: "relative",
           display: "grid",
           gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
           gap: 1.5,
@@ -35,6 +44,7 @@ const ReviewMediaGrid: React.FC<ReviewMediaGridProps> = ({
         }}
       >
         {children}
+        <MarqueeSelectionBox container={gridRef?.current ?? null} rect={marqueeRect} />
       </Box>
     )}
     {hasMore && <Box ref={loaderRef} sx={{ height: 1 }} />}

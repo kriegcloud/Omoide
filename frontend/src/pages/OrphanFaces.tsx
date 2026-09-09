@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Container,
   Box,
@@ -192,14 +192,6 @@ export default function OrphanFacesPage() {
     fetchInitial(listKey, () => getOrphanFaces(null));
   };
 
-  const handleToggleSelect = useCallback((faceId: number) => {
-    setSelectedFaceIds((prev) =>
-      prev.includes(faceId)
-        ? prev.filter((id) => id !== faceId)
-        : [...prev, faceId]
-    );
-  }, []);
-
   const handleSelectAll = () => {
     if (selectedFaceIds.length < orphans.length) {
       setSelectedFaceIds(orphans.map((f) => f.id));
@@ -300,7 +292,7 @@ export default function OrphanFacesPage() {
         <FaceGrid
           faces={orphans}
           selectedFaceIds={selectedFaceIds}
-          onToggleSelect={handleToggleSelect}
+          onSelectionChange={setSelectedFaceIds}
         />
       )}
 
