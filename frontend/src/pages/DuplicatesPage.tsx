@@ -1,40 +1,105 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useInView } from "react-intersection-observer";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  VariableSizeList,
+  type ListChildComponentProps,
+  type ListOnItemsRenderedProps,
+} from "react-window";
 import {
   Typography,
   Box,
   Button,
   CircularProgress,
   Alert,
-  Paper,
   FormControl,
   InputLabel,
   Select,
   MenuItem,
 } from "@mui/material";
-import Grid from "@mui/material/Grid";
-import { useListStore, defaultListState } from "../stores/useListStore";
+import { useListStore, defaultListState, type ListState } from "../stores/useListStore";
 import { getDuplicates, getDuplicateStats } from "../services/duplicates";
-import { DuplicateGroup } from "../components/DuplicateGroup"; // Our new smart component
-import { DuplicateStats } from "../types";
+import { DuplicateGroup } from "../components/DuplicateGroup";
+import type { DuplicateGroup as GroupType, DuplicateStats } from "../types";
 import { useTaskCompletionVersion, useTaskEvents } from "../TaskEventsContext";
 import { formatBytes } from "../formatUtils";
 import { useSelection } from "../context/SelectionContext";
 import { useGridSelection } from "../hooks/useMarqueeSelection";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 
+const ESTIMATED_GROUP_HEIGHT = 480;
+const LOADER_HEIGHT = 64;
+
+interface GroupRowData {
+  groups: GroupType[];
+  selecting: boolean;
+  selectedIds: Set<number>;
+  masterIds: Record<number, number>;
+  onSelectMaster: (groupId: number, mediaId: number) => void;
+  onSelectionClick: React.ComponentProps<typeof DuplicateGroup>["onSelectionClick"];
+  onSelectGroup: (group: GroupType, checked: boolean) => void;
+  onGroupResolved: (groupId: number) => void;
+  measureRow: (index: number, groupId: number, height: number) => void;
+}
+
+function GroupRow({ index, style, data }: ListChildComponentProps<GroupRowData>) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  const group = data.groups[index];
+  const { measureRow } = data;
+
+  useLayoutEffect(() => {
+    const element = rowRef.current;
+    if (!element || !group) return;
+    // Measure natural content, not the absolutely positioned row's assigned height.
+    const measure = () => measureRow(index, group.group_id, Math.ceil(element.getBoundingClientRect().height));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [index, group, measureRow]);
+
+  return (
+    <div style={style}>
+      {group ? (
+        <Box ref={rowRef} sx={{ pb: 3 }}>
+          <DuplicateGroup
+            group={group}
+            selecting={data.selecting}
+            selectedIds={data.selectedIds}
+            masterId={group.items.find((media) => media.id === data.masterIds[group.group_id])?.id ?? group.items[0].id}
+            onSelectMaster={(mediaId) => data.onSelectMaster(group.group_id, mediaId)}
+            onSelectionClick={data.onSelectionClick}
+            onSelectGroup={(checked) => data.onSelectGroup(group, checked)}
+            onGroupResolved={() => data.onGroupResolved(group.group_id)}
+          />
+        </Box>
+      ) : (
+        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 1, height: LOADER_HEIGHT }}>
+          <CircularProgress size={20} />
+          <Typography variant="body2">Loading more groups...</Typography>
+        </Box>
+      )}
+    </div>
+  );
+}
+
+const groupRowKey = (index: number, data: GroupRowData) => data.groups[index]?.group_id ?? "loader";
+
 const DuplicatesPage: React.FC = () => {
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
   const gridRef = useRef<HTMLDivElement>(null);
-  const { marqueeRect, onItemClick } = useGridSelection({
-    containerRef: gridRef,
-    selecting: isSelecting,
-    selectedIds,
-    onSelectionChange: setSelected,
-    onEnterSelection: beginSelecting,
-    onExitSelection: clear,
-    allowPlainDragOnItems: false,
-  });
+  const headerRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<VariableSizeList<GroupRowData>>(null);
+  const rowHeights = useRef(new Map<number, number>());
+  const [viewport, setViewport] = useState({ width: 0, height: 480 });
+  const [visibleStopIndex, setVisibleStopIndex] = useState(-1);
+  const [masterIds, setMasterIds] = useState<Record<number, number>>({});
   const [sortBy, setSortBy] = useState<"count" | "size">("count");
   const [mediaType, setMediaType] = useState<"" | "image" | "video">("");
   const [minCount, setMinCount] = useState<number>(2);
@@ -49,9 +114,20 @@ const DuplicatesPage: React.FC = () => {
     hasMore,
     isLoading,
     error: listError,
-  } = useListStore((state) => state.lists[listKey] || defaultListState);
+  } = useListStore((state) => state.lists[listKey] || defaultListState) as ListState<GroupType>;
+  const groups = useMemo(() => duplicateGroups.filter((group) => group.items.length > 1), [duplicateGroups]);
   const { fetchInitial, loadMore, removeItem, clearList } = useListStore();
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
+  const { marqueeRect, onItemClick } = useGridSelection({
+    listKey,
+    hasMore,
+    containerRef: gridRef,
+    selecting: isSelecting,
+    selectedIds,
+    onSelectionChange: setSelected,
+    onEnterSelection: beginSelecting,
+    onExitSelection: clear,
+    allowPlainDragOnItems: false,
+  });
   const refreshKey = useTaskCompletionVersion(["find_duplicates", "generate_hashes"]);
   const { activeTasks } = useTaskEvents();
   const duplicateTask = activeTasks.find(
@@ -71,19 +147,65 @@ const DuplicatesPage: React.FC = () => {
   useEffect(() => {
     clearList(listKey);
     fetchInitial(listKey, () => getDuplicates(null, sortBy, mt, 10, minCount));
+    setVisibleStopIndex(-1);
+    rowHeights.current.clear();
+    listRef.current?.scrollTo(0);
   }, [fetchInitial, listKey, clearList, refreshKey, sortBy, mt, minCount]);
 
+  // A visible loader row requests the next cursor page; the effect runs again
+  // when a short page arrives and still does not fill the viewport.
   useEffect(() => {
-    if (inView && hasMore && !isLoading) {
+    if (hasMore && !isLoading && !listError && (groups.length === 0 || visibleStopIndex >= groups.length)) {
       loadMore(listKey, (cursor) => getDuplicates(cursor, sortBy, mt, 10, minCount));
     }
-  }, [inView, hasMore, isLoading, loadMore, listKey, sortBy, mt, minCount]);
+  }, [visibleStopIndex, groups.length, hasMore, isLoading, listError, loadMore, listKey, sortBy, mt, minCount]);
 
-  useEffect(() => {
-    if (!isLoading && hasMore && duplicateGroups.length === 0) {
-      loadMore(listKey, (cursor) => getDuplicates(cursor, sortBy, mt, 10, minCount));
+  useLayoutEffect(() => {
+    const element = viewportRef.current;
+    const header = headerRef.current;
+    if (!element || !header) return;
+    const measure = () => {
+      const width = element.clientWidth;
+      const height = Math.max(240, window.innerHeight - element.getBoundingClientRect().top - (isSelecting ? 112 : 16));
+      setViewport((previous) => previous.width === width && previous.height === height ? previous : { width, height });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    observer.observe(header);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [isSelecting]);
+
+  useLayoutEffect(() => {
+    // Offscreen measurements are invalid after responsive columns change.
+    rowHeights.current.clear();
+    listRef.current?.resetAfterIndex(0);
+  }, [viewport.width]);
+
+  useLayoutEffect(() => {
+    // Resolved/removed groups shift indices; heights remain keyed by group ID.
+    listRef.current?.resetAfterIndex(0);
+  }, [groups]);
+
+  const measureRow = useCallback((index: number, groupId: number, height: number) => {
+    if (height > 0 && rowHeights.current.get(groupId) !== height) {
+      rowHeights.current.set(groupId, height);
+      listRef.current?.resetAfterIndex(index);
     }
-  }, [duplicateGroups.length, hasMore, isLoading, loadMore, listKey, sortBy, mt, minCount]);
+  }, []);
+
+  const getRowHeight = (index: number) => {
+    const group = groups[index];
+    return group ? rowHeights.current.get(group.group_id) ?? ESTIMATED_GROUP_HEIGHT : LOADER_HEIGHT;
+  };
+
+  const handleItemsRendered = useCallback(({ visibleStopIndex }: ListOnItemsRenderedProps) => {
+    setVisibleStopIndex(visibleStopIndex);
+  }, []);
 
   useEffect(() => {
     let isActive = true;
@@ -150,250 +272,164 @@ const DuplicatesPage: React.FC = () => {
 
   const formatNumber = (value: number) => value.toLocaleString();
 
-  const typeLabel = (value: "image" | "video") =>
-    value === "image" ? "Images" : "Videos";
+  const rowData: GroupRowData = {
+    groups,
+    selecting: isSelecting,
+    selectedIds,
+    masterIds,
+    onSelectMaster: (groupId, mediaId) => setMasterIds((previous) => ({ ...previous, [groupId]: mediaId })),
+    onSelectionClick: onItemClick,
+    onSelectGroup: (group, checked) => {
+      const next = new Set(selectedIds);
+      for (const media of group.items) {
+        if (checked) next.add(media.id);
+        else next.delete(media.id);
+      }
+      beginSelecting();
+      setSelected(next);
+    },
+    onGroupResolved: handleGroupResolved,
+    measureRow,
+  };
 
   return (
     <Box sx={{ p: 2, maxWidth: "1600px", mx: "auto" }}>
-      <Typography variant="h4" gutterBottom>
-        Potential Duplicates
-      </Typography>
-
-      <Alert severity="info" sx={{ mb: 3 }}>
-        Start duplicate detection from the control panel in the header; progress
-        is tracked there and this list refreshes when a run completes.
-      </Alert>
-
-      {duplicateTask && (
-        <Alert severity="warning" sx={{ mb: 2 }}>
-          Duplicate detection running... {duplicateTask.processed}/{duplicateTask.total}
-          {duplicateTask.current_step ? " (" + duplicateTask.current_step + ")" : ""}
-        </Alert>
-      )}
-
-      {hashTask && (
-        <Alert severity="info" sx={{ mb: 2 }}>
-          Hash generation running... {hashTask.processed}/{hashTask.total}
-          {hashTask.current_step ? " (" + hashTask.current_step + ")" : ""}
-        </Alert>
-      )}
-
-      {statsError && (
-        <Alert severity="error" sx={{ mb: 3 }}>
-          {statsError}
-        </Alert>
-      )}
-
-      {isLoadingStats && !stats && (
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 3 }}>
-          <CircularProgress size={20} />
-          <Typography variant="body2">
-            Loading duplicate statistics...
+      <Box ref={headerRef} sx={{ pb: 2 }}>
+        <Box sx={{ display: "flex", alignItems: "baseline", gap: 2, flexWrap: "wrap", mb: 1 }}>
+          <Typography variant="h5" component="h1">Potential Duplicates</Typography>
+          <Typography variant="caption" color="text.secondary">
+            Selection covers loaded rows only
           </Typography>
         </Box>
-      )}
-
-      {stats && (
-        <Box sx={{ mb: 3, display: "flex", flexDirection: "column", gap: 2 }}>
-          {isLoadingStats && (
-            <Typography variant="caption" color="text.secondary">
-              Refreshing statistics...
-            </Typography>
-          )}
-          <Grid container spacing={2}>
-            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-              <Paper variant="outlined" sx={{ p: 2 }}>
-                <Typography variant="subtitle2" color="text.secondary">
-                  Duplicate Groups
-                </Typography>
-                <Typography variant="h5">
-                  {formatNumber(stats.total_groups)}
-                </Typography>
-              </Paper>
-            </Grid>
-            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-              <Paper variant="outlined" sx={{ p: 2 }}>
-                <Typography variant="subtitle2" color="text.secondary">
-                  Duplicate Files
-                </Typography>
-                <Typography variant="h5">
-                  {formatNumber(stats.total_items)}
-                </Typography>
-              </Paper>
-            </Grid>
-            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-              <Paper variant="outlined" sx={{ p: 2 }}>
-                <Typography variant="subtitle2" color="text.secondary">
-                  Duplicate Size
-                </Typography>
-                <Typography variant="h5">
-                  {formatBytes(stats.total_size_bytes)}
-                </Typography>
-              </Paper>
-            </Grid>
-            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-              <Paper variant="outlined" sx={{ p: 2 }}>
-                <Typography variant="subtitle2" color="text.secondary">
-                  Potential Reclaim
-                </Typography>
-                <Typography variant="h5">
-                  {formatBytes(stats.total_reclaimable_bytes)}
-                </Typography>
-              </Paper>
-            </Grid>
-          </Grid>
-          <Paper variant="outlined" sx={{ p: 2 }}>
-            <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-              Media Type Breakdown
-            </Typography>
-            {stats.type_breakdown.length === 0 ? (
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
+          <Box sx={{ flexGrow: 1 }}>
+            {stats ? (
               <Typography variant="body2" color="text.secondary">
-                No duplicate media detected yet.
+                <Box component="span" sx={{ fontWeight: "bold", color: "text.primary" }}>
+                  {formatNumber(stats.total_groups)} groups · {formatNumber(stats.total_items)} files
+                </Box>
+                {" · "}{formatBytes(stats.total_size_bytes)} total · {formatBytes(stats.total_reclaimable_bytes)} reclaimable
               </Typography>
-            ) : (
-              <Grid container spacing={2}>
-                {stats.type_breakdown.map((entry) => (
-                  <Grid key={entry.type} size={{ xs: 12, sm: 6, md: 4 }}>
-                    <Box sx={{ display: "flex", flexDirection: "column" }}>
-                      <Typography variant="body1">
-                        {typeLabel(entry.type)}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        {formatNumber(entry.items)} items | {formatBytes(entry.size_bytes)}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {formatNumber(entry.groups)} groups
-                      </Typography>
-                    </Box>
-                  </Grid>
-                ))}
-              </Grid>
+            ) : isLoadingStats ? (
+              <Typography variant="body2" color="text.secondary">Loading duplicate statistics...</Typography>
+            ) : null}
+            {isLoadingStats && stats && (
+              <Typography variant="caption" color="text.secondary">Refreshing statistics...</Typography>
             )}
-          </Paper>
-          {stats.top_folders.length > 0 && (
-            <Paper variant="outlined" sx={{ p: 2 }}>
-              <Typography
-                variant="subtitle2"
-                color="text.secondary"
-                gutterBottom
-              >
-                Top Folders by Duplicates
-              </Typography>
-              <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-                {stats.top_folders.map((folder) => (
-                  <Box
-                    key={folder.folder}
-                    sx={{
-                      display: "flex",
-                      flexDirection: { xs: "column", md: "row" },
-                      justifyContent: "space-between",
-                      gap: 0.5,
-                    }}
-                  >
-                    <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
-                      {folder.folder}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {formatNumber(folder.items)} items | {formatBytes(folder.size_bytes)} | {formatNumber(folder.groups)} groups
-                    </Typography>
-                  </Box>
-                ))}
-              </Box>
-            </Paper>
-          )}
+          </Box>
+          <FormControl size="small" sx={{ minWidth: 140 }}>
+            <InputLabel>Media Type</InputLabel>
+            <Select
+              value={mediaType}
+              label="Media Type"
+              onChange={(e) => setMediaType(e.target.value as "" | "image" | "video")}
+            >
+              <MenuItem value="">All</MenuItem>
+              <MenuItem value="image">Images</MenuItem>
+              <MenuItem value="video">Videos</MenuItem>
+            </Select>
+          </FormControl>
+          <FormControl size="small" sx={{ minWidth: 160 }}>
+            <InputLabel>Sort By</InputLabel>
+            <Select
+              value={sortBy}
+              label="Sort By"
+              onChange={(e) => setSortBy(e.target.value as "count" | "size")}
+            >
+              <MenuItem value="count">Most Files</MenuItem>
+              <MenuItem value="size">Largest Size</MenuItem>
+            </Select>
+          </FormControl>
+          <FormControl size="small" sx={{ minWidth: 160 }}>
+            <InputLabel>Min. Copies</InputLabel>
+            <Select
+              value={minCount}
+              label="Min. Copies"
+              onChange={(e) => setMinCount(Number(e.target.value))}
+            >
+              <MenuItem value={2}>Any (2+)</MenuItem>
+              <MenuItem value={3}>3 or more</MenuItem>
+              <MenuItem value={4}>4 or more</MenuItem>
+              <MenuItem value={5}>5 or more</MenuItem>
+            </Select>
+          </FormControl>
         </Box>
-      )}
 
-      <Box sx={{ display: "flex", gap: 2, mb: 2, flexWrap: "wrap", alignItems: "center" }}>
-        <FormControl size="small" sx={{ minWidth: 140 }}>
-          <InputLabel>Media Type</InputLabel>
-          <Select
-            value={mediaType}
-            label="Media Type"
-            onChange={(e) => setMediaType(e.target.value as "" | "image" | "video")}
-          >
-            <MenuItem value="">All</MenuItem>
-            <MenuItem value="image">Images</MenuItem>
-            <MenuItem value="video">Videos</MenuItem>
-          </Select>
-        </FormControl>
-        <FormControl size="small" sx={{ minWidth: 160 }}>
-          <InputLabel>Sort By</InputLabel>
-          <Select
-            value={sortBy}
-            label="Sort By"
-            onChange={(e) => setSortBy(e.target.value as "count" | "size")}
-          >
-            <MenuItem value="count">Most Files</MenuItem>
-            <MenuItem value="size">Largest Size</MenuItem>
-          </Select>
-        </FormControl>
-        <FormControl size="small" sx={{ minWidth: 160 }}>
-          <InputLabel>Min. Copies</InputLabel>
-          <Select
-            value={minCount}
-            label="Min. Copies"
-            onChange={(e) => setMinCount(Number(e.target.value))}
-          >
-            <MenuItem value={2}>Any (2+)</MenuItem>
-            <MenuItem value={3}>3 or more</MenuItem>
-            <MenuItem value={4}>4 or more</MenuItem>
-            <MenuItem value={5}>5 or more</MenuItem>
-          </Select>
-        </FormControl>
-      </Box>
-
-      {isLoading && duplicateGroups.length === 0 ? (
-        <Box sx={{ display: "flex", justifyContent: "center", my: 4 }}>
-          <CircularProgress />
-        </Box>
-      ) : listError && duplicateGroups.length === 0 ? (
-        <Alert
-          severity="error"
-          sx={{ my: 4 }}
-          action={
-            <Button color="inherit" size="small" onClick={handleRetryLoad}>
-              Retry
-            </Button>
-          }
-        >
-          {listError}
-        </Alert>
-      ) : duplicateGroups.length === 0 ? (
-        <Typography align="center" sx={{ my: 4 }}>
-          No duplicates found.
+        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
+          Start duplicate detection from the header control panel; this list refreshes when a run completes.
         </Typography>
-      ) : (
-        <Box ref={gridRef} sx={{ position: "relative", display: "flex", flexDirection: "column", gap: 3 }}>
-          <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
-          {duplicateGroups.map(
-            (group) =>
-              group.items.length > 1 && (
-                <DuplicateGroup
-                  key={group.group_id}
-                  group={group}
-                  selecting={isSelecting}
-                  selectedIds={selectedIds}
-                  onSelectionClick={onItemClick}
-                  onSelectGroup={(checked) => {
-                    const next = new Set(selectedIds);
-                    for (const media of group.items) {
-                      if (checked) next.add(media.id);
-                      else next.delete(media.id);
-                    }
-                    beginSelecting();
-                    setSelected(next);
-                  }}
-                  onGroupResolved={() => handleGroupResolved(group.group_id)}
-                />
-              )
-          )}
-          {hasMore && <Box ref={loaderRef} sx={{ height: "1px" }} />}
-        </Box>
-      )}
+        {stats && (stats.type_breakdown.length > 0 || stats.top_folders.length > 0) && (
+          <Box component="details" sx={{ mt: 1 }}>
+            <Typography component="summary" variant="caption" sx={{ cursor: "pointer" }}>
+              More statistics
+            </Typography>
+            {stats.type_breakdown.map((entry) => (
+              <Typography key={entry.type} variant="body2" color="text.secondary">
+                {entry.type === "image" ? "Images" : "Videos"}: {formatNumber(entry.items)} items · {formatNumber(entry.groups)} groups · {formatBytes(entry.size_bytes)}
+              </Typography>
+            ))}
+            {stats.top_folders.length > 0 && (
+              <Typography variant="subtitle2" sx={{ mt: 1 }}>Top Folders by Duplicates</Typography>
+            )}
+            {stats.top_folders.map((folder) => (
+              <Typography key={folder.folder} variant="body2" color="text.secondary" sx={{ overflowWrap: "anywhere" }}>
+                {folder.folder}: {formatNumber(folder.items)} items · {formatNumber(folder.groups)} groups · {formatBytes(folder.size_bytes)}
+              </Typography>
+            ))}
+          </Box>
+        )}
+        {duplicateTask && (
+          <Alert severity="warning" sx={{ mt: 1 }}>
+            Duplicate detection running... {duplicateTask.processed}/{duplicateTask.total}
+            {duplicateTask.current_step ? " (" + duplicateTask.current_step + ")" : ""}
+          </Alert>
+        )}
+        {hashTask && (
+          <Alert severity="info" sx={{ mt: 1 }}>
+            Hash generation running... {hashTask.processed}/{hashTask.total}
+            {hashTask.current_step ? " (" + hashTask.current_step + ")" : ""}
+          </Alert>
+        )}
+        {statsError && <Alert severity="error" sx={{ mt: 1 }}>{statsError}</Alert>}
+        {listError && (
+          <Alert
+            severity="error"
+            sx={{ mt: 1 }}
+            action={<Button color="inherit" size="small" onClick={handleRetryLoad}>Retry</Button>}
+          >
+            {listError}
+          </Alert>
+        )}
+      </Box>
+      <Box ref={viewportRef} sx={{ position: "relative", overflow: "hidden", height: viewport.height }}>
+        {groups.length > 0 && viewport.width > 0 ? (
+          <VariableSizeList<GroupRowData>
+            ref={listRef}
+            outerRef={gridRef}
+            width={viewport.width}
+            height={viewport.height}
+            itemCount={groups.length + (hasMore ? 1 : 0)}
+            itemSize={getRowHeight}
+            estimatedItemSize={ESTIMATED_GROUP_HEIGHT}
+            itemKey={groupRowKey}
+            itemData={rowData}
+            overscanCount={1}
+            onItemsRendered={handleItemsRendered}
+          >
+            {GroupRow}
+          </VariableSizeList>
+        ) : isLoading ? (
+          <Box sx={{ display: "flex", justifyContent: "center", my: 4 }}>
+            <CircularProgress />
+          </Box>
+        ) : !listError && !hasMore ? (
+          <Typography align="center" sx={{ my: 4 }}>No duplicates found.</Typography>
+        ) : null}
+        {/* The overlay stays outside scrolling content so scrollTop does not offset the marquee. */}
+        <MarqueeSelectionBox container={viewportRef.current} rect={marqueeRect} />
+      </Box>
     </Box>
   );
-
 };
 
 export default DuplicatesPage;

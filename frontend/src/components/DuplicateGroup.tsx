@@ -27,6 +27,8 @@ interface DuplicateGroupProps {
   onGroupResolved: () => void;
   selecting: boolean;
   selectedIds: Set<number>;
+  masterId: number;
+  onSelectMaster: (mediaId: number) => void;
   onSelectionClick: (id: number, event: SelectionClickEvent) => boolean;
   onSelectGroup: (checked: boolean) => void;
 }
@@ -39,12 +41,12 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
   onGroupResolved,
   selecting,
   selectedIds,
+  masterId,
+  onSelectMaster,
   onSelectionClick,
   onSelectGroup,
 }) => {
   const selectedCount = group.items.filter((media) => selectedIds.has(media.id)).length;
-  // The ID of the media item selected as the "master" to keep
-  const [masterId, setMasterId] = useState<number>(group.items[0].id);
   const [isProcessing, setIsProcessing] = useState(false);
   const [confirmAction, setConfirmAction] =
     useState<ExtendedActionType | null>(null);
@@ -165,7 +167,7 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
               media={media}
               groupId={group.group_id}
               isSelectedAsMaster={media.id === masterId}
-              onSelectMaster={() => setMasterId(media.id)}
+              onSelectMaster={() => onSelectMaster(media.id)}
               selecting={selecting}
               selected={selectedIds.has(media.id)}
               onSelectionClick={onSelectionClick}
