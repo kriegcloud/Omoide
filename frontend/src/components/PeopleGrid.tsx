@@ -38,6 +38,7 @@ import { clearPeopleGrids, resortPeopleGrid } from "../stores/peopleCache";
 import { Person, PersonReadSimple } from "../types";
 import ConfirmDialog from "./ConfirmDialog";
 import ClusteringStatusStrip from "./ClusteringStatusStrip";
+import MergeQueue from "./MergeQueue";
 import MergePeopleDialog from "./MergePeopleDialog";
 import MarqueeSelectionBox from "./MarqueeSelectionBox";
 import PersonCard from "./PersonCard";
@@ -82,6 +83,7 @@ export default function PeopleGrid({
     "cluster_persons",
   ]);
   const [seenRefreshKey, setSeenRefreshKey] = useState(refreshKey);
+  const [queueVersion, setQueueVersion] = useState(0);
   const hasNewItems = refreshKey !== seenRefreshKey;
   const {
     selectionMode,
@@ -140,6 +142,7 @@ export default function PeopleGrid({
 
   const handleRefresh = useCallback(() => {
     setSeenRefreshKey(refreshKey);
+    setQueueVersion((version) => version + 1);
     refetch();
   }, [refreshKey, refetch]);
 
@@ -172,6 +175,7 @@ export default function PeopleGrid({
       // The hidden/visible counterpart and any gender-filtered variant now
       // hold stale membership; drop them so they refetch on their next visit.
       clearPeopleGrids([listKey]);
+      setQueueVersion((version) => version + 1);
       updateSelectionAfterRemoval(changedIds);
       if (changedIds.length) push({
         label: `${hidden ? "Unhidden" : "Hidden"} ${changedIds.length} people`,
@@ -220,6 +224,7 @@ export default function PeopleGrid({
       const result = await deletePersonsBulk(ids);
       removeItems(listKey, result.deleted_ids);
       clearPeopleGrids([listKey]);
+      setQueueVersion((version) => version + 1);
       updateSelectionAfterRemoval(result.deleted_ids);
       const deletedCount = result.deleted_ids.length;
       const parts: string[] = [];
@@ -292,6 +297,7 @@ export default function PeopleGrid({
       // changed; re-sort this grid and drop the other cached variants.
       resortPeopleGrid(listKey);
       clearPeopleGrids([listKey]);
+      setQueueVersion((version) => version + 1);
       updateSelectionAfterRemoval(result.merged_ids);
       setMergeOpen(false);
       if (selectedIds.size - result.merged_ids.length < 2) {
@@ -319,14 +325,6 @@ export default function PeopleGrid({
       <Typography variant="h5" color="text.primary" gutterBottom>
         People disabled!
       </Typography>
-    );
-  }
-
-  if (isLoading && people.length === 0) {
-    return (
-      <Box textAlign="center" py={4}>
-        <CircularProgress color="secondary" />
-      </Box>
     );
   }
 
@@ -422,10 +420,19 @@ export default function PeopleGrid({
       </Stack>
 
       {!hidden && (
-        <ClusteringStatusStrip
-          onRefresh={handleRefresh}
-          onShowUnassigned={handleShowUnassigned}
-        />
+        <>
+          <ClusteringStatusStrip
+            onRefresh={handleRefresh}
+            onShowUnassigned={handleShowUnassigned}
+          />
+          <MergeQueue
+            refreshVersion={queueVersion + refreshKey}
+            onMerged={() => {
+              clearPeopleGrids([listKey]);
+              refetch();
+            }}
+          />
+        </>
       )}
 
       {error && (
@@ -462,7 +469,7 @@ export default function PeopleGrid({
         <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
       </Grid>
 
-      {isLoading && people.length > 0 && (
+      {isLoading && (
         <Box textAlign="center" py={2}>
           <CircularProgress color="secondary" />
         </Box>

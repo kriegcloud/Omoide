@@ -46,7 +46,7 @@ interface DetectedFacesProps {
   personId?: number;
 
   profileFaceId?: number;
-  onSetProfile?: (faceId: number) => void;
+  onSetProfile?: (faceId: number) => void | Promise<void>;
 
   onLoadMore?: () => void;
   hasMore?: boolean;
@@ -124,6 +124,8 @@ export default function DetectedFaces({
   }, [faces]);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const reviewBusy = useRef(false);
+  const [isReviewing, setIsReviewing] = useState(false);
   useRovingGridFocus(containerRef);
   const clickedGroupRef = useRef<number[] | null>(null);
   const selectedIdSet = useMemo(() => new Set(selectedFaceIds), [selectedFaceIds]);
@@ -248,6 +250,68 @@ export default function DetectedFaces({
     };
   }, [assignSearchTerm, canMutate]);
 
+  const handleDetach = useCallback(async (faceIds = selectedFaceIds) => {
+    if (!faceIds.length || !canMutate || isProcessing || reviewBusy.current) return;
+    reviewBusy.current = true;
+    setIsReviewing(true);
+    try {
+      await onDetach([...faceIds]);
+      onClearSelection();
+    } catch (error) {
+      console.error("Failed to detach faces:", error);
+    } finally {
+      reviewBusy.current = false;
+      setIsReviewing(false);
+    }
+  }, [selectedFaceIds, canMutate, isProcessing, onDetach, onClearSelection]);
+
+  const handleSetProfile = useCallback(async (faceId: number) => {
+    if (!onSetProfile || !canMutate || isProcessing || reviewBusy.current) return;
+    reviewBusy.current = true;
+    setIsReviewing(true);
+    try {
+      await onSetProfile(faceId);
+    } catch (error) {
+      console.error("Failed to set profile face:", error);
+    } finally {
+      reviewBusy.current = false;
+      setIsReviewing(false);
+    }
+  }, [onSetProfile, canMutate, isProcessing]);
+
+  useEffect(() => {
+    if (!personId || !canMutate || isProcessing || isReviewing ||
+        isAssignDialogOpen || openCreateDialog || confirmDeleteOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat || event.isComposing ||
+          event.altKey || event.ctrlKey || event.metaKey) return;
+      const key = event.key.toLowerCase();
+      if (key !== "d" && key !== "p") return;
+      const target = event.target;
+      if (!(target instanceof HTMLElement) ||
+          target.isContentEditable ||
+          target.closest('input, textarea, select, [contenteditable], [role="textbox"], [role="slider"], [role="dialog"], [role="menu"]')) return;
+      // A collapsed video group is not a single face. Space selects its faces;
+      // expand it (or use the flat grid) before acting on a focused single face.
+      const tile = target.closest<HTMLElement>("[data-roving-tile]:not([data-selection-group])");
+      const focusedId = tile && containerRef.current?.contains(tile)
+        ? Number(tile.dataset.selectableId) : undefined;
+      const availableIds = new Set([...faces, ...(pinnedFaces ?? [])].map((face) => face.id));
+      const ids = selectedFaceIds.length
+        ? selectedFaceIds.filter((id) => availableIds.has(id))
+        : focusedId !== undefined && availableIds.has(focusedId) ? [focusedId] : [];
+      if (!ids.length || (key === "p" && (!onSetProfile || ids.length !== 1))) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (key === "d") void handleDetach(ids);
+      else void handleSetProfile(ids[0]);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [personId, canMutate, isProcessing, isReviewing, isAssignDialogOpen,
+    openCreateDialog, confirmDeleteOpen, faces, pinnedFaces, selectedFaceIds,
+    onSetProfile, handleDetach, handleSetProfile]);
+
   if (faces.length === 0 && !isLoadingMore && !hasMore && title === "Detected Faces") {
     return null;
   }
@@ -262,17 +326,6 @@ export default function DetectedFaces({
       onClearSelection();
     } catch (error) {
       console.error("Failed to assign faces:", error);
-    }
-  };
-
-  const handleDetach = async () => {
-    if (!onDetach || selectedFaceIds.length === 0 || !canMutate) return;
-    const faceIds = [...selectedFaceIds];
-    try {
-      await onDetach(faceIds);
-      onClearSelection();
-    } catch (error) {
-      console.error("Failed to detach faces:", error);
     }
   };
 
@@ -366,7 +419,7 @@ export default function DetectedFaces({
                     key={face.id}
                     face={face}
                     isProfile={face.id === profileFaceId}
-                    onSetProfile={canMutate ? onSetProfile : undefined}
+                    onSetProfile={canMutate && onSetProfile ? handleSetProfile : undefined}
                     selected={canMutate && selectedFaceIds.includes(face.id)}
                     selecting={isAnythingSelected}
                     onSelectionClick={canMutate ? onItemClick : undefined}
@@ -385,7 +438,7 @@ export default function DetectedFaces({
               keyboardReview
               face={item.faces[0]}
               isProfile={item.faces[0].id === profileFaceId}
-              onSetProfile={canMutate ? onSetProfile : undefined}
+              onSetProfile={canMutate && onSetProfile ? handleSetProfile : undefined}
               selected={canMutate && selectedFaceIds.includes(item.faces[0].id)}
               selecting={isAnythingSelected}
               onSelectionClick={canMutate ? onItemClick : undefined}
@@ -404,7 +457,7 @@ export default function DetectedFaces({
               keyboardReview
               face={face}
               isProfile={face.id === profileFaceId}
-              onSetProfile={canMutate ? onSetProfile : undefined}
+              onSetProfile={canMutate && onSetProfile ? handleSetProfile : undefined}
               selected={canMutate && selectedFaceIds.includes(face.id)}
               selecting={isAnythingSelected}
               onSelectionClick={canMutate ? onItemClick : undefined}
@@ -456,8 +509,8 @@ export default function DetectedFaces({
                 variant="outlined"
                 color="secondary"
                 size="small"
-                disabled={isProcessing}
-                onClick={handleDetach}
+                disabled={isProcessing || isReviewing}
+                onClick={() => void handleDetach()}
               >
                 Detach
               </Button>
@@ -477,8 +530,8 @@ export default function DetectedFaces({
               <Button
                 variant="contained"
                 size="small"
-                disabled={isProcessing || selectedFaceIds.length !== 1}
-                onClick={() => onSetProfile(selectedFaceIds[0])}
+                disabled={isProcessing || isReviewing || selectedFaceIds.length !== 1}
+                onClick={() => void handleSetProfile(selectedFaceIds[0])}
               >
                 Set as Profile
               </Button>
@@ -493,6 +546,13 @@ export default function DetectedFaces({
         >
           {selectedFaceIds.length < faces.length ? "Select All" : "Select None"}
         </Button>
+        {personId && canMutate && (
+          <Typography variant="caption" color="text.secondary" display="block">
+            D: detach selected faces or the focused face
+            {onSetProfile ? " · P: set as profile (one face only)" : ""}.
+            {" "}Expand grouped tiles to focus a single face.
+          </Typography>
+        )}
       </Box>
 
       {/* Create-person dialog */}
@@ -623,7 +683,7 @@ export default function DetectedFaces({
                   key={face.id}
                   face={face}
                   isProfile={face.id === profileFaceId}
-                  onSetProfile={canMutate ? onSetProfile : undefined}
+                  onSetProfile={canMutate && onSetProfile ? handleSetProfile : undefined}
                   selected={canMutate && selectedFaceIds.includes(face.id)}
                   selecting={isAnythingSelected}
                   onSelectionClick={canMutate ? onItemClick : undefined}
