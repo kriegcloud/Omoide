@@ -18,7 +18,7 @@ import { useInView } from "react-intersection-observer";
 import { useNavigate } from "react-router-dom";
 import config from "../config";
 import { usePeopleSelection } from "../hooks/usePeopleSelection";
-import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import { useGridSelection } from "../hooks/useMarqueeSelection";
 import { getPeople } from "../services/person";
 import {
   deletePersonsBulk,
@@ -82,8 +82,9 @@ export default function PeopleGrid({
   const {
     selectionMode,
     selectedIds,
+    enterMode,
+    exitMode,
     toggleMode,
-    toggle,
     clear,
     setSelected,
     pruneTo,
@@ -99,11 +100,11 @@ export default function PeopleGrid({
     severity: "success",
   });
   const gridRef = useRef<HTMLDivElement>(null);
-  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+  const { marqueeRect, onItemClick } = useGridSelection<number>({
     containerRef: gridRef,
-    itemSelector: "[data-selectable-id]",
-    getId: (element) => Number(element.dataset.selectableId),
-    enabled: selectionMode,
+    selecting: selectionMode,
+    onEnterSelection: enterMode,
+    onExitSelection: exitMode,
     selectedIds,
     onSelectionChange: setSelected,
   });
@@ -151,9 +152,6 @@ export default function PeopleGrid({
     const removed = new Set(removedIds);
     const remaining = Array.from(selectedIds).filter((id) => !removed.has(id));
     setSelected(remaining);
-    if (remaining.length === 0 && selectionMode) {
-      toggleMode();
-    }
   };
 
   const handleVisibilityChange = async () => {
@@ -441,12 +439,9 @@ export default function PeopleGrid({
           <Grid key={person.id} size={{ xs: 6, sm: 4, md: 2, lg: 1.5 }}>
             <PersonCard
               person={person}
-              selectable={selectionMode}
-              selected={selectionMode && selectedIds.has(person.id)}
-              onToggleSelect={(personId, event) => {
-                if (event) onItemClick(personId, event);
-                else toggle(personId);
-              }}
+              selecting={selectionMode}
+              selected={selectedIds.has(person.id)}
+              onSelectionClick={onItemClick}
             />
           </Grid>
         ))}

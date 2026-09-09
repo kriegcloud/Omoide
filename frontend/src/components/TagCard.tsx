@@ -1,6 +1,5 @@
 import React, { useState } from "react";
-import { Link as RouterLink } from "react-router-dom";
-import { Box, Typography, IconButton, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Button, Checkbox, Snackbar, Alert, useTheme } from "@mui/material";
+import { Box, Typography, IconButton, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, Button, Snackbar, Alert } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import MovieIcon from "@mui/icons-material/Movie";
 import PersonIcon from "@mui/icons-material/Person";
@@ -10,23 +9,23 @@ import { Tag } from "../types";
 import { deleteTag } from "../services/tagActions";
 import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
+import type { SelectionClickEvent } from "../hooks/useMarqueeSelection";
+import SelectableTileFrame from "./SelectableTileFrame";
 interface TagCardProps {
   tag: Tag;
   onTagDeleted: (tagId: number) => void;
-  selectable?: boolean;
+  selecting?: boolean;
   selected?: boolean;
-  onSelectionClick?: (tagId: number, event: React.MouseEvent) => void;
+  onSelectionClick?: (tagId: number, event: SelectionClickEvent) => boolean;
 }
 
 export default function TagCard({
   tag,
   onTagDeleted,
-  selectable = false,
+  selecting = false,
   selected = false,
   onSelectionClick,
 }: TagCardProps) {
-  const theme = useTheme();
-  const [hovered, setHovered] = useState(false);
   const [openConfirmDialog, setOpenConfirmDialog] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -72,34 +71,28 @@ export default function TagCard({
 
   return (
     <>
-      <Box
-        data-selectable-id={tag.id}
-        component={RouterLink}
-        to={`/tag/${tag.id}`}
-        onClick={
-          selectable
-            ? (event) => onSelectionClick?.(tag.id, event)
-            : undefined
+      <SelectableTileFrame
+        id={tag.id}
+        href={`/tag/${tag.id}`}
+        aspectRatio="1/1"
+        selecting={selecting}
+        selected={selected}
+        onSelectionClick={onSelectionClick}
+        menu={
+          <IconButton
+            aria-label={`Delete tag ${tag.name}`}
+            onClick={handleOpenConfirmDialog}
+            size="small"
+            sx={{
+              width: 32,
+              height: 32,
+              color: "common.white",
+              "&:hover": { color: "accent.main" },
+            }}
+          >
+            <DeleteIcon fontSize="small" />
+          </IconButton>
         }
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        sx={{
-          display: "block",
-          position: "relative",
-          overflow: "hidden",
-          aspectRatio: "1/1",
-          borderRadius: 3,
-          textDecoration: "none",
-          bgcolor: "background.paper",
-          outline: selected ? "3px solid" : "none",
-          outlineColor: selected ? "primary.main" : "transparent",
-          transition: "transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out",
-          "&:hover": {
-            transform: "scale(1.05)",
-            boxShadow: theme.shadows[10],
-            zIndex: 10,
-          },
-        }}
       >
         {/* --- Visual Collage Background (now with mixed content) --- */}
         {previewItems.length > 0 ? (
@@ -162,44 +155,11 @@ export default function TagCard({
               `linear-gradient(to top, ${alpha(theme.palette.common.black, 0.9)} 0%, ${alpha(theme.palette.common.black, 0.1)} 60%, ${alpha(theme.palette.common.black, 0.5)} 100%)`,
             display: "flex",
             flexDirection: "column",
-            justifyContent: "space-between",
+            justifyContent: "flex-end",
             p: 1.5,
             color: (theme) => theme.palette.common.white,
           }}
         >
-          <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-            {selectable ? (
-              <Checkbox
-                checked={selected}
-                size="small"
-                sx={{
-                  color: "common.white",
-                  bgcolor: "rgba(0,0,0,0.35)",
-                  borderRadius: 1,
-                  pointerEvents: "none",
-                }}
-              />
-            ) : (
-              <span />
-            )}
-            <IconButton
-              data-no-marquee
-              onClick={handleOpenConfirmDialog}
-              size="small"
-              sx={{
-                color: (theme) => alpha(theme.palette.common.white, 0.8),
-                backgroundColor: (theme) => alpha(theme.palette.common.black, 0.3),
-                opacity: hovered && !selectable ? 1 : 0,
-                transition: "opacity 0.2s ease-in-out",
-                "&:hover": {
-                  color: "accent.main",
-                  backgroundColor: (theme) => alpha(theme.palette.common.black, 0.5),
-                },
-              }}
-            >
-              <DeleteIcon fontSize="small" />
-            </IconButton>
-          </Box>
           <Box>
             <Typography variant="h6" fontWeight="bold" noWrap>
               {tag.name}
@@ -223,7 +183,7 @@ export default function TagCard({
             </Box>
           </Box>
         </Box>
-      </Box>
+      </SelectableTileFrame>
 
       {/* --- Themed Confirmation Dialog --- */}
       <Dialog

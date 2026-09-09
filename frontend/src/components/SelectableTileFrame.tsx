@@ -9,7 +9,8 @@ interface SelectableTileFrameProps
   id: number;
   selected: boolean;
   selecting: boolean;
-  onSelectionClick: (id: number, event: SelectionClickEvent) => boolean;
+  // Omit for navigation-only card consumers: no selection checkbox is shown.
+  onSelectionClick?: (id: number, event: SelectionClickEvent) => boolean;
   href?: string;
   linkState?: unknown;
   replace?: boolean;
@@ -22,6 +23,8 @@ interface SelectableTileFrameProps
   sx?: SxProps<Theme>;
   children: ReactNode;
   footer?: ReactNode;
+  // Let caption-only footers navigate to href as well as the thumbnail.
+  linkFooter?: boolean;
 }
 
 const CONTROL_SELECTOR = "[data-tile-control], button, input, select, textarea, [contenteditable]";
@@ -60,6 +63,7 @@ export default function SelectableTileFrame({
   sx = [],
   children,
   footer,
+  linkFooter = false,
   ...rest
 }: SelectableTileFrameProps) {
   const content = <Box sx={{ position: "relative", aspectRatio }}>{children}</Box>;
@@ -79,7 +83,7 @@ export default function SelectableTileFrame({
           !event.currentTarget.contains(target) ||
           target.closest(CONTROL_SELECTOR)
         ) return;
-        if (onSelectionClick(id, event)) {
+        if (onSelectionClick?.(id, event)) {
           event.preventDefault();
           event.stopPropagation();
         }
@@ -96,7 +100,7 @@ export default function SelectableTileFrame({
         if (selecting && event.key === " ") {
           event.preventDefault();
           event.stopPropagation();
-          onSelectionClick(id, selectionToggleEvent);
+          onSelectionClick?.(id, selectionToggleEvent);
         } else if (!selecting && onOpen && (event.key === "Enter" || event.key === " ")) {
           event.preventDefault();
           onOpen();
@@ -143,7 +147,7 @@ export default function SelectableTileFrame({
             {content}
           </RouterLink>
         ) : content}
-        <Checkbox
+        {onSelectionClick && <Checkbox
           className="tile-checkbox"
           data-tile-control
           data-no-marquee
@@ -168,7 +172,7 @@ export default function SelectableTileFrame({
             "&.Mui-checked": { color: "primary.main" },
             "&:hover": { bgcolor: "rgba(0,0,0,.65)" },
           }}
-        />
+        />}
         {!selecting && topLeft && (
           <Box className="tile-top-left" sx={{ position: "absolute", top: 6, left: selected ? 44 : 6, zIndex: 19, pointerEvents: "none" }}>
             {topLeft}
@@ -182,7 +186,18 @@ export default function SelectableTileFrame({
         {bottomLeft && <Box sx={{ position: "absolute", bottom: 6, left: 6 }}>{bottomLeft}</Box>}
         {bottomRight && <Box sx={{ position: "absolute", bottom: 6, right: 6 }}>{bottomRight}</Box>}
       </Box>
-      {footer}
+      {linkFooter && href ? (
+        <RouterLink
+          to={href}
+          state={linkState}
+          replace={replace}
+          draggable={false}
+          tabIndex={-1}
+          style={{ display: "block", textDecoration: "none", color: "inherit" }}
+        >
+          {footer}
+        </RouterLink>
+      ) : footer}
     </Box>
   );
 }

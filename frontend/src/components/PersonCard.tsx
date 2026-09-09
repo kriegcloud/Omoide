@@ -1,18 +1,18 @@
-import React from "react";
-import { Link as RouterLink } from "react-router-dom";
-import { Box, Checkbox, Typography, useTheme } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import type { PersonReadSimple } from "../types";
 import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
+import type { SelectionClickEvent } from "../hooks/useMarqueeSelection";
+import SelectableTileFrame from "./SelectableTileFrame";
 
 type PersonCardPerson = PersonReadSimple & { appearance_count?: number };
 
 interface PersonCardProps {
   person: PersonCardPerson;
-  selectable?: boolean;
+  selecting?: boolean;
   selected?: boolean;
-  onToggleSelect?: (personId: number, event?: React.MouseEvent) => void;
+  onSelectionClick?: (personId: number, event: SelectionClickEvent) => boolean;
 }
 
 const getInitials = (name = "") => {
@@ -25,13 +25,10 @@ const getInitials = (name = "") => {
 
 export default function PersonCard({
   person,
-  selectable = false,
+  selecting = false,
   selected = false,
-  onToggleSelect,
+  onSelectionClick,
 }: PersonCardProps) {
-  const theme = useTheme();
-  const isSelectable = Boolean(selectable);
-  const isSelected = Boolean(selected);
   const fallbackName = person.name || "Unknown";
 
   const thumbUrl = person.profile_face?.thumbnail_path
@@ -40,100 +37,29 @@ export default function PersonCard({
       )}`
     : undefined;
 
-  const handleSelectionToggle = (
-    event?: React.SyntheticEvent,
-  ): void => {
-    if (!isSelectable) return;
-    if (event) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-    onToggleSelect?.(
-      person.id,
-      event?.type === "click" ? (event as React.MouseEvent) : undefined,
-    );
-  };
-
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (!isSelectable) return;
-    if (event.key === " " || event.key === "Enter") {
-      handleSelectionToggle(event);
-    }
-  };
-
-  const outlineStyle = isSelectable && isSelected
-    ? `3px solid ${theme.palette.primary.light}`
-    : "none";
-
-  const hoverScale = isSelectable ? "scale(1.03)" : "scale(1.05)";
-
   const appearanceLabel =
     typeof person.appearance_count === "number" && person.appearance_count > 0
       ? `${person.appearance_count} media`
       : "";
 
   return (
-    <Box
-      data-selectable-id={person.id}
-      component={RouterLink}
-      to={`/person/${person.id}`}
-      onClick={isSelectable ? handleSelectionToggle : undefined}
-      onKeyDown={handleKeyDown}
-      role={isSelectable ? "checkbox" : undefined}
-      aria-checked={isSelectable ? isSelected : undefined}
-      tabIndex={isSelectable ? 0 : undefined}
+    <SelectableTileFrame
+      id={person.id}
+      href={`/person/${person.id}`}
+      aspectRatio="3/4"
+      selecting={selecting}
+      selected={selected}
+      onSelectionClick={onSelectionClick}
       sx={{
-        aspectRatio: "3/4",
-        position: "relative",
-        display: "block",
-        overflow: "hidden",
-        borderRadius: 3,
-        textDecoration: "none",
-        color: (themeParam) => themeParam.palette.common.white,
-        cursor: isSelectable ? "pointer" : "default",
-        outline: outlineStyle,
-        outlineOffset: isSelectable && isSelected ? 2 : 0,
-        transition:
-          "transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out, outline 0.2s ease-in-out",
+        color: "common.white",
         background: thumbUrl
           ? `url("${thumbUrl}")`
           : (themeParam) =>
               `linear-gradient(135deg, ${themeParam.palette.primary.main}, ${themeParam.palette.primary.dark})`,
         backgroundSize: "cover",
         backgroundPosition: "center",
-        "&:hover": {
-          transform: hoverScale,
-          boxShadow: theme.shadows[10],
-          zIndex: 10,
-        },
       }}
     >
-      {isSelectable && (
-        <Box
-          sx={{
-            position: "absolute",
-            top: 8,
-            left: 8,
-            zIndex: 2,
-            backgroundColor: (themeParam) =>
-              alpha(themeParam.palette.background.paper, 0.9),
-            borderRadius: "50%",
-          }}
-        >
-          <Checkbox
-            size="small"
-            color="primary"
-            checked={isSelected}
-            onChange={handleSelectionToggle}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-            }}
-            inputProps={{ "aria-label": isSelected ? "Deselect person" : "Select person" }}
-          />
-        </Box>
-      )}
-
       {!thumbUrl && (
         <Box
           sx={{
@@ -181,6 +107,6 @@ export default function PersonCard({
           {appearanceLabel}
         </Typography>
       </Box>
-    </Box>
+    </SelectableTileFrame>
   );
 }

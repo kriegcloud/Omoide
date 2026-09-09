@@ -1,13 +1,9 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Box,
   Button,
-  Card,
-  CardActionArea,
-  CardContent,
   CircularProgress,
-  Checkbox,
   Container,
   Dialog,
   DialogActions,
@@ -18,16 +14,14 @@ import {
 } from "@mui/material";
 import PhotoAlbumIcon from "@mui/icons-material/PhotoAlbum";
 import AddIcon from "@mui/icons-material/Add";
-import { Link } from "react-router-dom";
-import { API } from "../config";
-import { encodeFilePath } from "../urlUtils";
+import AlbumCard from "../components/AlbumCard";
 import { EmptyState } from "../components/EmptyState";
 import { createAlbum, getAlbums } from "../services/features";
 import { Album } from "../types";
 import ConfirmDialog from "../components/ConfirmDialog";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 import { useEntitySelection } from "../hooks/useEntitySelection";
-import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import { useGridSelection } from "../hooks/useMarqueeSelection";
 import { deleteAlbumsBulk } from "../services/albums";
 
 export default function AlbumsPage() {
@@ -41,11 +35,11 @@ export default function AlbumsPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
   const selection = useEntitySelection<number>();
-  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+  const { marqueeRect, onItemClick } = useGridSelection<number>({
     containerRef: gridRef,
-    itemSelector: "[data-selectable-id]",
-    getId: (element) => Number(element.dataset.selectableId),
-    enabled: selection.selectionMode,
+    selecting: selection.selectionMode,
+    onEnterSelection: selection.enterMode,
+    onExitSelection: selection.exitMode,
     selectedIds: selection.selectedIds,
     onSelectionChange: selection.setSelected,
   });
@@ -90,7 +84,6 @@ export default function AlbumsPage() {
       const result = await deleteAlbumsBulk(Array.from(selection.selectedIds));
       const deleted = new Set(result.deleted_ids);
       setAlbums((previous) => previous.filter((album) => !deleted.has(album.id)));
-      selection.toggleMode();
       setDeleteOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete albums");
@@ -178,71 +171,13 @@ export default function AlbumsPage() {
           }}
         >
           {albums.map((album) => (
-            <Card
+            <AlbumCard
               key={album.id}
-              data-selectable-id={album.id}
-              sx={{
-                borderRadius: 3,
-                position: "relative",
-                outline: selection.selectedIds.has(album.id) ? "3px solid" : "none",
-                outlineColor: "primary.main",
-              }}
-            >
-              <CardActionArea
-                component={Link}
-                to={`/album/${album.id}`}
-                onClick={
-                  selection.selectionMode
-                    ? (event) => onItemClick(album.id, event)
-                    : undefined
-                }
-              >
-                <Box
-                  sx={{
-                    aspectRatio: "4/3",
-                    bgcolor: "action.hover",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    overflow: "hidden",
-                  }}
-                >
-                  {album.cover_thumbnail ? (
-                    <Box
-                      component="img"
-                      src={`${API}/thumbnails/${encodeFilePath(
-                        album.cover_thumbnail
-                      )}`}
-                      alt={album.name}
-                      loading="lazy"
-                      sx={{
-                        width: "100%",
-                        height: "100%",
-                        objectFit: "cover",
-                      }}
-                    />
-                  ) : (
-                    <PhotoAlbumIcon color="disabled" sx={{ fontSize: 48 }} />
-                  )}
-                </Box>
-                <CardContent sx={{ py: 1.5 }}>
-                  <Typography variant="subtitle2" fontWeight={700} noWrap>
-                    {album.name}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {album.media_count} item
-                    {album.media_count === 1 ? "" : "s"}
-                  </Typography>
-                </CardContent>
-              </CardActionArea>
-              {selection.selectionMode && (
-                <Checkbox
-                  checked={selection.selectedIds.has(album.id)}
-                  size="small"
-                  sx={{ position: "absolute", top: 4, left: 4, pointerEvents: "none" }}
-                />
-              )}
-            </Card>
+              album={album}
+              selecting={selection.selectionMode}
+              selected={selection.selectedIds.has(album.id)}
+              onSelectionClick={onItemClick}
+            />
           ))}
           <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
         </Box>

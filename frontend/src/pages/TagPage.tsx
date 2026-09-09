@@ -10,7 +10,7 @@ import { deleteTagsBulk } from "../services/tag";
 import ConfirmDialog from "../components/ConfirmDialog";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 import { useEntitySelection } from "../hooks/useEntitySelection";
-import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import { useGridSelection } from "../hooks/useMarqueeSelection";
 
 export default function TagsPage() {
   const listKey = "tags-all";
@@ -24,11 +24,11 @@ export default function TagsPage() {
   const [error, setError] = useState<string | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const selection = useEntitySelection<number>();
-  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+  const { marqueeRect, onItemClick } = useGridSelection<number>({
     containerRef: gridRef,
-    itemSelector: "[data-selectable-id]",
-    getId: (element) => Number(element.dataset.selectableId),
-    enabled: selection.selectionMode,
+    selecting: selection.selectionMode,
+    onEnterSelection: selection.enterMode,
+    onExitSelection: selection.exitMode,
     selectedIds: selection.selectedIds,
     onSelectionChange: selection.setSelected,
   });
@@ -59,7 +59,6 @@ export default function TagsPage() {
     try {
       const result = await deleteTagsBulk(Array.from(selection.selectedIds));
       removeItems(listKey, result.deleted_ids);
-      selection.toggleMode();
       setDeleteOpen(false);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to delete tags");
@@ -103,7 +102,7 @@ export default function TagsPage() {
             <TagCard
               tag={tag}
               onTagDeleted={handleTagDeleted}
-              selectable={selection.selectionMode}
+              selecting={selection.selectionMode}
               selected={selection.selectedIds.has(tag.id)}
               onSelectionClick={onItemClick}
             />
