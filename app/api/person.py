@@ -27,6 +27,7 @@ from app.database import get_session, safe_commit, safe_execute
 from app.logger import logger
 from app.models import (
     Face,
+    FaceAssignmentSource,
     Media,
     Person,
     PersonMediaLink,
@@ -79,6 +80,7 @@ from app.schemas.timeline import (
     TimelinePage,
 )
 from app.services.social_links import derive_url, normalize_handle, suggest_from_paths
+from app.services.face_provenance import face_assignment_values, stamp_face_assignment
 from app.utils import (
     _distance_to_similarity,
     auto_select_profile_face,
@@ -538,6 +540,8 @@ def suggest_faces(
                     media_id=f.media_id,
                     thumbnail_path=f.thumbnail_path,
                     similarity=similarity,
+                    assigned_at=f.assigned_at,
+                    assignment_source=f.assignment_source,
                 )
             )
     return face_return
@@ -562,7 +566,7 @@ def detach_media_from_person(
 
     detached_faces = [DetachedFace(id=face.id, media_id=face.media_id) for face in faces]
     for face in faces:
-        face.person_id = None
+        stamp_face_assignment(face, None, FaceAssignmentSource.DETACH)
         session.add(face)
         update_face_embedding(session, face.id, -1)
 
@@ -677,7 +681,7 @@ def detach_media_from_person_bulk(
             continue
         for face in faces:
             detached_faces.append(DetachedFace(id=face.id, media_id=face.media_id))
-            face.person_id = None
+            stamp_face_assignment(face, None, FaceAssignmentSource.DETACH)
             session.add(face)
             update_face_embedding(session, face.id, -1)
         if link:
@@ -732,7 +736,7 @@ def reassign_media_to_person(
     reassigned = False
     if faces:
         for face in faces:
-            face.person_id = body.target_person_id
+            stamp_face_assignment(face, body.target_person_id, FaceAssignmentSource.MERGE)
             session.add(face)
             update_face_embedding(session, face.id, body.target_person_id)
         if source_link:
@@ -1133,6 +1137,8 @@ def get_person(person_id: int, session: Session = Depends(get_session)):
         profile_face = ProfileFace(
             id=person.profile_face.id,
             thumbnail_path=person.profile_face.thumbnail_path,
+            assigned_at=person.profile_face.assigned_at,
+            assignment_source=person.profile_face.assignment_source,
         )
     else:
         profile_face = None
@@ -1252,7 +1258,9 @@ def _merge_person_into_target(
         raise HTTPException(status_code=404, detail="Source or target person not found")
 
     session.exec(
-        update(Face).where(Face.person_id == source_id).values(person_id=target_id)
+        update(Face).where(Face.person_id == source_id).values(
+            **face_assignment_values(target_id, FaceAssignmentSource.MERGE)
+        )
     )
     session.exec(
         text(

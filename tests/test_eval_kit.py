@@ -123,7 +123,7 @@ class EvalKitTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 503)
 
     def test_migration_head_is_single(self):
-        self.assertEqual(ScriptDirectory.from_config(Config("alembic.ini")).get_heads(), ["1b2c3d4e5f60"])
+        self.assertEqual(ScriptDirectory.from_config(Config("alembic.ini")).get_heads(), ["2c3d4e5f6071"])
 
 
 if __name__ == "__main__":

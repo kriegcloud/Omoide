@@ -16,7 +16,7 @@ from sqlmodel import Session, delete, select, text
 from app.config import settings
 from app.database import get_session, safe_commit, safe_execute
 from app.logger import logger
-from app.models import Face, Person, PersonMediaLink, PersonRelationship, PersonTagLink
+from app.models import Face, FaceAssignmentSource, Person, PersonMediaLink, PersonRelationship, PersonTagLink
 from app.schemas.face import (
     AssignSuggestedFaces,
     AssignSuggestedFacesResult,
@@ -25,6 +25,7 @@ from app.schemas.face import (
     OrphanFaceSuggestion,
     OrphanFaceSuggestionsPage,
     SkippedFaceAssignment,
+    RecentFaceAssignment,
 )
 from app.schemas.person import PersonMinimal
 from app.services.face_matching import (
@@ -32,6 +33,7 @@ from app.services.face_matching import (
     load_unassigned_face_embeddings,
     score_faces,
 )
+from app.services.face_provenance import stamp_face_assignment
 from app.utils import (
     auto_select_profile_face,
     log_person_deleted,
@@ -42,8 +44,44 @@ from app.utils import (
 router = APIRouter()
 
 
+@router.get("/assignments/recent", response_model=list[RecentFaceAssignment])
+def recent_face_assignments(
+    session: Session = Depends(get_session),
+    limit: int = 50,
+    source: FaceAssignmentSource | None = None,
+    person_id: int | None = None,
+) -> list[RecentFaceAssignment]:
+    query = (
+        select(Face, Person.name)
+        .outerjoin(Person, Face.person_id == Person.id)
+        .where(Face.assigned_at.is_not(None))
+    )
+    if source is not None:
+        query = query.where(Face.assignment_source == source.value)
+    if person_id is not None:
+        query = query.where(Face.person_id == person_id)
+    rows = session.exec(
+        query.order_by(Face.assigned_at.desc(), Face.id.desc()).limit(
+            max(1, min(limit, 500))
+        )
+    ).all()
+    return [
+        RecentFaceAssignment(
+            id=face.id,
+            media_id=face.media_id,
+            person_id=face.person_id,
+            person_name=person_name,
+            thumbnail_path=face.thumbnail_path,
+            assigned_at=face.assigned_at,
+            assignment_source=face.assignment_source,
+        )
+        for face, person_name in rows
+    ]
+
+
 def _assign_face(
-    session: Session, face: Face, person: Person, affected_person_ids: set[int]
+    session: Session, face: Face, person: Person, affected_person_ids: set[int],
+    source: FaceAssignmentSource = FaceAssignmentSource.MANUAL,
 ) -> None:
     """Apply the shared per-face assignment path for manual review endpoints."""
     original_person_id = face.person_id
@@ -54,7 +92,7 @@ def _assign_face(
         affected_person_ids.add(original_person_id)
 
     face.person = person
-    face.person_id = person.id
+    stamp_face_assignment(face, person.id, source)
     session.add(face)
     if original_person_id is not None:
         old_person_can_be_deleted(session, original_person_id, reason="faces-assign")
@@ -90,7 +128,9 @@ async def assign_faces(
             logger.warning(f"Face with ID {face_id} not found, skipping assignment.")
             continue
 
-        _assign_face(session, face, new_person, affected_person_ids)
+        _assign_face(
+            session, face, new_person, affected_person_ids, FaceAssignmentSource(body.source)
+        )
 
     recalculate_person_appearance_counts(session, affected_person_ids)
     if new_person_id and new_person_id > 0:
@@ -121,7 +161,9 @@ async def assign_suggested_faces(
         elif (person := session.get(Person, assignment.person_id)) is None:
             reason = "unknown_person"
         else:
-            _assign_face(session, face, person, affected_person_ids)
+            _assign_face(
+                session, face, person, affected_person_ids, FaceAssignmentSource.SUGGESTION
+            )
             assigned += 1
             continue
         skipped.append(
@@ -162,7 +204,7 @@ async def detach_faces(
         if person_id:
             affected_person_ids.add(person_id)
 
-        face.person_id = None
+        stamp_face_assignment(face, None, FaceAssignmentSource.DETACH)
         session.add(face)
 
         if person_id:
@@ -388,7 +430,7 @@ async def create_person_from_faces(
     previous_person_ids: set[int] = set()
     for face in faces:
         previous_person = face.person
-        face.person_id = person_id
+        stamp_face_assignment(face, person_id, FaceAssignmentSource.MANUAL)
         session.add(face)
         if previous_person and previous_person.id != person_id:
             previous_person_ids.add(previous_person.id)

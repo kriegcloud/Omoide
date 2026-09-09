@@ -486,7 +486,7 @@ export const usePersonDetailPage = () => {
         label: "Removed media from person",
         undo: async () => {
           if (detachedFaces.length) {
-            await assignFace(detachedFaces.map((face) => face.id), personId);
+            await assignFace(detachedFaces.map((face) => face.id), personId, "undo");
           }
           const inverse = await attachMediaToPersonBulk(personId, [mediaId]);
           await refreshVisible();

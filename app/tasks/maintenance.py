@@ -14,6 +14,7 @@ from app.database import safe_commit
 from app.logger import logger
 from app.models import (
     Face,
+    FaceAssignmentSource,
     Media,
     Person,
     PersonRelationship,
@@ -21,6 +22,7 @@ from app.models import (
     ProcessingTask,
     TimelineEvent,
 )
+from app.services.face_provenance import face_assignment_values
 
 __all__ = [
     "clean_missing_files",
@@ -35,7 +37,11 @@ def reset_processing(session: Session) -> str:
 
         session.exec(update(Media).values(faces_extracted=False))
         session.exec(update(Media).values(embeddings_created=False))
-        session.exec(update(Face).values(person_id=None))
+        session.exec(
+            update(Face).where(Face.person_id.is_not(None)).values(
+                **face_assignment_values(None, FaceAssignmentSource.RESET)
+            )
+        )
 
         session.exec(delete(PersonTagLink))
         session.exec(delete(TimelineEvent))
@@ -68,7 +74,9 @@ def reset_processing(session: Session) -> str:
 def reset_clustering(session: Session) -> str:
     with heavy_writer(name="reset_clustering"):
         session.exec(
-            update(Face).values(person_id=None).where(Face.person_id != None)
+            update(Face).where(Face.person_id.is_not(None)).values(
+                **face_assignment_values(None, FaceAssignmentSource.RESET)
+            )
         )
         session.exec(text("UPDATE face_embeddings SET person_id=-1"))
         session.exec(text("DELETE FROM person_embeddings"))

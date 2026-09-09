@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -12,6 +13,8 @@ class FaceRead(BaseModel):
     kps: list[list[float]] | None = None
     yaw: float | None = None
     pitch: float | None = None
+    assigned_at: datetime | None = None
+    assignment_source: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -19,6 +22,17 @@ class FaceRead(BaseModel):
 class FaceAssign(BaseModel):
     person_id: int
     face_ids: list[int]
+    source: Literal["manual", "suggestion", "undo"] = "manual"
+
+
+class RecentFaceAssignment(BaseModel):
+    id: int
+    media_id: int
+    person_id: int | None
+    person_name: str | None
+    thumbnail_path: str | None
+    assigned_at: datetime
+    assignment_source: str | None
 
 
 class FaceAssignReturn(BaseModel):
@@ -51,6 +65,7 @@ class SuggestedFaceAssignment(BaseModel):
 
 class AssignSuggestedFaces(BaseModel):
     assignments: list[SuggestedFaceAssignment]
+    source: Literal["suggestion"] = "suggestion"
 
 
 class SkippedFaceAssignment(BaseModel):

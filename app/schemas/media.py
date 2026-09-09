@@ -116,6 +116,8 @@ class MediaLocation(SQLModel):
 class FaceWithPerson(SQLModel):
     id: int
     thumbnail_path: str
+    assigned_at: datetime | None = None
+    assignment_source: str | None = None
     person: Person  # your Person model
 
 

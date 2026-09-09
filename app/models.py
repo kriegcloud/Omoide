@@ -1,6 +1,6 @@
 import uuid
 from datetime import date, datetime
-from enum import StrEnum
+from enum import Enum, StrEnum
 from typing import Any, Literal, Optional
 
 import sqlalchemy as sa
@@ -187,12 +187,25 @@ class Tag(SQLModel, table=True):
         from_attributes = True
 
 
+class FaceAssignmentSource(str, Enum):
+    MANUAL = "manual"
+    SUGGESTION = "suggestion"
+    UNDO = "undo"
+    AUTO_MATCH = "auto_match"
+    CLUSTER = "cluster"
+    MERGE = "merge"
+    DETACH = "detach"
+    RESET = "reset"
+
+
 class Face(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
     media_id: int = Field(foreign_key="media.id", index=True)
     person_id: int | None = Field(
         foreign_key="person.id", default=None, index=True
     )
+    assigned_at: datetime | None = Field(default=None, nullable=True)
+    assignment_source: str | None = Field(default=None, nullable=True)
     thumbnail_path: str | None = Field(default=None)
     bbox: list[int] = Field(sa_column=Column(JSON))
     timestamp: float | None = Field(

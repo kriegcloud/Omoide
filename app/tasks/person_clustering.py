@@ -22,6 +22,7 @@ from app.database import safe_commit
 from app.logger import logger
 from app.models import (
     Face,
+    FaceAssignmentSource,
     Person,
     ProcessingTask,
     TimelineEvent,
@@ -36,6 +37,7 @@ from app.services.face_matching import (
     matching_thresholds,
     score_faces,
 )
+from app.services.face_provenance import face_assignment_values, stamp_face_assignment
 from app.utils import (
     _distance_to_similarity,
     complete_task,
@@ -558,7 +560,9 @@ def _merge_person_pair(
         return None
 
     session.exec(
-        update(Face).where(Face.person_id == drop_id).values(person_id=keep_id)
+        update(Face).where(Face.person_id == drop_id).values(
+            **face_assignment_values(keep_id, FaceAssignmentSource.CLUSTER)
+        )
     )
     session.exec(
         text(
@@ -938,7 +942,7 @@ def _assign_faces_to_clusters(
             for face_id in face_ids:
                 face = session.get(Face, face_id)
                 if face:
-                    face.person_id = new_person.id
+                    stamp_face_assignment(face, new_person.id, FaceAssignmentSource.CLUSTER)
                     session.add(face)
 
             for face_id in face_ids:

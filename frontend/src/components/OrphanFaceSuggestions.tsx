@@ -94,7 +94,7 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange }: {
     processing.current = true;
     setIsProcessing(true);
     try {
-      const result = await assignSuggestedFaces(assignments);
+      const result = await assignSuggestedFaces(assignments, "suggestion");
       const skippedIds = new Set(result.skipped.map((item) => item.face_id));
       const acceptedIds = assignments.map((item) => item.face_id).filter((id) => !skippedIds.has(id));
       if (acceptedIds.length) {

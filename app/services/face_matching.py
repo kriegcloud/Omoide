@@ -10,7 +10,8 @@ from sqlmodel import Session, select
 from app.config import settings
 from app.database import safe_commit
 from app.logger import logger
-from app.models import Face, Person
+from app.models import Face, FaceAssignmentSource, Person
+from app.services.face_provenance import face_assignment_values
 from app.utils import (
     recalculate_person_appearance_counts,
     update_person_embedding,
@@ -437,7 +438,9 @@ def _bulk_assign_faces_to_persons(
         for face_chunk in _iter_chunks(person_face_ids, chunk_size):
             placeholders, params = _build_in_clause_params(face_chunk, prefix="f")
             session.exec(
-                update(Face).where(Face.id.in_(face_chunk)).values(person_id=person_id)
+                update(Face).where(
+                    Face.id.in_(face_chunk), Face.person_id.is_distinct_from(person_id)
+                ).values(**face_assignment_values(person_id, FaceAssignmentSource.AUTO_MATCH))
             )
 
             sql_face_embedding = text(

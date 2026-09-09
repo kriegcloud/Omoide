@@ -51,6 +51,7 @@ from app.models import (
     EventMediaLink,
     ExifData,
     Face,
+    FaceAssignmentSource,
     Media,
     MediaTagLink,
     Person,
@@ -63,6 +64,7 @@ from app.models import (
     Tag,
     TimelineEvent,
 )
+from app.services.face_provenance import stamp_face_assignment
 from app.subprocess_helpers import run_silent
 
 pillow_heif.register_heif_opener()
@@ -1726,7 +1728,7 @@ def remove_person(person_id, session, *, reason="delete", **context):
 
     faces = session.exec(select(Face).where(Face.person_id == person_id)).all()
     for face in faces:
-        face.person_id = None
+        stamp_face_assignment(face, None, FaceAssignmentSource.DETACH)
         sql = text(
             """
                 Update face_embeddings

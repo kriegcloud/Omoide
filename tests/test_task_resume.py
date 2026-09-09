@@ -303,8 +303,8 @@ class TaskResumeTests(unittest.TestCase):
 class TaskResumeMigrationTests(unittest.TestCase):
     def test_migration_preserves_legacy_rows_accepts_interrupted_and_downgrades(self):
         script = ScriptDirectory.from_config(Config("alembic.ini"))
-        self.assertEqual(script.get_heads(), ["1b2c3d4e5f60"])
-        revision = script.get_revision("head")
+        self.assertEqual(script.get_heads(), ["2c3d4e5f6071"])
+        revision = script.get_revision("1b2c3d4e5f60")
         self.assertEqual(revision.down_revision, "0a1b2c3d4e5f")
         engine = create_engine("sqlite://")
         self.addCleanup(engine.dispose)

@@ -50,6 +50,8 @@ export interface MediaFolderListing {
 
 export interface ProfileFace {
   id: number;
+  assigned_at?: string | null;
+  assignment_source?: FaceAssignmentSource | null;
   thumbnail_path?: string;
   media_id?: number;
 }
@@ -186,8 +188,28 @@ export interface PersonIndex {
   id: number;
   name?: string;
 }
+export type FaceAssignmentSource =
+  | "manual"
+  | "suggestion"
+  | "undo"
+  | "auto_match"
+  | "cluster"
+  | "merge"
+  | "detach"
+  | "reset";
+
+export type FaceAssignSource = Extract<FaceAssignmentSource, "manual" | "suggestion" | "undo">;
+
+export interface FaceAssign {
+  face_ids: number[];
+  person_id: number;
+  source?: FaceAssignSource;
+}
+
 export interface Face {
   id: number;
+  assigned_at?: string | null;
+  assignment_source?: FaceAssignmentSource | null;
   media_id: number;
   person_id?: number;
   thumbnail_path: string;
@@ -219,6 +241,8 @@ export interface PersonRelationshipGraph {
 }
 export interface FaceRead {
   id: number;
+  assigned_at?: string | null;
+  assignment_source?: FaceAssignmentSource | null;
   media_id: number;
   thumbnail_path: string;
   similarity?: number;

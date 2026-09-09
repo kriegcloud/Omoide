@@ -213,7 +213,7 @@ export const SelectionActionBar: React.FC = () => {
                     label: `Detached ${detachedIds.length} item(s) from this person`,
                     undo: async () => {
                       if (detachedFaces.length) {
-                        await assignFace(detachedFaces.map((face) => face.id), personId);
+                        await assignFace(detachedFaces.map((face) => face.id), personId, "undo");
                       }
                       const inverse = await attachMediaToPersonBulk(personId, detachedIds);
                       await refreshVisible();

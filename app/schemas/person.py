@@ -10,6 +10,8 @@ from sqlmodel import SQLModel
 class ProfileFace(BaseModel):
     id: int
     thumbnail_path: str
+    assigned_at: datetime | None = None
+    assignment_source: str | None = None
 
 
 class TagSimple(SQLModel):

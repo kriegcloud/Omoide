@@ -90,8 +90,17 @@ function FaceCard({
           </Typography>
         </Box>
       )}
-      bottomRight={face.timestamp != null && (
-        <Tooltip title={`Detected at ${Math.floor(face.timestamp / 60)}:${String(Math.floor(face.timestamp % 60)).padStart(2, "0")} — click to jump`}>
+      bottomRight={(face.timestamp != null || face.assigned_at) && (
+        <Tooltip title={(
+          <>
+            {face.timestamp != null && (
+              <div>Detected at {Math.floor(face.timestamp / 60)}:{String(Math.floor(face.timestamp % 60)).padStart(2, "0")} — click to jump</div>
+            )}
+            {face.assigned_at && (
+              <div>Assigned {new Date(`${face.assigned_at}Z`).toLocaleString()} · {face.assignment_source ?? "unknown"}</div>
+            )}
+          </>
+        )}>
           <Box sx={{ bgcolor: (theme) => alpha(theme.palette.common.black, 0.6), borderRadius: "50%", p: 0.25, display: "flex" }}>
             <AccessTimeIcon sx={{ fontSize: 14, color: "common.white" }} />
           </Box>

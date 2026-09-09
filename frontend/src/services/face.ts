@@ -45,11 +45,12 @@ export const getOrphanFaceSuggestions = async (
 
 export const assignSuggestedFaces = async (
   assignments: SuggestedFaceAssignment[],
+  source: "suggestion" = "suggestion",
 ): Promise<AssignSuggestedFacesResult> => {
   const response = await fetch(`${API}/api/faces/assign-suggested`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ assignments }),
+    body: JSON.stringify({ assignments, source }),
   });
   if (!response.ok) throw new Error("Failed to assign suggested faces");
   return response.json();
