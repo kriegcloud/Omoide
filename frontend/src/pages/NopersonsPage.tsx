@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -20,6 +20,7 @@ import { useTaskCompletionVersion } from "../TaskEventsContext";
 import { NoPersonsMediaItem } from "../types";
 import { getNoPersonsMedia, resolveNoPersons } from "../services/nopersons";
 import { useCursorList } from "../hooks/useCursorList";
+import { useGridSelection } from "../hooks/useMarqueeSelection";
 import BulkResolveToolbar, {
   BulkResolveAction,
   FeedbackSeverity,
@@ -63,12 +64,22 @@ const NopersonsPage: React.FC = () => {
     error,
     loaderRef,
     selectedIds,
-    toggleSelected,
+    setSelectedIds,
     selectVisible,
     clearSelection,
     removeItems,
     refetch,
   } = useCursorList<NoPersonsMediaItem>(fetcher, refreshKey);
+
+  const gridRef = useRef<HTMLDivElement>(null);
+  const selecting = selectedIds.size > 0;
+  const { marqueeRect, onItemClick } = useGridSelection({
+    containerRef: gridRef,
+    selectedIds,
+    onSelectionChange: setSelectedIds,
+    selecting,
+    allowPlainDragOnItems: false,
+  });
 
   const showFeedback = useCallback(
     (message: string, severity: FeedbackSeverity) => setSnackbar({ open: true, message, severity }),
@@ -170,6 +181,8 @@ const NopersonsPage: React.FC = () => {
       />
 
       <ReviewMediaGrid
+        gridRef={gridRef}
+        marqueeRect={marqueeRect}
         itemCount={items.length}
         isLoading={isLoading}
         hasMore={hasMore}
@@ -192,7 +205,8 @@ const NopersonsPage: React.FC = () => {
             filename={item.filename}
             thumbnailPath={item.thumbnail_path}
             selected={selectedIds.has(item.id)}
-            onToggle={toggleSelected}
+            selecting={selecting}
+            onSelectionClick={onItemClick}
             badgeLabel={item.duration != null ? "video" : undefined}
             caption={formatBytes(item.size)}
           />

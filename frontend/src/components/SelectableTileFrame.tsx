@@ -9,6 +9,8 @@ interface SelectableTileFrameProps
   id: number;
   selected: boolean;
   selecting: boolean;
+  indeterminate?: boolean;
+  selectionEnabled?: boolean;
   onSelectionClick: (id: number, event: SelectionClickEvent) => boolean;
   href?: string;
   linkState?: unknown;
@@ -47,6 +49,8 @@ export default function SelectableTileFrame({
   id,
   selected,
   selecting,
+  indeterminate = false,
+  selectionEnabled = true,
   onSelectionClick,
   href,
   linkState,
@@ -62,15 +66,16 @@ export default function SelectableTileFrame({
   footer,
   ...rest
 }: SelectableTileFrameProps) {
+  const isSelecting = selectionEnabled && selecting;
   const content = <Box sx={{ position: "relative", aspectRatio }}>{children}</Box>;
 
   return (
     <Box
       {...rest}
       data-selectable-id={id}
-      role={selecting ? "checkbox" : undefined}
-      aria-checked={selecting ? selected : undefined}
-      tabIndex={selecting || (!href && onOpen) ? 0 : undefined}
+      role={isSelecting ? "checkbox" : undefined}
+      aria-checked={isSelecting ? (indeterminate ? "mixed" : selected) : undefined}
+      tabIndex={isSelecting || (!href && onOpen) ? 0 : undefined}
       onClickCapture={(event) => {
         const target = event.target;
         // Menus can render portals; their actions and the checkbox own clicks.
@@ -79,7 +84,7 @@ export default function SelectableTileFrame({
           !event.currentTarget.contains(target) ||
           target.closest(CONTROL_SELECTOR)
         ) return;
-        if (onSelectionClick(id, event)) {
+        if (selectionEnabled && onSelectionClick(id, event)) {
           event.preventDefault();
           event.stopPropagation();
         }
@@ -93,11 +98,11 @@ export default function SelectableTileFrame({
       }}
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return;
-        if (selecting && event.key === " ") {
+        if (isSelecting && event.key === " ") {
           event.preventDefault();
           event.stopPropagation();
           onSelectionClick(id, selectionToggleEvent);
-        } else if (!selecting && onOpen && (event.key === "Enter" || event.key === " ")) {
+        } else if (!isSelecting && onOpen && (event.key === "Enter" || event.key === " ")) {
           event.preventDefault();
           onOpen();
         }
@@ -113,8 +118,8 @@ export default function SelectableTileFrame({
           outlineOffset: "-3px",
           transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
           "&:hover": {
-            transform: selecting ? "none" : "translateY(-4px)",
-            boxShadow: selecting ? "none" : "0 12px 24px -8px rgba(0, 0, 0, 0.15)",
+            transform: isSelecting ? "none" : "translateY(-4px)",
+            boxShadow: isSelecting ? "none" : "0 12px 24px -8px rgba(0, 0, 0, 0.15)",
             zIndex: 10,
           },
           "&:hover .tile-checkbox, &:focus-within .tile-checkbox": {
@@ -137,44 +142,47 @@ export default function SelectableTileFrame({
             state={linkState}
             replace={replace}
             draggable={false}
-            tabIndex={selecting ? -1 : undefined}
+            tabIndex={isSelecting ? -1 : undefined}
             style={{ display: "block", textDecoration: "none", color: "inherit" }}
           >
             {content}
           </RouterLink>
         ) : content}
-        <Checkbox
-          className="tile-checkbox"
-          data-tile-control
-          data-no-marquee
-          checked={selected}
-          tabIndex={selecting ? -1 : 0}
-          inputProps={{ "aria-label": `Select item ${id}`, readOnly: true }}
-          onClick={(event) => {
-            // This control is a sibling of the link, so native checkbox behavior
-            // can finish without navigating or reaching the tile click handler.
-            event.stopPropagation();
-            onSelectionClick(id, selectionToggleEvent);
-          }}
-          sx={{
-            ...scrim,
-            left: 6,
-            width: 32,
-            height: 32,
-            p: 0.5,
-            color: "common.white",
-            opacity: selecting || selected ? 1 : 0,
-            pointerEvents: selecting || selected ? "auto" : "none",
-            "&.Mui-checked": { color: "primary.main" },
-            "&:hover": { bgcolor: "rgba(0,0,0,.65)" },
-          }}
-        />
-        {!selecting && topLeft && (
+        {selectionEnabled && (
+          <Checkbox
+            className="tile-checkbox"
+            data-tile-control
+            data-no-marquee
+            checked={selected}
+            indeterminate={indeterminate}
+            tabIndex={isSelecting ? -1 : 0}
+            inputProps={{ "aria-label": `Select item ${id}`, readOnly: true }}
+            onClick={(event) => {
+              // This control is a sibling of the link, so native checkbox behavior
+              // can finish without navigating or reaching the tile click handler.
+              event.stopPropagation();
+              onSelectionClick(id, selectionToggleEvent);
+            }}
+            sx={{
+              ...scrim,
+              left: 6,
+              width: 32,
+              height: 32,
+              p: 0.5,
+              color: "common.white",
+              opacity: isSelecting || selected ? 1 : 0,
+              pointerEvents: isSelecting || selected ? "auto" : "none",
+              "&.Mui-checked": { color: "primary.main" },
+              "&:hover": { bgcolor: "rgba(0,0,0,.65)" },
+            }}
+          />
+        )}
+        {!isSelecting && topLeft && (
           <Box className="tile-top-left" sx={{ position: "absolute", top: 6, left: selected ? 44 : 6, zIndex: 19, pointerEvents: "none" }}>
             {topLeft}
           </Box>
         )}
-        {!selecting && menu && (
+        {!isSelecting && menu && (
           <Box data-tile-control data-no-marquee sx={{ ...scrim, right: 6 }}>
             {menu}
           </Box>

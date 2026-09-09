@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -12,6 +12,7 @@ import VideocamOffIcon from "@mui/icons-material/VideocamOff";
 import { ShortVideoItem } from "../types";
 import { getShortVideos, resolveShortVideos } from "../services/shortvideos";
 import { useCursorList } from "../hooks/useCursorList";
+import { useGridSelection } from "../hooks/useMarqueeSelection";
 import BulkResolveToolbar, {
   BulkResolveAction,
   FeedbackSeverity,
@@ -55,12 +56,22 @@ const ShortVideosPage: React.FC = () => {
     error,
     loaderRef,
     selectedIds,
-    toggleSelected,
+    setSelectedIds,
     selectVisible,
     clearSelection,
     removeItems,
     refetch,
   } = useCursorList<ShortVideoItem>(fetcher);
+
+  const gridRef = useRef<HTMLDivElement>(null);
+  const selecting = selectedIds.size > 0;
+  const { marqueeRect, onItemClick } = useGridSelection({
+    containerRef: gridRef,
+    selectedIds,
+    onSelectionChange: setSelectedIds,
+    selecting,
+    allowPlainDragOnItems: false,
+  });
 
   const showFeedback = useCallback(
     (message: string, severity: FeedbackSeverity) => setSnackbar({ open: true, message, severity }),
@@ -140,6 +151,8 @@ const ShortVideosPage: React.FC = () => {
       />
 
       <ReviewMediaGrid
+        gridRef={gridRef}
+        marqueeRect={marqueeRect}
         itemCount={items.length}
         isLoading={isLoading}
         hasMore={hasMore}
@@ -160,7 +173,8 @@ const ShortVideosPage: React.FC = () => {
             filename={item.filename}
             thumbnailPath={item.thumbnail_path}
             selected={selectedIds.has(item.id)}
-            onToggle={toggleSelected}
+            selecting={selecting}
+            onSelectionClick={onItemClick}
             badgeLabel={formatDuration(item.duration)}
             badgeColor="primary"
             caption={`${formatBytes(item.size)}${item.width && item.height ? ` · ${item.width}×${item.height}` : ""}`}

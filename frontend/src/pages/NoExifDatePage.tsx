@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -16,6 +16,7 @@ import EventBusyIcon from "@mui/icons-material/EventBusy";
 import { NoExifDateItem } from "../types";
 import { getNoExifDateMedia, resolveNoExifDate } from "../services/noexifdate";
 import { useCursorList } from "../hooks/useCursorList";
+import { useGridSelection } from "../hooks/useMarqueeSelection";
 import BulkResolveToolbar, {
   BulkResolveAction,
   FeedbackSeverity,
@@ -49,12 +50,22 @@ const NoExifDatePage: React.FC = () => {
     error,
     loaderRef,
     selectedIds,
-    toggleSelected,
+    setSelectedIds,
     selectVisible,
     clearSelection,
     removeItems,
     refetch,
   } = useCursorList<NoExifDateItem>(fetcher);
+
+  const gridRef = useRef<HTMLDivElement>(null);
+  const selecting = selectedIds.size > 0;
+  const { marqueeRect, onItemClick } = useGridSelection({
+    containerRef: gridRef,
+    selectedIds,
+    onSelectionChange: setSelectedIds,
+    selecting,
+    allowPlainDragOnItems: false,
+  });
 
   const showFeedback = useCallback(
     (message: string, severity: FeedbackSeverity) => setSnackbar({ open: true, message, severity }),
@@ -128,6 +139,8 @@ const NoExifDatePage: React.FC = () => {
       />
 
       <ReviewMediaGrid
+        gridRef={gridRef}
+        marqueeRect={marqueeRect}
         itemCount={items.length}
         isLoading={isLoading}
         hasMore={hasMore}
@@ -148,7 +161,8 @@ const NoExifDatePage: React.FC = () => {
             filename={item.filename}
             thumbnailPath={item.thumbnail_path}
             selected={selectedIds.has(item.id)}
-            onToggle={toggleSelected}
+            selecting={selecting}
+            onSelectionClick={onItemClick}
             badgeLabel={item.duration != null ? "video" : undefined}
             caption={`${formatBytes(item.size)}${item.width && item.height ? ` · ${item.width}×${item.height}` : ""}`}
           />
