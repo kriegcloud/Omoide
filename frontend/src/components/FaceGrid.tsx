@@ -11,6 +11,7 @@ interface FaceGridProps {
   selectedFaceIds: number[];
   onSelectionChange: (ids: number[]) => void;
   selecting?: boolean;
+  renderFooter?: (face: FaceRead) => React.ReactNode;
 }
 
 export const FaceGrid: React.FC<FaceGridProps> = ({
@@ -18,6 +19,7 @@ export const FaceGrid: React.FC<FaceGridProps> = ({
   selectedFaceIds,
   onSelectionChange,
   selecting = selectedFaceIds.length > 0,
+  renderFooter,
 }) => {
   const selectedIdSet = useMemo(
     () => new Set(selectedFaceIds),
@@ -56,6 +58,7 @@ export const FaceGrid: React.FC<FaceGridProps> = ({
           selected={selectedIdSet.has(face.id)}
           selecting={selecting}
           onSelectionClick={onItemClick}
+          footer={renderFooter?.(face)}
         />
       ))}
       <MarqueeSelectionBox container={containerRef.current} rect={marqueeRect} />
