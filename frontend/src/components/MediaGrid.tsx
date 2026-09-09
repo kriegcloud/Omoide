@@ -3,7 +3,7 @@ import { Box } from "@mui/material";
 import { MediaPreview } from "../types";
 import MediaCard from "./MediaCard";
 import { useSelection } from "../context/SelectionContext";
-import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import { useGridSelection } from "../hooks/useMarqueeSelection";
 import MarqueeSelectionBox from "./MarqueeSelectionBox";
 
 interface MediaGridProps {
@@ -16,12 +16,15 @@ export const MediaGrid: React.FC<MediaGridProps> = ({
   listKey,
 }) => {
   const gridRef = useRef<HTMLDivElement>(null);
-  const { isSelecting, selectedIds, setSelected } = useSelection();
-  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+  const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
+  const { marqueeRect, onItemClick } = useGridSelection<number>({
     containerRef: gridRef,
     itemSelector: "[data-selectable-id]",
     getId: (element) => Number(element.dataset.selectableId),
-    enabled: isSelecting,
+    selecting: isSelecting,
+    allowPlainDragOnItems: false,
+    onEnterSelection: beginSelecting,
+    onExitSelection: clear,
     selectedIds,
     onSelectionChange: setSelected,
   });

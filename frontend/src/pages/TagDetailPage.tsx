@@ -19,7 +19,7 @@ import { getTag } from "../services/tag";
 import { getMediaList } from "../services/media";
 import { useListStore, defaultListState } from "../stores/useListStore";
 import { useSelection } from "../context/SelectionContext";
-import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import { useGridSelection } from "../hooks/useMarqueeSelection";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 
 const BG_SECTION = "background.default";
@@ -36,12 +36,15 @@ export default function TagDetailPage() {
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
   const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
   const mediaGridRef = useRef<HTMLDivElement>(null);
-  const { isSelecting, selectedIds, setSelected } = useSelection();
-  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+  const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
+  const { marqueeRect, onItemClick } = useGridSelection<number>({
     containerRef: mediaGridRef,
     itemSelector: "[data-selectable-id]",
     getId: (element) => Number(element.dataset.selectableId),
-    enabled: isSelecting,
+    selecting: isSelecting,
+    allowPlainDragOnItems: false,
+    onEnterSelection: beginSelecting,
+    onExitSelection: clear,
     selectedIds,
     onSelectionChange: setSelected,
   });

@@ -44,7 +44,7 @@ import { useHomeWidgets } from "../hooks/useHomeWidgets";
 import { HomeWidgetId } from "../homeWidgets";
 import { CameraCount, MediaFolderListing } from "../types";
 import { useSelection } from "../context/SelectionContext";
-import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import { useGridSelection } from "../hooks/useMarqueeSelection";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 
 const breakpointColumnsObj = {
@@ -86,12 +86,15 @@ export default function IndexPage() {
   const [isFolderLoading, setIsFolderLoading] = useState(false);
   const [folderError, setFolderError] = useState<string | null>(null);
   const mediaGridRef = useRef<HTMLDivElement>(null);
-  const { isSelecting, selectedIds, setSelected } = useSelection();
-  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+  const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
+  const { marqueeRect, onItemClick } = useGridSelection<number>({
     containerRef: mediaGridRef,
     itemSelector: "[data-media-card]",
     getId: (element) => Number(element.dataset.selectableId),
-    enabled: isSelecting,
+    selecting: isSelecting,
+    allowPlainDragOnItems: false,
+    onEnterSelection: beginSelecting,
+    onExitSelection: clear,
     selectedIds,
     onSelectionChange: setSelected,
   });

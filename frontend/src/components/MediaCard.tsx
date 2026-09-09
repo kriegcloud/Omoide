@@ -1,12 +1,9 @@
 import React, { useState, useRef, useEffect } from "react";
-import { useLocation, Link } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import ReactPlayer from "react-player";
 import {
-  Card,
-  CardActionArea,
   CardMedia,
   Box,
-  Checkbox,
   Chip,
   Typography,
 } from "@mui/material";
@@ -19,6 +16,8 @@ import FavoriteIcon from "@mui/icons-material/Favorite";
 import { useSelection } from "../context/SelectionContext";
 import MediaCardMenu, { MediaPersonContext } from "./MediaCardMenu";
 import DatasetItemMenu from "./DatasetItemMenu";
+import SelectableTileFrame from "./SelectableTileFrame";
+import type { SelectionClickEvent } from "../hooks/useMarqueeSelection";
 
 export interface MediaDatasetContext {
   caption?: string | null;
@@ -95,7 +94,7 @@ interface MediaCardProps {
   navigationContext?: MediaNavigationContext;
   personContext?: MediaPersonContext;
   datasetContext?: MediaDatasetContext;
-  onSelectionClick?: (id: number, event: React.MouseEvent) => void;
+  onSelectionClick?: (id: number, event: SelectionClickEvent) => boolean;
 }
 
 export default function MediaCard({
@@ -106,7 +105,7 @@ export default function MediaCard({
   datasetContext,
   onSelectionClick,
 }: MediaCardProps) {
-  const { isSelecting, selectedIds, toggle } = useSelection();
+  const { isSelecting, selectedIds, toggle, beginSelecting } = useSelection();
   // This state now explicitly controls when the video player is active.
   const [isPlayerActive, setIsPlayerActive] = useState(false);
   const [playerUrl, setPlayerUrl] = useState<string | null>(null);
@@ -210,48 +209,68 @@ export default function MediaCard({
     event.stopPropagation();
   };
 
+  const handleSelectionClick = (id: number, event: SelectionClickEvent) => {
+    if (onSelectionClick) return onSelectionClick(id, event);
+    if (isSelecting || event.ctrlKey || event.metaKey || event.shiftKey) {
+      if (!isSelecting) beginSelecting();
+      toggle(id);
+      return true;
+    }
+    return false;
+  };
+
   return (
-    <Card
+    <SelectableTileFrame
+      id={mediaId ?? 0}
       data-selectable-id={mediaId ?? undefined}
       data-media-card
-      elevation={0}
+      selected={isSelected}
+      selecting={isSelecting}
+      onSelectionClick={handleSelectionClick}
+      href={`/medium/${mediaId}`}
+      linkState={linkState}
+      replace={!!location.state?.backgroundLocation}
       sx={{
-        borderRadius: 3,
-        overflow: "hidden",
-        position: "relative",
-        transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-        backgroundColor: "background.paper",
-        outline: isSelected ? "3px solid" : "none",
-        outlineColor: isSelected ? "primary.main" : "transparent",
         opacity: datasetContext?.excluded ? 0.48 : 1,
-        "&:hover": {
-          transform: isSelecting ? "none" : "translateY(-4px)",
-          boxShadow: isSelecting
-            ? "none"
-            : "0 12px 24px -8px rgba(0, 0, 0, 0.15)",
-          zIndex: 10,
-          "& .media-overlay": {
-            opacity: 1,
-          },
-        },
+        "&:hover .media-overlay": { opacity: 1 },
       }}
+      menu={media && (datasetContext ? (
+        <DatasetItemMenu context={datasetContext} />
+      ) : (
+        <MediaCardMenu
+          media={media}
+          mediaListKey={mediaListKey}
+          personContext={personContext}
+          onMediaChange={(updated) => setIsFavorite(updated.is_favorite)}
+        />
+      ))}
+      topLeft={media && isFavorite && (
+        <FavoriteIcon
+          aria-label="Favorite"
+          fontSize="small"
+          sx={{ color: "error.main", filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.65))" }}
+        />
+      )}
+      footer={datasetContext && (
+        <Box sx={{ px: 1.25, py: 1, minHeight: 66 }}>
+          <Typography variant="caption" color="text.secondary" noWrap display="block">
+            {datasetContext.caption || "No caption"}
+          </Typography>
+          <Box sx={{ display: "flex", gap: 0.5, mt: 0.75, flexWrap: "wrap" }}>
+            {datasetContext.detScore != null && <Chip size="small" label={`Face ${Math.round(datasetContext.detScore * 100)}%`} />}
+            {datasetContext.frontality != null && <Chip size="small" label={`Front ${Math.round(datasetContext.frontality * 100)}%`} />}
+            {datasetContext.framing && <Chip size="small" label={datasetContext.framing.replace("_", " ")} />}
+            {datasetContext.sharpness != null && <Chip size="small" label={`Sharp ${Math.round(datasetContext.sharpness)}`} />}
+            {(datasetContext.otherPeople ?? 0) > 0 && <Chip size="small" color="warning" label={`+${datasetContext.otherPeople} people`} />}
+            {datasetContext.identityDistance != null && <Chip size="small" label={`ID ${datasetContext.identityDistance.toFixed(2)}`} />}
+            {datasetContext.faceCount > 1 && <Chip size="small" color="warning" label={`${datasetContext.faceCount} faces`} />}
+            {datasetContext.hasOps && <Chip size="small" color="primary" label="Cropped" />}
+            {datasetContext.excluded && <Chip size="small" color="error" label={datasetContext.excludedReason ? `Excluded: ${datasetContext.excludedReason}` : "Excluded"} />}
+          </Box>
+        </Box>
+      )}
     >
-      <Link
-        to={`/medium/${mediaId}`}
-        state={linkState}
-        replace={!!location.state?.backgroundLocation}
-        style={{ textDecoration: "none", color: "inherit" }}
-        onClick={
-          isSelecting && mediaId != null
-            ? (e) => {
-                e.preventDefault();
-                if (onSelectionClick) onSelectionClick(mediaId, e);
-                else toggle(mediaId);
-              }
-            : undefined
-        }
-      >
-          <CardActionArea
+          <Box className="media-preview"
             draggable={isDraggable}
             onDragStart={isDraggable ? handleDragStart : undefined}
             onMouseEnter={isVideo ? handleMouseEnter : undefined}
@@ -277,6 +296,7 @@ export default function MediaCard({
             {/* We now explicitly render the thumbnail image for videos */}
             <CardMedia
               component="img"
+              draggable={false}
               src={thumbUrl}
               alt={filename}
               sx={{
@@ -341,7 +361,7 @@ export default function MediaCard({
                 alignItems: "center",
                 justifyContent: "center",
                 backdropFilter: "blur(4px)",
-                ".MuiCardActionArea-root:hover &": {
+                ".media-preview:hover &": {
                     transform: "translate(-50%, -50%) scale(1)",
                     opacity: isPlayerActive ? 0 : 1,
                     bgcolor: "rgba(0,0,0,0.5)",
@@ -416,89 +436,8 @@ export default function MediaCard({
               )}
             </Box>
           </Box>
-        </CardActionArea>
-      </Link>
-
-      {datasetContext && (
-        <Box sx={{ px: 1.25, py: 1, minHeight: 66 }}>
-          <Typography variant="caption" color="text.secondary" noWrap display="block">
-            {datasetContext.caption || "No caption"}
-          </Typography>
-          <Box sx={{ display: "flex", gap: 0.5, mt: 0.75, flexWrap: "wrap" }}>
-            {datasetContext.detScore != null && <Chip size="small" label={`Face ${Math.round(datasetContext.detScore * 100)}%`} />}
-            {datasetContext.frontality != null && <Chip size="small" label={`Front ${Math.round(datasetContext.frontality * 100)}%`} />}
-            {datasetContext.framing && <Chip size="small" label={datasetContext.framing.replace("_", " ")} />}
-            {datasetContext.sharpness != null && <Chip size="small" label={`Sharp ${Math.round(datasetContext.sharpness)}`} />}
-            {(datasetContext.otherPeople ?? 0) > 0 && <Chip size="small" color="warning" label={`+${datasetContext.otherPeople} people`} />}
-            {datasetContext.identityDistance != null && <Chip size="small" label={`ID ${datasetContext.identityDistance.toFixed(2)}`} />}
-            {datasetContext.faceCount > 1 && <Chip size="small" color="warning" label={`${datasetContext.faceCount} faces`} />}
-            {datasetContext.hasOps && <Chip size="small" color="primary" label="Cropped" />}
-            {datasetContext.excluded && <Chip size="small" color="error" label={datasetContext.excludedReason ? `Excluded: ${datasetContext.excludedReason}` : "Excluded"} />}
-          </Box>
         </Box>
-      )}
 
-      {media && !isSelecting && (
-        <Box
-          sx={{
-            position: "absolute",
-            top: 4,
-            right: 4,
-            zIndex: 20,
-          }}
-        >
-          {datasetContext ? (
-            <DatasetItemMenu context={datasetContext} />
-          ) : (
-            <MediaCardMenu
-              media={media}
-              mediaListKey={mediaListKey}
-              personContext={personContext}
-              onMediaChange={(updated) => setIsFavorite(updated.is_favorite)}
-            />
-          )}
-        </Box>
-      )}
-
-      {media && isFavorite && !isSelecting && (
-        <FavoriteIcon
-          aria-label="Favorite"
-          fontSize="small"
-          sx={{
-            position: "absolute",
-            top: 10,
-            left: 10,
-            zIndex: 19,
-            color: "error.main",
-            filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.65))",
-            pointerEvents: "none",
-          }}
-        />
-      )}
-
-      {isSelecting && (
-        <Box
-          sx={{
-            position: "absolute",
-            top: 4,
-            left: 4,
-            zIndex: 20,
-            pointerEvents: "none",
-          }}
-        >
-          <Checkbox
-            checked={isSelected}
-            size="small"
-            sx={{
-              p: 0.5,
-              color: "white",
-              bgcolor: "rgba(0,0,0,0.45)",
-              borderRadius: 1,
-              "&.Mui-checked": { color: "primary.main" },
-            }}
-          />
-        </Box>
-      )}
-    </Card>
+    </SelectableTileFrame>
   );
 }

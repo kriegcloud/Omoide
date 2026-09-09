@@ -7,37 +7,75 @@ export interface MarqueeRect {
   height: number;
 }
 
-interface UseMarqueeSelectionOptions<TId extends number | string> {
+export interface SelectionClickEvent {
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+  preventDefault: () => void;
+  stopPropagation: () => void;
+}
+
+interface UseGridSelectionOptions<TId extends number | string> {
   containerRef: React.RefObject<HTMLElement | null>;
-  itemSelector: string;
-  getId: (element: HTMLElement) => TId;
-  enabled: boolean;
+  itemSelector?: string;
+  getId?: (element: HTMLElement) => TId;
+  selecting: boolean;
+  onEnterSelection?: () => void;
+  onExitSelection?: () => void;
+  allowPlainDragOnItems?: boolean;
+  disabled?: boolean;
   selectedIds: Set<TId>;
   onSelectionChange: (ids: Set<TId>) => void;
 }
 
 const IGNORE_SELECTOR =
-  "button, a[href], input, [role=menu], [data-no-marquee]";
+  "button, a[href], input, textarea, select, [contenteditable]:not([contenteditable=false]), [role=menu], [data-no-marquee]";
 const MOVEMENT_THRESHOLD = 6;
 const AUTO_SCROLL_EDGE = 40;
 const AUTO_SCROLL_STEP = 14;
 // Cards whose tops fall within this band are treated as the same visual row.
 const ROW_TOLERANCE_PX = 24;
 
-export function useMarqueeSelection<TId extends number | string>({
+const defaultGetId = (element: HTMLElement) => Number(element.dataset.selectableId);
+
+export function useGridSelection<TId extends number | string = number>({
   containerRef,
-  itemSelector,
-  getId,
-  enabled,
+  itemSelector = "[data-selectable-id]",
+  getId = defaultGetId as (element: HTMLElement) => TId,
+  selecting,
+  onEnterSelection,
+  onExitSelection,
+  allowPlainDragOnItems = true,
+  disabled = false,
   selectedIds,
   onSelectionChange,
-}: UseMarqueeSelectionOptions<TId>) {
+}: UseGridSelectionOptions<TId>) {
   const [marqueeRect, setMarqueeRect] = useState<MarqueeRect | null>(null);
   const anchorRef = useRef<TId | null>(null);
   const selectedIdsRef = useRef(selectedIds);
   const onSelectionChangeRef = useRef(onSelectionChange);
   const getIdRef = useRef(getId);
   const suppressClickRef = useRef(false);
+  const selectingRef = useRef(selecting);
+  const onEnterSelectionRef = useRef(onEnterSelection);
+  const cancelMarqueeRef = useRef<(() => void) | null>(null);
+  const [container, setContainer] = useState<HTMLElement | null>(null);
+
+  // Some grids mount only after their asynchronous results arrive.
+  useEffect(() => {
+    setContainer(containerRef.current);
+  });
+  useEffect(() => {
+    selectingRef.current = selecting;
+    onEnterSelectionRef.current = onEnterSelection;
+  }, [selecting, onEnterSelection]);
+  useEffect(() => {
+    if (!selecting) {
+      anchorRef.current = null;
+      if (cancelMarqueeRef.current) cancelMarqueeRef.current();
+    }
+  }, [selecting]);
 
   useEffect(() => {
     selectedIdsRef.current = selectedIds;
@@ -50,8 +88,7 @@ export function useMarqueeSelection<TId extends number | string>({
   }, [getId]);
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container || !enabled) {
+    if (!container || disabled) {
       setMarqueeRect(null);
       return;
     }
@@ -65,6 +102,8 @@ export function useMarqueeSelection<TId extends number | string>({
     let frame: number | null = null;
     let mode: "replace" | "add" | "remove" = "replace";
     let initialSelection = new Set<TId>();
+    let enteredSelection = false;
+    const initialUserSelect = container.style.userSelect;
 
     const updateSelection = () => {
       const currentPageX = clientX + window.scrollX;
@@ -96,17 +135,17 @@ export function useMarqueeSelection<TId extends number | string>({
         }
       });
 
-      if (mode === "add") {
-        onSelectionChangeRef.current(
-          new Set([...initialSelection, ...intersecting]),
-        );
-      } else if (mode === "remove") {
-        onSelectionChangeRef.current(
-          new Set(Array.from(initialSelection).filter((id) => !intersecting.has(id))),
-        );
-      } else {
-        onSelectionChangeRef.current(intersecting);
+      const next = mode === "add"
+        ? new Set([...initialSelection, ...intersecting])
+        : mode === "remove"
+          ? new Set(Array.from(initialSelection).filter((id) => !intersecting.has(id)))
+          : intersecting;
+      if (next.size > 0 && !selectingRef.current && !enteredSelection) {
+        enteredSelection = true;
+        if (onEnterSelectionRef.current) onEnterSelectionRef.current();
       }
+      selectedIdsRef.current = next;
+      onSelectionChangeRef.current(next);
     };
 
     const tick = () => {
@@ -122,7 +161,11 @@ export function useMarqueeSelection<TId extends number | string>({
     };
 
     const stop = () => {
+      const capturedPointer = pointerId;
       pointerId = null;
+      if (capturedPointer !== null && container.hasPointerCapture(capturedPointer)) {
+        container.releasePointerCapture(capturedPointer);
+      }
       if (frame !== null) window.cancelAnimationFrame(frame);
       frame = null;
       if (active) {
@@ -133,7 +176,7 @@ export function useMarqueeSelection<TId extends number | string>({
       }
       active = false;
       setMarqueeRect(null);
-      container.style.removeProperty("user-select");
+      container.style.userSelect = initialUserSelect;
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerUp);
@@ -143,6 +186,7 @@ export function useMarqueeSelection<TId extends number | string>({
       if (event.pointerId !== pointerId) return;
       clientX = event.clientX;
       clientY = event.clientY;
+      mode = event.altKey ? "remove" : event.ctrlKey || event.metaKey ? "add" : "replace";
       if (!active) {
         const distance = Math.hypot(
           event.pageX - startPageX,
@@ -150,6 +194,7 @@ export function useMarqueeSelection<TId extends number | string>({
         );
         if (distance < MOVEMENT_THRESHOLD) return;
         active = true;
+        container.setPointerCapture(event.pointerId);
         container.style.userSelect = "none";
         frame = window.requestAnimationFrame(tick);
       }
@@ -177,9 +222,13 @@ export function useMarqueeSelection<TId extends number | string>({
       const isItemLink =
         interactive?.matches("a[href]") &&
         selectableItem instanceof HTMLElement &&
-        (interactive === selectableItem || interactive.parentElement === selectableItem);
+        selectableItem.contains(interactive);
       if (interactive && !isItemLink) return;
+      const modified = event.ctrlKey || event.metaKey || event.shiftKey || event.altKey;
+      if (selectableItem && !selectingRef.current && !modified && !allowPlainDragOnItems) return;
+      if (modified) event.preventDefault();
 
+      enteredSelection = false;
       pointerId = event.pointerId;
       startPageX = event.pageX;
       startPageY = event.pageY;
@@ -198,19 +247,64 @@ export function useMarqueeSelection<TId extends number | string>({
       window.addEventListener("pointercancel", handlePointerUp);
     };
 
+    // Cancel native drag initiation for an eligible marquee, including links/images.
+    const handleDragStart = (event: DragEvent) => {
+      if (pointerId !== null) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    const handleClick = (event: MouseEvent) => {
+      if (suppressClickRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    cancelMarqueeRef.current = stop;
     container.addEventListener("pointerdown", handlePointerDown);
+    container.addEventListener("dragstart", handleDragStart, true);
+    container.addEventListener("click", handleClick, true);
     return () => {
       container.removeEventListener("pointerdown", handlePointerDown);
+      container.removeEventListener("dragstart", handleDragStart, true);
+      container.removeEventListener("click", handleClick, true);
+      cancelMarqueeRef.current = null;
       stop();
     };
-  }, [containerRef, enabled, itemSelector]);
+  }, [container, disabled, itemSelector, allowPlainDragOnItems]);
+
+  useEffect(() => {
+    if (!selecting || disabled) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (
+        target.closest("input, textarea, select") || target.isContentEditable
+      )) return;
+      // A page can have multiple grids sharing one selection store.
+      event.preventDefault();
+      if (cancelMarqueeRef.current) cancelMarqueeRef.current();
+      selectedIdsRef.current = new Set<TId>();
+      onSelectionChangeRef.current(new Set<TId>());
+      if (onExitSelection) onExitSelection();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selecting, disabled, onExitSelection]);
+
+  const isSelectionGesture = useCallback(
+    (event: SelectionClickEvent) => !disabled && (
+      selecting || event.ctrlKey || event.metaKey || event.shiftKey
+    ),
+    [selecting, disabled],
+  );
 
   const onItemClick = useCallback(
-    (id: TId, event: React.MouseEvent) => {
-      if (!enabled) return;
-      event.preventDefault();
-      event.stopPropagation();
-      if (suppressClickRef.current) return;
+    (id: TId, event: SelectionClickEvent): boolean => {
+      if (disabled) return false;
+      if (suppressClickRef.current) return true;
+      if (!isSelectionGesture(event)) return false;
+      if (!selecting && onEnterSelectionRef.current) onEnterSelectionRef.current();
 
       const container = containerRef.current;
       if (event.shiftKey && anchorRef.current !== null && container) {
@@ -237,8 +331,10 @@ export function useMarqueeSelection<TId extends number | string>({
             anchorIndex < clickedIndex
               ? [anchorIndex, clickedIndex]
               : [clickedIndex, anchorIndex];
-          onSelectionChangeRef.current(new Set(orderedIds.slice(start, end + 1)));
-          return;
+          const next = new Set([...selectedIdsRef.current, ...orderedIds.slice(start, end + 1)]);
+          selectedIdsRef.current = next;
+          onSelectionChangeRef.current(next);
+          return true;
         }
       }
 
@@ -246,10 +342,34 @@ export function useMarqueeSelection<TId extends number | string>({
       if (next.has(id)) next.delete(id);
       else next.add(id);
       anchorRef.current = id;
+      selectedIdsRef.current = next;
       onSelectionChangeRef.current(next);
+      return true;
     },
-    [containerRef, enabled, itemSelector],
+    [containerRef, disabled, selecting, isSelectionGesture, itemSelector],
   );
 
-  return { marqueeRect, onItemClick };
+  return { marqueeRect, onItemClick, isSelectionGesture };
+}
+
+type UseMarqueeSelectionOptions<TId extends number | string> = Omit<
+  UseGridSelectionOptions<TId>, "selecting"
+> & { enabled: boolean };
+
+/** @deprecated Use useGridSelection with selecting instead of enabled. */
+export function useMarqueeSelection<TId extends number | string = number>({
+  enabled,
+  ...options
+}: UseMarqueeSelectionOptions<TId>) {
+  const selection = useGridSelection({ ...options, selecting: enabled });
+  // Legacy cards expect the hook itself to cancel navigation.
+  const onItemClick = (id: TId, event: SelectionClickEvent) => {
+    const consumed = selection.onItemClick(id, event);
+    if (consumed) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    return consumed;
+  };
+  return { ...selection, onItemClick };
 }

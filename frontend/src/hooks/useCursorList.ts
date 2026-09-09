@@ -15,6 +15,7 @@ export interface CursorListResult<T> {
   error: string | null;
   loaderRef: (node?: Element | null) => void;
   selectedIds: Set<number>;
+  setSelectedIds: (next: Set<number>) => void;
   toggleSelected: (id: number) => void;
   selectVisible: () => void;
   clearSelection: () => void;
@@ -126,6 +127,7 @@ export function useCursorList<T extends { id: number }>(
     error,
     loaderRef,
     selectedIds,
+    setSelectedIds,
     toggleSelected,
     selectVisible,
     clearSelection,

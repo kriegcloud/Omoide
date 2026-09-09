@@ -27,7 +27,7 @@ import { searchCombined, searchScenes, searchTags } from "../services/search";
 import SceneResultCard from "../components/SceneResultCard";
 import { API } from "../config";
 import { useSelection } from "../context/SelectionContext";
-import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import { useGridSelection } from "../hooks/useMarqueeSelection";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 
 const ITEMS_PER_PAGE = 30;
@@ -109,12 +109,16 @@ export default function SearchResultsPage() {
   const [retryTick, setRetryTick] = useState(0);
   const activeQueryRef = useRef<string>("");
   const resultsGridRef = useRef<HTMLDivElement>(null);
-  const { isSelecting, selectedIds, setSelected } = useSelection();
-  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+  const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
+  const { marqueeRect, onItemClick } = useGridSelection<number>({
     containerRef: resultsGridRef,
     itemSelector: "[data-media-card]",
     getId: (element) => Number(element.dataset.selectableId),
-    enabled: isSelecting && category === "media",
+    disabled: category !== "media",
+    selecting: isSelecting,
+    allowPlainDragOnItems: false,
+    onEnterSelection: beginSelecting,
+    onExitSelection: clear,
     selectedIds,
     onSelectionChange: setSelected,
   });

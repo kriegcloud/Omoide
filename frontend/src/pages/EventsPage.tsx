@@ -25,7 +25,7 @@ import { EventItem } from "../types";
 import ConfirmDialog from "../components/ConfirmDialog";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 import { useEntitySelection } from "../hooks/useEntitySelection";
-import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import { useGridSelection } from "../hooks/useMarqueeSelection";
 import { deleteEventsBulk } from "../services/events";
 
 const formatRange = (startIso: string, endIso: string) => {
@@ -53,11 +53,14 @@ export default function EventsPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
   const selection = useEntitySelection<number>();
-  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+  const { marqueeRect, onItemClick } = useGridSelection<number>({
     containerRef: gridRef,
     itemSelector: "[data-selectable-id]",
     getId: (element) => Number(element.dataset.selectableId),
-    enabled: selection.selectionMode,
+    selecting: selection.selectionMode,
+    allowPlainDragOnItems: false,
+    onEnterSelection: selection.enterMode,
+    onExitSelection: selection.toggleMode,
     selectedIds: selection.selectedIds,
     onSelectionChange: selection.setSelected,
   });
@@ -218,11 +221,12 @@ export default function EventsPage() {
             <CardActionArea
               component={Link}
               to={`/event/${event.id}`}
-              onClick={
-                selection.selectionMode
-                  ? (clickEvent) => onItemClick(event.id, clickEvent)
-                  : undefined
-              }
+              onClick={(clickEvent) => {
+                if (onItemClick(event.id, clickEvent)) {
+                  clickEvent.preventDefault();
+                  clickEvent.stopPropagation();
+                }
+              }}
             >
               <Box
                 sx={{

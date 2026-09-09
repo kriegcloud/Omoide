@@ -9,6 +9,7 @@ import React, {
 interface SelectionContextValue {
   isSelecting: boolean;
   selectedIds: Set<number>;
+  beginSelecting: () => void;
   toggleSelecting: () => void;
   toggle: (id: number) => void;
   setSelected: (ids: Iterable<number>) => void;
@@ -18,6 +19,7 @@ interface SelectionContextValue {
 const defaultValue: SelectionContextValue = {
   isSelecting: false,
   selectedIds: new Set(),
+  beginSelecting: () => {},
   toggleSelecting: () => {},
   toggle: () => {},
   setSelected: () => {},
@@ -31,6 +33,8 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+
+  const beginSelecting = useCallback(() => setIsSelecting(true), []);
 
   const toggleSelecting = useCallback(() => {
     setIsSelecting((prev) => {
@@ -58,8 +62,8 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   const value = useMemo(
-    () => ({ isSelecting, selectedIds, toggleSelecting, toggle, setSelected, clear }),
-    [isSelecting, selectedIds, toggleSelecting, toggle, setSelected, clear]
+    () => ({ isSelecting, selectedIds, beginSelecting, toggleSelecting, toggle, setSelected, clear }),
+    [isSelecting, selectedIds, beginSelecting, toggleSelecting, toggle, setSelected, clear]
   );
 
   return (

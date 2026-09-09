@@ -14,7 +14,7 @@ import { EmptyState } from "../components/EmptyState";
 import { getHighlights, getHighlightYears } from "../services/features";
 import { HighlightYear, Media } from "../types";
 import { useSelection } from "../context/SelectionContext";
-import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import { useGridSelection } from "../hooks/useMarqueeSelection";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 
 const breakpointColumnsObj = {
@@ -32,12 +32,15 @@ export default function HighlightsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
-  const { isSelecting, selectedIds, setSelected } = useSelection();
-  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+  const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
+  const { marqueeRect, onItemClick } = useGridSelection<number>({
     containerRef: gridRef,
     itemSelector: "[data-media-card]",
     getId: (element) => Number(element.dataset.selectableId),
-    enabled: isSelecting,
+    selecting: isSelecting,
+    allowPlainDragOnItems: false,
+    onEnterSelection: beginSelecting,
+    onExitSelection: clear,
     selectedIds,
     onSelectionChange: setSelected,
   });

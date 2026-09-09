@@ -55,8 +55,6 @@ export const SelectionActionBar: React.FC = () => {
 
   const count = selectedIds.size;
 
-  if (location.pathname.startsWith("/dataset/")) return null;
-
   return (
     <>
       <Fade in={count > 0}>
@@ -175,7 +173,7 @@ export const SelectionActionBar: React.FC = () => {
             variant="contained"
             disableElevation
           >
-            Attach to person
+            Assign to person…
           </Button>
           <Button
             size="small"

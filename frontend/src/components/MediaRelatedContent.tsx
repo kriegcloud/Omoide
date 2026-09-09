@@ -4,7 +4,7 @@ import { Media } from "../types";
 import MediaCard from "./MediaCard";
 import { getSimilarMedia } from "../services/media";
 import { useSelection } from "../context/SelectionContext";
-import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import { useGridSelection } from "../hooks/useMarqueeSelection";
 import MarqueeSelectionBox from "./MarqueeSelectionBox";
 
 export default function SimilarContent({ mediaId }: { mediaId: number }) {
@@ -12,12 +12,15 @@ export default function SimilarContent({ mediaId }: { mediaId: number }) {
   const [isLoading, setIsLoading] = useState(false);
   const similarIds = useMemo(() => similar.map((item) => item.id), [similar]);
   const gridRef = useRef<HTMLDivElement>(null);
-  const { isSelecting, selectedIds, setSelected } = useSelection();
-  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+  const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
+  const { marqueeRect, onItemClick } = useGridSelection<number>({
     containerRef: gridRef,
     itemSelector: "[data-media-card]",
     getId: (element) => Number(element.dataset.selectableId),
-    enabled: isSelecting,
+    selecting: isSelecting,
+    allowPlainDragOnItems: false,
+    onEnterSelection: beginSelecting,
+    onExitSelection: clear,
     selectedIds,
     onSelectionChange: setSelected,
   });

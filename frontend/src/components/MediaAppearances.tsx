@@ -10,7 +10,7 @@ import { getPeople, getPersonMediaAppearances } from "../services/person";
 import { getTags } from "../services/tag";
 import { searchTags } from "../services/search";
 import { useSelection } from "../context/SelectionContext";
-import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import { useGridSelection } from "../hooks/useMarqueeSelection";
 import MarqueeSelectionBox from "./MarqueeSelectionBox";
 
 const breakpointColumnsObj = {
@@ -42,12 +42,15 @@ export default function MediaAppearances({
   const [tagOptions, setTagOptions] = useState<Tag[]>([]);
   const [tagQuery, setTagQuery] = useState("");
   const gridRef = useRef<HTMLDivElement>(null);
-  const { isSelecting, selectedIds, setSelected } = useSelection();
-  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+  const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
+  const { marqueeRect, onItemClick } = useGridSelection<number>({
     containerRef: gridRef,
     itemSelector: "[data-selectable-id]",
     getId: (element) => Number(element.dataset.selectableId),
-    enabled: isSelecting,
+    selecting: isSelecting,
+    allowPlainDragOnItems: false,
+    onEnterSelection: beginSelecting,
+    onExitSelection: clear,
     selectedIds,
     onSelectionChange: setSelected,
   });

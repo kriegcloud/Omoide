@@ -10,6 +10,8 @@ export function useEntitySelection<TId extends number | string>() {
     setSelectedIds(new Set<TId>());
   }, []);
 
+  const enterMode = useCallback(() => setSelectionMode(true), []);
+
   const toggleMode = useCallback(() => {
     setSelectionMode((previous) => {
       if (previous) setSelectedIds(new Set<TId>());
@@ -43,6 +45,7 @@ export function useEntitySelection<TId extends number | string>() {
   return {
     selectionMode,
     selectedIds,
+    enterMode,
     toggleMode,
     toggle,
     clear,

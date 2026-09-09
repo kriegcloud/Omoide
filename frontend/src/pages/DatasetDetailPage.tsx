@@ -37,7 +37,7 @@ import { API } from "../config";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 import MediaCard from "../components/MediaCard";
 import { useSelection } from "../context/SelectionContext";
-import { useMarqueeSelection } from "../hooks/useMarqueeSelection";
+import { useGridSelection } from "../hooks/useMarqueeSelection";
 import {
   autoSelectDataset,
   buildRegularizationDataset,
@@ -178,11 +178,14 @@ export default function DatasetDetailPage() {
   const selection = useSelection();
   const poseTaskVersion = useTaskCompletionVersion(["pose_backfill"]);
   const frameMiningTaskVersion = useTaskCompletionVersion(["dataset_frame_mining"]);
-  const { marqueeRect, onItemClick } = useMarqueeSelection<number>({
+  const { marqueeRect, onItemClick } = useGridSelection<number>({
     containerRef: gridRef,
     itemSelector: "[data-media-card]",
     getId: (element) => Number(element.dataset.selectableId),
-    enabled: selection.isSelecting,
+    selecting: selection.isSelecting,
+    allowPlainDragOnItems: false,
+    onEnterSelection: selection.beginSelecting,
+    onExitSelection: selection.clear,
     selectedIds: selection.selectedIds,
     onSelectionChange: selection.setSelected,
   });
