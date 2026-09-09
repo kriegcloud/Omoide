@@ -288,14 +288,14 @@ class MergeQueueTests(unittest.TestCase):
 class MergeQueueMigrationTests(unittest.TestCase):
     def test_migration_head_is_single_and_chained_from_previous_head(self):
         script = ScriptDirectory.from_config(Config("alembic.ini"))
-        self.assertEqual(script.get_heads(), ["0a1b2c3d4e5f"])
-        self.assertEqual(script.get_revision("head").down_revision, "f9a0b1c2d3e5")
+        self.assertEqual(script.get_heads(), ["1b2c3d4e5f60"])
+        self.assertEqual(script.get_revision("0a1b2c3d4e5f").down_revision, "f9a0b1c2d3e5")
 
     def test_migration_upgrade_constraints_cascade_and_downgrade(self):
         engine = create_engine("sqlite://")
         _attach_engine_listeners(engine)
         self.addCleanup(engine.dispose)
-        revision = ScriptDirectory.from_config(Config("alembic.ini")).get_revision("head").module
+        revision = ScriptDirectory.from_config(Config("alembic.ini")).get_revision("0a1b2c3d4e5f").module
         with engine.begin() as connection:
             connection.exec_driver_sql("CREATE TABLE person (id INTEGER PRIMARY KEY)")
             connection.exec_driver_sql("INSERT INTO person(id) VALUES (1), (2), (3)")

@@ -27,6 +27,7 @@ import { TaskFailure, TaskType } from "../types";
 import {
   startTask as startTaskService,
   cancelTask as cancelTaskService,
+  resumeTask as resumeTaskService,
   getTaskFailures,
   runProcessor,
 } from "../services/taskActions";
@@ -102,6 +103,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
   } = useTaskEvents(isActive);
   const [processorsExpanded, setProcessorsExpanded] = useState(false);
   const [forceReprocess, setForceReprocess] = useState(false);
+  const [resumingTaskIds, setResumingTaskIds] = useState<Set<string>>(new Set());
   const [snack, setSnack] = useState<{
     open: boolean;
     msg: string;
@@ -141,7 +143,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
       sev:
         task.status === "failed"
           ? "error"
-          : task.status === "cancelled"
+          : task.status === "cancelled" || task.status === "interrupted"
             ? "warning"
             : "success",
     });
@@ -271,6 +273,27 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
       await forceRefresh();
     } catch (err) {
       console.error("Error cancelling task", id, err);
+    }
+  };
+
+  const resumeTask = async (id: string) => {
+    setResumingTaskIds((previous) => new Set(previous).add(id));
+    try {
+      await resumeTaskService(id);
+      await forceRefresh();
+      setSnack({ open: true, msg: "Task resumed", sev: "success" });
+    } catch (error: unknown) {
+      setSnack({
+        open: true,
+        msg: errorMessage(error, "Failed to resume task"),
+        sev: "error",
+      });
+    } finally {
+      setResumingTaskIds((previous) => {
+        const next = new Set(previous);
+        next.delete(id);
+        return next;
+      });
     }
   };
 
@@ -545,7 +568,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
               const color =
                 task.status === "completed"
                   ? "success"
-                  : task.status === "cancelled"
+                  : task.status === "cancelled" || task.status === "interrupted"
                     ? "warning"
                     : "error";
               return (
@@ -554,7 +577,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                     <Chip
                       size="small"
                       color={color}
-                      label={task.status}
+                      label={task.status === "interrupted" ? "Interrupted" : task.status}
                       sx={{
                         height: 18,
                         "& .MuiChip-label": { px: 0.75, fontSize: "0.65rem" },
@@ -579,6 +602,24 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                     {formatTaskDuration(task.duration_seconds)} ·{" "}
                     {formatRelativeTime(task)}
                   </Typography>
+                  {task.resumed_by ? (
+                    <Typography variant="caption" color="text.secondary">
+                      Resumed
+                    </Typography>
+                  ) : (
+                    task.resumable &&
+                    ["interrupted", "cancelled", "failed"].includes(task.status) && (
+                      <Button
+                        size="small"
+                        disabled={resumingTaskIds.has(task.id) || isTaskRunning(task.task_type)}
+                        onClick={() => resumeTask(task.id)}
+                        aria-label={`Resume ${TASK_LABELS[task.task_type]}`}
+                        sx={{ ml: -1 }}
+                      >
+                        {resumingTaskIds.has(task.id) ? "Resuming…" : "Resume"}
+                      </Button>
+                    )
+                  )}
                 </Box>
               );
             })}

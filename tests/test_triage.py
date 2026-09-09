@@ -153,7 +153,7 @@ class TriageTests(unittest.TestCase):
 
     def test_migration_has_single_expected_head(self):
         script = ScriptDirectory.from_config(Config("alembic.ini"))
-        self.assertEqual(script.get_heads(), ["0a1b2c3d4e5f"])
+        self.assertEqual(script.get_heads(), ["1b2c3d4e5f60"])
 
 
 if __name__ == "__main__":

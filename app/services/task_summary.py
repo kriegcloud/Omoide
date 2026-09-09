@@ -43,10 +43,11 @@ def summarize_task(task: ProcessingTask) -> str:
     if status == "failed":
         error = result.get("error")
         return str(error) if error is not None else "Failed"
-    if status == "cancelled":
+    if status in ("cancelled", "interrupted"):
+        label = "Interrupted" if status == "interrupted" else "Cancelled"
         if task.total == 0:
-            return "Cancelled"
-        return f"Cancelled at {task.processed}/{task.total}"
+            return label
+        return f"{label} at {task.processed}/{task.total}"
     if status in ("running", "pending"):
         return ""
     if status != "completed":
