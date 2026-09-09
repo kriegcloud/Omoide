@@ -1,7 +1,6 @@
 import React, { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import {
   Chip,
-  Avatar,
   Box,
   Button,
   CircularProgress,
@@ -10,10 +9,6 @@ import {
   DialogContent,
   DialogTitle,
   IconButton,
-  List,
-  ListItemAvatar,
-  ListItemButton,
-  ListItemText,
   Paper,
   Stack,
   TextField,
@@ -30,9 +25,8 @@ import MarqueeSelectionBox from "./MarqueeSelectionBox";
 import { useGridSelection, type SelectionClickEvent } from "../hooks/useMarqueeSelection";
 import ConfirmDialog from "./ConfirmDialog";
 import { useFaceSelection } from "../hooks/useFaceSelection";
-import { searchPersonsByName } from "../services/personActions";
-import config, { API } from "../config";
-import { encodeFilePath } from "../urlUtils";
+import PersonPicker from "./PersonPicker";
+import config from "../config";
 import { useRovingGridFocus } from "../hooks/useRovingGridFocus";
 
 interface DetectedFacesProps {
@@ -44,6 +38,7 @@ interface DetectedFacesProps {
   onAssign: (faceIds: number[], personId: number) => void | Promise<void>;
   onCreateMultiple?: (faceIds: number[], name?: string) => Promise<Person | void>;
   personId?: number;
+  assignToCurrentPerson?: boolean;
 
   profileFaceId?: number;
   onSetProfile?: (faceId: number) => void | Promise<void>;
@@ -67,6 +62,7 @@ export default function DetectedFaces({
   onDetach,
   onAssign,
   personId,
+  assignToCurrentPerson = false,
   profileFaceId,
   onSetProfile,
   onLoadMore,
@@ -97,10 +93,7 @@ export default function DetectedFaces({
   }, []);
 
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
-  const [assignSearchTerm, setAssignSearchTerm] = useState("");
-  const [assignCandidates, setAssignCandidates] = useState<Person[]>([]);
   const [assignTargetPerson, setAssignTargetPerson] = useState<Person | null>(null);
-  const [isSearching, setIsSearching] = useState(false);
   const [openCreateDialog, setOpenCreateDialog] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [newPersonName, setNewPersonName] = useState("");
@@ -166,20 +159,6 @@ export default function DetectedFaces({
     }
   };
 
-  const resolveProfileThumb = useCallback((person: Person) => {
-    const thumbPath = person.profile_face?.thumbnail_path;
-    if (!thumbPath) return undefined;
-    return `${API}/thumbnails/${encodeFilePath(thumbPath)}`;
-  }, []);
-
-  const getInitials = useCallback((name = "") => {
-    const parts = name.trim().split(/\s+/).filter(Boolean);
-    if (parts.length >= 2) {
-      return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
-    }
-    return name.slice(0, 2).toUpperCase() || "?";
-  }, []);
-
   const [lastCardNode, setLastCardNode] = useState<HTMLDivElement | null>(
     null,
   );
@@ -214,41 +193,6 @@ export default function DetectedFaces({
       onClearSelection();
     }
   }, [canMutate, onClearSelection]);
-
-  useEffect(() => {
-    if (!canMutate) {
-      setAssignCandidates([]);
-      return;
-    }
-    if (!assignSearchTerm.trim()) {
-      setAssignCandidates([]);
-      return;
-    }
-    const controller = new AbortController();
-    const handler = setTimeout(async () => {
-      setIsSearching(true);
-      try {
-        const results = await searchPersonsByName(
-          assignSearchTerm,
-          controller.signal,
-        );
-        if (controller.signal.aborted) return;
-        setAssignCandidates(results);
-      } catch (error) {
-        if (!controller.signal.aborted) {
-          console.error("Failed to search for people:", error);
-        }
-      } finally {
-        if (!controller.signal.aborted) {
-          setIsSearching(false);
-        }
-      }
-    }, 300);
-    return () => {
-      clearTimeout(handler);
-      controller.abort();
-    };
-  }, [assignSearchTerm, canMutate]);
 
   const handleDetach = useCallback(async (faceIds = selectedFaceIds) => {
     if (!faceIds.length || !canMutate || isProcessing || reviewBusy.current) return;
@@ -344,20 +288,18 @@ export default function DetectedFaces({
 
   const handleCloseAssignDialog = () => {
     setIsAssignDialogOpen(false);
-    setAssignSearchTerm("");
-    setAssignCandidates([]);
     setAssignTargetPerson(null);
   };
 
   const handleConfirmAssign = async () => {
-    if (!assignTargetPerson || !canMutate) return;
+    if (!assignTargetPerson || assignTargetPerson.id === personId || !canMutate || isProcessing) return;
     await handleAssign(selectedFaceIds, assignTargetPerson.id);
     handleCloseAssignDialog();
   };
 
   const handleAssignClick = () => {
     if (!canMutate) return;
-    if (personId) {
+    if (personId && assignToCurrentPerson) {
       handleAssign(selectedFaceIds, personId);
     } else {
       setIsAssignDialogOpen(true);
@@ -610,45 +552,21 @@ export default function DetectedFaces({
       >
         <DialogTitle>Assign to Person</DialogTitle>
         <DialogContent>
-          <TextField
-            autoFocus
-            margin="dense"
-            label="Search for a person"
-            type="text"
-            fullWidth
-            variant="standard"
-            value={assignSearchTerm}
-            onChange={(e) => setAssignSearchTerm(e.target.value)}
-          />
-          {isSearching && (
-            <Box sx={{ display: "flex", justifyContent: "center", my: 1 }}>
-              <CircularProgress size={24} />
-            </Box>
+          {canMutate && isAssignDialogOpen && (
+            <PersonPicker
+              autoFocus
+              label="Search for a person"
+              excludeIds={personId === undefined ? [] : [personId]}
+              selectedId={assignTargetPerson?.id}
+              disabled={isProcessing}
+              onSelect={setAssignTargetPerson}
+            />
           )}
-          <List>
-            {assignCandidates.map((person) => (
-              <ListItemButton
-                key={person.id}
-                selected={assignTargetPerson?.id === person.id}
-                onClick={() => setAssignTargetPerson(person)}
-              >
-                <ListItemAvatar>
-                  <Avatar
-                    src={resolveProfileThumb(person)}
-                    alt={person.name || `Person ${person.id}`}
-                  >
-                    {getInitials(person.name)}
-                  </Avatar>
-                </ListItemAvatar>
-                <ListItemText
-                  primary={person.name || `Person ${person.id}`}
-                  secondary={
-                    person.appearance_count ? `${person.appearance_count} media` : undefined
-                  }
-                />
-              </ListItemButton>
-            ))}
-          </List>
+          {assignTargetPerson && (
+            <Typography sx={{ mt: 2 }}>
+              Selected: {assignTargetPerson.name || `Person ${assignTargetPerson.id}`}
+            </Typography>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={handleCloseAssignDialog}>Cancel</Button>

@@ -11,6 +11,7 @@ export const getPeople = async (
   cursor?: string,
   hidden = false,
   gender?: "female" | "male",
+  signal?: AbortSignal,
 ): Promise<{ items: PersonReadSimple[]; next_cursor: string | null }> => {
   const params = new URLSearchParams();
   if (cursor) {
@@ -22,7 +23,7 @@ export const getPeople = async (
   if (gender) {
     params.append("gender", gender);
   }
-  const response = await fetch(`${API}/api/person/?${params.toString()}`);
+  const response = await fetch(`${API}/api/person/?${params.toString()}`, { signal });
   if (!response.ok) throw new Error("Failed to fetch people");
   const data = await response.json();
   return { items: data.items, next_cursor: data.next_cursor };

@@ -1,8 +1,6 @@
-import React, { Suspense, useEffect, useState } from "react";
+import React, { Suspense, useState } from "react";
 import {
   Alert,
-  Autocomplete,
-  Avatar,
   Box,
   Button,
   CircularProgress,
@@ -11,17 +9,13 @@ import {
   DialogContent,
   DialogTitle,
   Snackbar,
-  TextField,
   Typography,
 } from "@mui/material";
 import { Person, Face } from "../types";
 import PersonCard from "./PersonCard";
-import config, { API } from "../config";
-import { encodeFilePath } from "../urlUtils";
-import {
-  AddMediaAppearanceResult,
-  searchPersonsByName,
-} from "../services/personActions";
+import config from "../config";
+import PersonPicker from "./PersonPicker";
+import { AddMediaAppearanceResult } from "../services/personActions";
 
 const DetectedFaces = React.lazy(() => import("./DetectedFaces"));
 
@@ -60,8 +54,6 @@ export function PeopleSection({
   onAttachMediaToPerson,
 }: PeopleSectionProps) {
   const [attachDialogOpen, setAttachDialogOpen] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [personOptions, setPersonOptions] = useState<Person[]>([]);
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
   const [isAttaching, setIsAttaching] = useState(false);
   const [snackbar, setSnackbar] = useState<{
@@ -70,39 +62,8 @@ export function PeopleSection({
     severity: "success" | "info" | "error";
   }>({ open: false, message: "", severity: "success" });
 
-  useEffect(() => {
-    if (!attachDialogOpen) {
-      return;
-    }
-    const trimmed = searchTerm.trim();
-    if (trimmed.length < 2) {
-      setPersonOptions([]);
-      return;
-    }
-
-    let active = true;
-    const handle = window.setTimeout(() => {
-      searchPersonsByName(trimmed)
-        .then((results) => {
-          if (active) {
-            setPersonOptions(results);
-          }
-        })
-        .catch((err) => {
-          console.error("Failed to search persons:", err);
-        });
-    }, 300);
-
-    return () => {
-      active = false;
-      window.clearTimeout(handle);
-    };
-  }, [attachDialogOpen, searchTerm]);
-
   const resetAttachDialog = () => {
     setAttachDialogOpen(false);
-    setSearchTerm("");
-    setPersonOptions([]);
     setSelectedPerson(null);
   };
 
@@ -190,67 +151,30 @@ export function PeopleSection({
 
       <Dialog
         open={attachDialogOpen}
-        onClose={resetAttachDialog}
+        onClose={isAttaching ? undefined : resetAttachDialog}
         fullWidth
         maxWidth="sm"
       >
         <DialogTitle>Attach Media to Person</DialogTitle>
         <DialogContent>
-          <Autocomplete
-            options={personOptions}
-            value={selectedPerson}
-            getOptionLabel={(option) => option.name || `Person ${option.id}`}
-            isOptionEqualToValue={(option, value) => option.id === value.id}
-            inputValue={searchTerm}
-            onInputChange={(_, value) => setSearchTerm(value)}
-            onChange={(_, value) => setSelectedPerson(value)}
-            renderOption={(props, option) => {
-              const thumbPath = option.profile_face?.thumbnail_path;
-              const thumbUrl = thumbPath
-                ? `${API}/thumbnails/${encodeFilePath(thumbPath)}`
-                : undefined;
-              const initials =
-                (option.name || `P${option.id}`)
-                  .trim()
-                  .split(/\s+/)
-                  .filter(Boolean)
-                  .map((part) => part[0]?.toUpperCase())
-                  .join("")
-                  .slice(0, 2) || "?";
-
-              return (
-                <Box
-                  component="li"
-                  {...props}
-                  sx={{ display: "flex", alignItems: "center", gap: 1.5, py: 0.5 }}
-                >
-                  <Avatar src={thumbUrl} alt={option.name || `Person ${option.id}`}>
-                    {thumbUrl ? null : initials}
-                  </Avatar>
-                  <Box sx={{ minWidth: 0 }}>
-                    <Typography noWrap>{option.name || `Person ${option.id}`}</Typography>
-                    {option.appearance_count ? (
-                      <Typography variant="caption" color="text.secondary" noWrap>
-                        {option.appearance_count} media
-                      </Typography>
-                    ) : null}
-                  </Box>
-                </Box>
-              );
-            }}
-            renderInput={(params) => (
-              <TextField
-                {...params}
-                autoFocus
-                label="Search for person"
-                helperText={
-                  searchTerm.trim().length < 2
-                    ? "Type at least two characters to search"
-                    : undefined
-                }
-              />
-            )}
-          />
+          {attachDialogOpen && (
+            <PersonPicker
+              autoFocus
+              label="Search for person"
+              excludeIds={persons.map((person) => person.id)}
+              selectedId={selectedPerson?.id}
+              disabled={isAttaching}
+              onSelect={setSelectedPerson}
+            />
+          )}
+          {selectedPerson && (
+            <Box sx={{ mt: 2, display: "flex", alignItems: "center", gap: 1 }}>
+              <Typography>
+                Selected: {selectedPerson.name || `Person ${selectedPerson.id}`}
+              </Typography>
+              <Button disabled={isAttaching} onClick={() => setSelectedPerson(null)}>Clear person</Button>
+            </Box>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={resetAttachDialog} disabled={isAttaching}>

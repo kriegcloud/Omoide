@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
-import { getPeople, getPerson, getPersonMediaAppearances } from "../services/person";
+import { getPerson, getPersonMediaAppearances } from "../services/person";
 import {
   autoMergeSimilarPersons,
   deletePerson as deletePersonService,
@@ -13,7 +13,6 @@ import {
   mergePersons,
   hidePerson,
   unhidePerson,
-  searchPersonsByName,
   setProfileFace,
   autoSelectProfileFace as requestAutoSelectProfileFace,
   updatePerson,
@@ -61,9 +60,6 @@ export const usePersonDetailPage = () => {
     name: string;
   } | null>(null);
 
-  const [searchTerm, setSearchTerm] = useState("");
-  const [candidates, setCandidates] = useState<Person[]>([]);
-  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState(searchTerm);
   const [similarPersons, setSimilarPersons] = useState<SimilarPerson[]>([]);
   const [suggestedFaces, setSuggestedFaces] = useState<FaceRead[]>([]);
   const [isLoadingSuggestedFaces, setIsLoadingSuggestedFaces] =
@@ -389,16 +385,6 @@ export const usePersonDetailPage = () => {
   }, [id, refreshMediaAppearances]);
 
   useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedSearchTerm(searchTerm);
-    }, 500);
-
-    return () => {
-      clearTimeout(handler);
-    };
-  }, [searchTerm]);
-
-  useEffect(() => {
     setRelationshipGraph(null);
     setHasLoadedRelationships(false);
     setRelationshipDepth(3);
@@ -415,42 +401,6 @@ export const usePersonDetailPage = () => {
     relationshipMaxNodes,
     reloadRelationshipGraphIfLoaded,
   ]);
-
-  useEffect(() => {
-    if (!mergeOpen) {
-      setCandidates([]);
-      return;
-    }
-
-    const controller = new AbortController();
-    const term = debouncedSearchTerm.trim();
-    // The person list endpoint orders by appearance count (desc); with no
-    // search term it doubles as "the five most-seen people" so the most
-    // likely merge targets are one click away.
-    const request = term
-      ? searchPersonsByName(term, controller.signal)
-      : getPeople().then((page) => page.items as unknown as Person[]);
-    request
-      .then((response) => {
-        if (controller.signal.aborted) return;
-        const filtered = response
-          .filter((p: Person) => p.id !== Number(id))
-          .sort(
-            (a, b) =>
-              (b.appearance_count ?? 0) - (a.appearance_count ?? 0) || b.id - a.id,
-          );
-        setCandidates(term ? filtered : filtered.slice(0, 5));
-      })
-      .catch((err) => {
-        if (err.name !== "AbortError") {
-          console.error("Search failed:", err);
-        }
-      });
-
-    return () => {
-      controller.abort();
-    };
-  }, [debouncedSearchTerm, mergeOpen, id]);
 
   const handleAssignWrapper = async (
     faceIds: number[],
@@ -803,9 +753,6 @@ export const usePersonDetailPage = () => {
     setMergeOpen,
     mergeTarget,
     setMergeTarget,
-    searchTerm,
-    setSearchTerm,
-    candidates,
     similarPersons,
     suggestedFaces,
     relationshipGraph,

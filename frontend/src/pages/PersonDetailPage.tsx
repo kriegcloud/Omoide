@@ -1,5 +1,4 @@
 import {
-  Avatar,
   Box,
   Button,
   CircularProgress,
@@ -8,8 +7,6 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  Stack,
-  TextField,
   Typography,
 } from "@mui/material";
 import Alert from "@mui/material/Alert";
@@ -18,17 +15,7 @@ import { PersonContentTabs } from "../components/PersonContentTabs";
 import { PersonHero } from "../components/PersonHero";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { usePersonDetailPage } from "../hooks/usePersonDetailPage";
-import { API } from "../config";
-import { encodeFilePath } from "../urlUtils";
-
-const getInitials = (name?: string) => {
-  if (!name) return "?";
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) {
-    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
-  }
-  return parts[0]?.slice(0, 2).toUpperCase() || "?";
-};
+import PersonPicker from "../components/PersonPicker";
 
 export default function PersonDetailPage() {
   const {
@@ -39,9 +26,6 @@ export default function PersonDetailPage() {
     setMergeOpen,
     mergeTarget,
     setMergeTarget,
-    searchTerm,
-    setSearchTerm,
-    candidates,
     similarPersons,
     suggestedFaces,
     relationshipGraph,
@@ -209,77 +193,20 @@ export default function PersonDetailPage() {
       </Dialog>
 
       {/* Merge Dialog */}
-      <Dialog open={mergeOpen} onClose={() => setMergeOpen(false)}>
+      <Dialog open={mergeOpen} onClose={() => setMergeOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Merge "{person.name}" into...</DialogTitle>
         <DialogContent>
-          <TextField
-            label="Search by name..."
-            fullWidth
-            autoFocus
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            sx={{ mb: 2 }}
-          />
-          {!searchTerm.trim() && candidates.length > 0 && (
-            <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: "block" }}>
-              Most media first
-            </Typography>
+          {mergeOpen && (
+            <PersonPicker
+              autoFocus
+              label="Search by name..."
+              excludeIds={[person.id]}
+              onSelect={(candidate) => setMergeTarget({
+                id: candidate.id,
+                name: candidate.name ?? "Unknown",
+              })}
+            />
           )}
-          <Stack spacing={1}>
-            {candidates.map((candidate) => (
-              <Box
-                key={candidate.id}
-                onClick={() =>
-                  setMergeTarget({
-                    id: candidate.id,
-                    name: candidate.name ?? "Unknown",
-                  })
-                }
-                sx={{
-                  p: 1,
-                  bgcolor: "background.paper",
-                  borderRadius: 1,
-                  cursor: "pointer",
-                  "&:hover": {
-                    bgcolor: "primary.dark",
-                    color: "primary.contrastText",
-                  },
-                }}
-              >
-                <Stack direction="row" spacing={2} alignItems="center">
-                  <Avatar
-                    src={
-                      candidate.profile_face?.thumbnail_path
-                        ? `${API}/thumbnails/${encodeFilePath(
-                            candidate.profile_face.thumbnail_path
-                          )}`
-                        : undefined
-                    }
-                    alt={candidate.name ?? `Person ${candidate.id}`}
-                  >
-                    {getInitials(candidate.name)}
-                  </Avatar>
-                  <Box sx={{ minWidth: 0 }}>
-                    <Typography noWrap sx={{ color: "inherit" }}>
-                      {candidate.name ?? "Unknown"}
-                    </Typography>
-                    {candidate.appearance_count ? (
-                      <Typography
-                        variant="caption"
-                        noWrap
-                        sx={{ color: "inherit", opacity: 0.75 }}
-                      >
-                        {candidate.appearance_count} media
-                      </Typography>
-                    ) : null}
-                  </Box>
-                </Stack>
-              </Box>
-            ))}
-            {searchTerm && candidates.length === 0 && (
-              <Typography color="text.secondary">No matches</Typography>
-            )}
-          </Stack>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setMergeOpen(false)}>Cancel</Button>

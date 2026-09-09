@@ -15,8 +15,6 @@ import {
   Button,
   Stack,
   Paper,
-  Autocomplete,
-  Avatar,
   Alert,
   Snackbar,
   ToggleButton,
@@ -32,12 +30,10 @@ import {
   createPersonFromFaces,
   deleteFace,
 } from "../services/faceActions";
-import { searchPersonsByName } from "../services/personActions";
+import PersonPicker from "../components/PersonPicker";
 import { Person } from "../types";
 import { FaceGrid } from "../components/FaceGrid"; // Import our DUMB grid component
 import ConfirmDialog from "../components/ConfirmDialog";
-import { API } from "../config";
-import { encodeFilePath } from "../urlUtils";
 import OrphanFaceSuggestions from "../components/OrphanFaceSuggestions";
 
 export default function OrphanFacesPage() {
@@ -105,8 +101,6 @@ function AllOrphanFaces() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [newPersonName, setNewPersonName] = useState("");
-  const [personOptions, setPersonOptions] = useState<Person[]>([]);
-  const [searchTerm, setSearchTerm] = useState("");
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     message: string;
@@ -181,37 +175,8 @@ function AllOrphanFaces() {
   };
 
   const openAssignDialog = () => {
-    setSearchTerm("");
-    setPersonOptions([]);
     setAssignDialogOpen(true);
   };
-
-  useEffect(() => {
-    if (!assignDialogOpen) {
-      return;
-    }
-    const trimmed = searchTerm.trim();
-    if (trimmed.length < 2) {
-      setPersonOptions([]);
-      return;
-    }
-    let active = true;
-    const handle = window.setTimeout(() => {
-      searchPersonsByName(trimmed)
-        .then((results) => {
-          if (active) {
-            setPersonOptions(results);
-          }
-        })
-        .catch((err) => {
-          console.error("Failed to search persons:", err);
-        });
-    }, 300);
-    return () => {
-      active = false;
-      window.clearTimeout(handle);
-    };
-  }, [assignDialogOpen, searchTerm]);
 
   const handleConfirmAssign = async (person: Person | null) => {
     if (!person) return;
@@ -229,8 +194,6 @@ function AllOrphanFaces() {
       removeItems(listKey, faceIds);
       setSelectedFaceIds([]);
       setAssignDialogOpen(false);
-      setSearchTerm("");
-      setPersonOptions([]);
       showMessage(
         `Assigned ${faceIds.length} face${faceIds.length === 1 ? "" : "s"} to ${
           person.name || `Person ${person.id}`
@@ -366,71 +329,21 @@ function AllOrphanFaces() {
       {/* Assign Dialog */}
       <Dialog
         open={assignDialogOpen}
-        onClose={() => setAssignDialogOpen(false)}
+        onClose={isProcessing ? undefined : () => setAssignDialogOpen(false)}
         fullWidth
       >
         <DialogTitle>Assign {selectedFaceIds.length} faces to...</DialogTitle>
         <DialogContent>
-          <Autocomplete
-            options={personOptions}
-            getOptionLabel={(o) => o.name || "Unknown"}
-            inputValue={searchTerm}
-            onInputChange={(_, value) => setSearchTerm(value)}
-            onChange={(_, val) => handleConfirmAssign(val)}
-            renderOption={(props, option) => {
-              const thumbPath = option.profile_face?.thumbnail_path;
-              const thumbUrl = thumbPath
-                ? `${API}/thumbnails/${encodeFilePath(thumbPath)}`
-                : undefined;
-              const initials = (option.name || "?")
-                .trim()
-                .split(/\s+/)
-                .filter(Boolean)
-                .map((part) => part[0]?.toUpperCase())
-                .join("")
-                .slice(0, 2) || "?";
-              return (
-                <Box
-                  component="li"
-                  {...props}
-                  sx={{ display: "flex", alignItems: "center", gap: 1.5, py: 0.5 }}
-                >
-                  <Avatar src={thumbUrl} alt={option.name || `Person ${option.id}`}>
-                    {thumbUrl ? null : initials}
-                  </Avatar>
-                  <Box sx={{ minWidth: 0 }}>
-                    <Typography noWrap>{option.name || `Person ${option.id}`}</Typography>
-                    {option.appearance_count ? (
-                      <Typography variant="caption" color="text.secondary" noWrap>
-                        {option.appearance_count} media
-                      </Typography>
-                    ) : null}
-                  </Box>
-                </Box>
-              );
-            }}
-            renderInput={(params) => (
-              <TextField
-                {...params}
-                label="Search for a person"
-                autoFocus
-                helperText={
-                  searchTerm.length < 2
-                    ? "Type at least two characters to search"
-                    : undefined
-                }
-              />
-            )}
-          />
+          {assignDialogOpen && (
+            <PersonPicker
+              autoFocus
+              disabled={isProcessing}
+              onSelect={(person) => void handleConfirmAssign(person)}
+            />
+          )}
         </DialogContent>
         <DialogActions>
-          <Button
-            onClick={() => {
-              setAssignDialogOpen(false);
-              setSearchTerm("");
-              setPersonOptions([]);
-            }}
-          >
+          <Button disabled={isProcessing} onClick={() => setAssignDialogOpen(false)}>
             Cancel
           </Button>
         </DialogActions>
