@@ -143,7 +143,7 @@ def _rebuild_people(session: Session) -> None:
     safe_commit(session)
 
 
-def migrate(batch_size: int, limit: int | None) -> None:
+def migrate(batch_size: int, limit: int | None, drop_unresolved: bool = False) -> None:
     backup = _backup_database()
     print(f"Integrity-checked backup: {backup}")
     client = AdaFaceSocketAnalysis(
@@ -158,7 +158,7 @@ def migrate(batch_size: int, limit: int | None) -> None:
         completed = (
             select(text("face_id"))
             .select_from(text("face_embedding_migration"))
-            .where(text("fingerprint = :fingerprint AND outcome = 'migrated'"))
+            .where(text("fingerprint = :fingerprint AND outcome IN ('migrated', 'dropped')"))
             .params(fingerprint=FACE_MODEL_FINGERPRINT)
         )
         query = (
@@ -256,6 +256,32 @@ def migrate(batch_size: int, limit: int | None) -> None:
                 )
         safe_commit(session)
 
+        if drop_unresolved:
+            # Faces the service cannot find even on a padded crop have no
+            # representation in the new space. Remove their old-space vectors so
+            # the catalog holds a single vector space; the Face rows and person
+            # assignments stay, they simply cannot match until re-extracted.
+            unresolved = session.exec(
+                select(Face.id).where(Face.id.not_in(completed)).order_by(Face.id)
+            ).all()
+            for face_id in unresolved:
+                session.exec(
+                    text("DELETE FROM face_embeddings WHERE face_id = :face_id").bindparams(
+                        face_id=face_id
+                    )
+                )
+                session.exec(
+                    text(
+                        """
+                        INSERT OR REPLACE INTO face_embedding_migration(
+                            face_id, fingerprint, outcome, updated_at
+                        ) VALUES (:face_id, :fingerprint, 'dropped', CURRENT_TIMESTAMP)
+                        """
+                    ).bindparams(face_id=face_id, fingerprint=FACE_MODEL_FINGERPRINT)
+                )
+            safe_commit(session)
+            print(f"Dropped old-space vectors for {len(unresolved)} unresolved faces.")
+
         remaining = session.exec(
             select(Face.id)
             .where(Face.id.not_in(completed))
@@ -284,12 +310,19 @@ def main() -> None:
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--batch-size", type=int, default=100)
     parser.add_argument("--limit", type=int)
+    parser.add_argument(
+        "--drop-unresolved",
+        action="store_true",
+        help="After the pass, delete old-space vectors of faces the service still cannot embed so the fingerprint can become ready.",
+    )
     arguments = parser.parse_args()
     if not arguments.apply:
         raise SystemExit("Refusing to mutate the catalog without --apply")
     if arguments.batch_size < 1 or arguments.batch_size > 1000:
         raise SystemExit("--batch-size must be between 1 and 1000")
-    migrate(arguments.batch_size, arguments.limit)
+    if arguments.drop_unresolved and arguments.limit is not None:
+        raise SystemExit("--drop-unresolved requires a full pass (no --limit)")
+    migrate(arguments.batch_size, arguments.limit, drop_unresolved=arguments.drop_unresolved)
 
 
 if __name__ == "__main__":
