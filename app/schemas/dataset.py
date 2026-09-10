@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models import (
     AnnotationReviewStatus,
@@ -13,6 +13,15 @@ from app.models import (
     TrainingDatasetKind,
 )
 from app.schemas.media import EditOp, MediaPreview
+
+
+def validate_dataset_path_token(value: str | None) -> str | None:
+    """Training tokens are text, but also form Kohya directory names."""
+    if value is not None and (
+        "/" in value or "\\" in value or "\0" in value or value.strip() in {".", ".."}
+    ):
+        raise ValueError("Dataset tokens must not contain path separators or traversal components")
+    return value
 
 
 class DatasetCreate(BaseModel):
@@ -31,6 +40,8 @@ class DatasetCreate(BaseModel):
     export_layout: DatasetExportLayout = DatasetExportLayout.AI_TOOLKIT
     cover_media_id: int | None = None
 
+    _safe_tokens = field_validator("trigger_word", "class_token")(validate_dataset_path_token)
+
 
 class DatasetUpdate(BaseModel):
     name: str | None = None
@@ -48,6 +59,8 @@ class DatasetUpdate(BaseModel):
     export_layout: DatasetExportLayout | None = None
     cover_media_id: int | None = None
     composition_targets: dict[str, dict[str, float]] | None = None
+
+    _safe_tokens = field_validator("trigger_word", "class_token")(validate_dataset_path_token)
 
 
 class DatasetRead(BaseModel):

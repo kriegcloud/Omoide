@@ -11,14 +11,20 @@ from app.models import (
     DuplicateIgnore,
 )
 from sqlalchemy import func
-from datetime import datetime, timezone
+from datetime import datetime
 from app.config import settings, DuplicateHandlingRule, DuplicateKeepRule
 from app.utils import delete_file, delete_record
 import imagehash
 
 class UnionFind:
-    def __init__(self, elements):
+    def __init__(self, elements, ignored_pairs=()):
         self.parent = {el: el for el in elements}
+        self.members = {el: {el} for el in self.parent}
+        self.forbidden = {el: set() for el in self.parent}
+        for a, b in ignored_pairs:
+            if a in self.forbidden and b in self.forbidden:
+                self.forbidden[a].add(b)
+                self.forbidden[b].add(a)
 
     def find(self, i):
         if self.parent[i] == i:
@@ -30,7 +36,13 @@ class UnionFind:
         root_i = self.find(i)
         root_j = self.find(j)
         if root_i != root_j:
+            # Check whole components: skipping only the A/B edge still joins
+            # an ignored pair transitively through a third item C.
+            if any(self.forbidden[member] & self.members[root_j]
+                   for member in self.members[root_i]):
+                return
             self.parent[root_j] = root_i
+            self.members[root_i].update(self.members.pop(root_j))
 
 
 class DuplicateProcessor:
@@ -51,20 +63,19 @@ class DuplicateProcessor:
             session.add(task)
             session.commit()
             session.refresh(task)
-            if task.status == "cancelled":
+            if task.status in {"cancelled", "interrupted"}:
                 return True
 
     def _update_task_status(self, session: Session, status: str):
+        # Import lazily because task registration imports this processor.
+        from app.tasks.common import _finish_task, _start_task
+
         task = session.get(ProcessingTask, self.task_id)
-        if task:
-            task.status = status
-            if status == "running":
-                task.started_at = datetime.now(timezone.utc)
-            if status == "completed" or status == "failed":
-                task.finished_at = datetime.now(timezone.utc)
-            session.add(task)
-            session.commit()
-            session.refresh(task)
+        if not task:
+            return False
+        if status == "running":
+            return _start_task(session, task)
+        return _finish_task(session, task, status)
 
     def _media_resolution(self, media: Media) -> int:
         width = media.width or 0
@@ -163,6 +174,16 @@ class DuplicateProcessor:
         for media_id, media in unique_media.items():
             if media_id == master.id:
                 continue
+            task = session.get(ProcessingTask, self.task_id)
+            if task:
+                session.refresh(task)
+                if task.status in {"cancelled", "interrupted"}:
+                    return
+            # Decisions may have changed since inference/grouping. Protect
+            # every pair in this group immediately before destructive work.
+            ignored = self._load_ignored_pairs(session)
+            if any(a in unique_media and b in unique_media for a, b in ignored):
+                return
             self._apply_duplicate_action(session, media)
             processed += 1
         logger.info(
@@ -193,7 +214,7 @@ class DuplicateProcessor:
         rows = session.exec(
             select(DuplicateIgnore.media_id_a, DuplicateIgnore.media_id_b)
         ).all()
-        return {(row[0], row[1]) for row in rows}
+        return {self._pair_key(row[0], row[1]) for row in rows}
 
     def _partition_non_ignored_groups(
         self, media_ids: list[int], ignored_pairs: set[tuple[int, int]]
@@ -201,7 +222,7 @@ class DuplicateProcessor:
         if len(media_ids) < 2:
             return []
 
-        uf = UnionFind(media_ids)
+        uf = UnionFind(media_ids, ignored_pairs)
         ordered_ids = list(media_ids)
         for idx in range(len(ordered_ids)):
             media_a = ordered_ids[idx]
@@ -222,7 +243,8 @@ class DuplicateProcessor:
 
     def process(self):
         with Session(db.engine) as session:
-            self._update_task_status(session, "running")
+            if not self._update_task_status(session, "running"):
+                return
             logger.info(
                 f"Starting pHash duplicate detection task {self.task_id}"
             )
@@ -351,7 +373,9 @@ class DuplicateProcessor:
                             )
                             return
 
-                        uf = UnionFind([media_id for media_id, _ in valid_video_hashes])
+                        uf = UnionFind(
+                            [media_id for media_id, _ in valid_video_hashes], ignored_pairs
+                        )
                         for idx, (media_a, hash_a) in enumerate(valid_video_hashes):
                             for jdx in range(idx + 1, len(valid_video_hashes)):
                                 media_b, hash_b = valid_video_hashes[jdx]
@@ -452,6 +476,19 @@ class DuplicateProcessor:
         existing_dms = session.exec(existing_groups_stmt).all()
 
         connected_group_ids = {dm.group_id for dm in existing_dms}
+
+        # Existing groups can create a second transitive bridge, even when
+        # this run's freshly computed candidate group was safe.
+        connected_ids = set(media_ids)
+        if connected_group_ids:
+            connected_ids.update(session.exec(
+                select(DuplicateMedia.media_id).where(
+                    DuplicateMedia.group_id.in_(connected_group_ids)
+                )
+            ).all())
+        if any(a in connected_ids and b in connected_ids
+               for a, b in self._load_ignored_pairs(session)):
+            return
 
         if not connected_group_ids:
             # No existing groups, create a new one

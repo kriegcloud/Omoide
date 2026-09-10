@@ -34,7 +34,18 @@ def acquire_heavy_write_lock(
     waited = 0.0
     last_log = 0.0
     while True:
+        if cancelled and cancelled():
+            return False
         if _try_acquire(_heavy_write_lock, timeout=poll_seconds):
+            # Cancellation can arrive while acquire is waiting.
+            try:
+                stopped = bool(cancelled and cancelled())
+            except BaseException:
+                _heavy_write_lock.release()
+                raise
+            if stopped:
+                _heavy_write_lock.release()
+                return False
             if waited > 0:
                 logger.info(
                     "Acquired heavy DB lock for '%s' after %.1fs of waiting.",
@@ -77,4 +88,3 @@ def heavy_writer(
     finally:
         if acquired:
             _heavy_write_lock.release()
-

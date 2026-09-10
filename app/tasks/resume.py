@@ -10,12 +10,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, timezone
-from threading import Lock, Thread
+from threading import Lock, Thread, current_thread
+from time import monotonic
 
 from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from app.config import settings
+from app.logger import logger
 from app.models import ProcessingTask
 from app.tasks import (
     clean_missing_files,
@@ -95,6 +97,41 @@ def is_resumable(task: ProcessingTask) -> bool:
 
 # Serialize resume requests in this server, including the pending-to-running gap.
 _resume_lock = Lock()
+_workers_lock = Lock()
+_worker_threads: set[Thread] = set()
+_workers_stopping = False
+
+
+def accept_resumed_tasks() -> None:
+    """Open worker admission when the application starts its lifespan."""
+    global _workers_stopping
+    with _resume_lock:
+        _workers_stopping = False
+
+
+def stop_resumed_tasks() -> None:
+    """Close admission before shutdown marks active database tasks interrupted."""
+    global _workers_stopping
+    with _resume_lock:
+        _workers_stopping = True
+
+
+def join_resumed_workers(timeout: float = 5.0) -> int:
+    """Wait at most one shared deadline for resumed workers, retaining live handles."""
+    deadline = monotonic() + max(0.0, timeout)
+    with _workers_lock:
+        workers = tuple(_worker_threads)
+    for worker in workers:
+        if worker is not current_thread() and worker.is_alive():
+            worker.join(timeout=max(0.0, deadline - monotonic()))
+    with _workers_lock:
+        _worker_threads.difference_update(
+            worker for worker in tuple(_worker_threads) if not worker.is_alive()
+        )
+        remaining = len(_worker_threads)
+    if remaining:
+        logger.warning("%s resumed workers still stopping after shutdown timeout", remaining)
+    return remaining
 
 
 def resume_task(session: Session, task: ProcessingTask) -> ProcessingTask:
@@ -103,6 +140,8 @@ def resume_task(session: Session, task: ProcessingTask) -> ProcessingTask:
         raise HTTPException(status_code=403, detail="Not allowed in presentation_mode mode.")
 
     with _resume_lock:
+        if _workers_stopping:
+            raise HTTPException(status_code=503, detail="Application is shutting down")
         session.refresh(task)
         if task.status not in ("interrupted", "cancelled", "failed") or not is_resumable(task):
             raise HTTPException(status_code=400, detail="Task cannot be resumed")
@@ -127,18 +166,28 @@ def resume_task(session: Session, task: ProcessingTask) -> ProcessingTask:
         session.commit()
         session.refresh(new_task)
 
-    try:
-        Thread(
-            target=common._run_task_guarded,
-            args=(callable_task, new_task.id),
-            name=f"task-resume-{new_task.id}",
-            daemon=True,
-        ).start()
-    except Exception:
-        # Keep a failed, resumable successor if the executor itself cannot start.
-        new_task.status = "failed"
-        new_task.finished_at = datetime.now(timezone.utc)
-        session.add(new_task)
-        session.commit()
-        raise
+        thread = None
+        try:
+            thread = Thread(
+                target=common._run_task_guarded,
+                args=(callable_task, new_task.id),
+                name=f"task-resume-{new_task.id}",
+                daemon=True,
+            )
+            with _workers_lock:
+                _worker_threads.difference_update(
+                    worker for worker in tuple(_worker_threads) if not worker.is_alive()
+                )
+                _worker_threads.add(thread)
+                thread.start()
+        except Exception:
+            if thread is not None:
+                with _workers_lock:
+                    _worker_threads.discard(thread)
+            # Keep a failed, resumable successor if the executor itself cannot start.
+            new_task.status = "failed"
+            new_task.finished_at = datetime.now(timezone.utc)
+            session.add(new_task)
+            session.commit()
+            raise
     return new_task

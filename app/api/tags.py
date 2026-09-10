@@ -4,12 +4,12 @@ from sqlalchemy import delete
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
-from app.config import settings
+from app.config import require_mutation_allowed, settings
 from app.database import get_session, safe_commit
 from app.models import Media, MediaTagLink, Person, PersonTagLink, Tag
 from app.schemas.tag import CursorPage, TagRead
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_mutation_allowed)])
 
 
 class TagBulkDeleteRequest(BaseModel):
@@ -23,19 +23,21 @@ class TagBulkDeleteResult(BaseModel):
 
 @router.get("/", response_model=CursorPage)
 def list_tags(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=500),
     cursor: str | None = Query(
-        None,
-        description=(
-            "encoded as `<value>_<id>`; e.g. `2025-05-05T12:34:56.789012_1234` or"
-            " `2500_1234`"
-        ),
+        None, pattern=r"^[1-9][0-9]{0,18}$",
+        description="ID of the last tag from the previous page",
     ),
     session: Session = Depends(get_session),
 ):
     before_id = None
     if cursor:
-        before_id = int(cursor)
+        try:
+            before_id = int(cursor)
+            if not 1 <= before_id <= 9223372036854775807:
+                raise ValueError("Tag id is out of range")
+        except (ValueError, TypeError):
+            raise HTTPException(422, "Invalid cursor format")
     query = (
         select(Tag)
         .options(selectinload(Tag.media))

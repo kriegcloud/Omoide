@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import logging
@@ -69,7 +70,7 @@ import uvicorn
 import webview
 from anyio import to_thread
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -107,7 +108,7 @@ from app.api import (
 )
 from app.api.person import merge_queue_router
 from app.api.processors import router as proc_router
-from app.config import get_clip_bundle, get_os_app_config_dir, settings
+from app.config import require_mutation_allowed, get_clip_bundle, get_os_app_config_dir, settings
 from app.image_limits import apply_pillow_limits
 from app.database import ensure_vec_tables
 from app.ffmpeg import ensure_ffmpeg_available
@@ -116,6 +117,7 @@ from app.models import ProcessingTask
 from app.processor_registry import load_processors
 from app.services.releases import get_latest_release_info
 from app.tasks.resume import is_resumable, resume_task
+from app.tasks.resume import accept_resumed_tasks, join_resumed_workers, stop_resumed_tasks
 
 # Configure uvicorn loggers' verbosity
 logging.getLogger("uvicorn.error").setLevel(logging.INFO)
@@ -523,6 +525,7 @@ def _prewarm_clip() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    app.state.ready = False
     # Each stage logs before it runs (not just on failure) so a hang shows up
     # in omoide.log as "Starting X..." with no matching completion line,
     # instead of leaving no trace at all — this is on the critical path that
@@ -540,11 +543,8 @@ async def lifespan(app: FastAPI):
     apply_pillow_limits(settings.scan.max_image_pixels)
     # Apply database migrations on startup (idempotent)
     logger.info("lifespan: applying migrations...")
-    try:
-        _apply_migrations_once()
-        logger.info("lifespan: migrations applied")
-    except Exception as e:
-        logger.warning("Database migrations failed at startup: %s", e)
+    _apply_migrations_once()
+    logger.info("lifespan: migrations applied")
     # Ensure vec0 tables exist even if Alembic couldn't create them (binary mode).
     logger.info("lifespan: ensuring vec0 tables...")
     try:
@@ -581,6 +581,7 @@ async def lifespan(app: FastAPI):
     # after binding the port — the server shuts down before serving any
     # requests and the webview window stays stuck on the loading screen.
     logger.info("lifespan: cleaning up stale tasks...")
+    accept_resumed_tasks()
     try:
         _cleanup_tasks_on_startup()
         logger.info("lifespan: stale task cleanup done")
@@ -599,9 +600,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Training run reconciliation setup failed: %s", e)
     logger.info("lifespan: startup complete, serving requests")
+    app.state.ready = True
     try:
         yield
     finally:
+        app.state.ready = False
+        # Stop new work before interrupting existing tasks. AsyncIOScheduler's
+        # shutdown callback runs on the next event-loop turn.
+        stop_resumed_tasks()
+        if scheduler.running:
+            scheduler.pause()
+            scheduler.shutdown(wait=False)
+            await asyncio.sleep(0)
         # Stop the bounded history outbox before database shutdown. This wake
         # interrupts its idle wait; its cleanup-only socket deadline bounds a
         # currently active acknowledgement.
@@ -613,6 +623,7 @@ async def lifespan(app: FastAPI):
             logger.warning("Annotation reconciliation shutdown failed: %s", e)
         # On shutdown, clean up tasks so next run starts cleanly.
         _cleanup_tasks_on_shutdown()
+        await to_thread.run_sync(join_resumed_workers)
 
 
 logger.debug(settings)
@@ -624,7 +635,7 @@ except Exception:
     # Non-fatal if file logging cannot be initialized
     pass
 
-app = FastAPI(lifespan=lifespan, redoc_url=None)
+app = FastAPI(lifespan=lifespan, redoc_url=None, dependencies=[Depends(require_mutation_allowed)])
 origins = [os.environ.get("DOMAIN", ""), "http://localhost:5173"]
 app.add_middleware(
     CORSMiddleware,
@@ -809,6 +820,18 @@ async def get_version():
     return {"version": APP_VERSION}
 
 
+@app.get("/api/health", tags=["meta"])
+async def get_health():
+    head = getattr(app.state, "migration_head", None)
+    if (
+        not getattr(app.state, "ready", False)
+        or db.get_migration_state() != db.MigrationState.APPLIED
+        or not head
+    ):
+        return JSONResponse(status_code=503, content={"status": "unavailable"})
+    return {"status": "ok", "migrations": head}
+
+
 @app.get("/api/version/update", tags=["meta"])
 async def get_version_update():
     repo = settings.general.update_check_repo
@@ -825,6 +848,15 @@ async def get_version_update():
         settings.general.update_check_timeout_seconds,
     )
     return info
+
+
+@app.api_route(
+    "/api/{path:path}",
+    methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    include_in_schema=False,
+)
+async def unknown_api_route(path: str):
+    return JSONResponse(status_code=404, content={"detail": "Not Found"})
 
 
 @app.get("/{full_path:path}", include_in_schema=False)
@@ -924,7 +956,16 @@ def _apply_migrations_once() -> None:
         # The configured engine may have changed since a prior successful run.
         # Never retain the old database's success flag across a fresh attempt.
         _migrations_applied = False
+        app.state.ready = False
+        app.state.migration_head = None
         db.run_migrations()
+        from alembic.migration import MigrationContext
+
+        with db.engine.connect() as connection:
+            heads = MigrationContext.configure(connection).get_current_heads()
+        if len(heads) != 1:
+            raise RuntimeError("Database must have exactly one applied migration head")
+        app.state.migration_head = heads[0]
         _migrations_applied = True
 
 

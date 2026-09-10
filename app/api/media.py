@@ -748,25 +748,35 @@ def bulk_move_media(
     _require_media_mutations_allowed()
     moved_ids: list[int] = []
     skipped: list[MediaBulkMoveSkipped] = []
-    for media_id in dict.fromkeys(body.media_ids):
-        media = session.get(Media, media_id)
-        if media is None:
-            skipped.append(MediaBulkMoveSkipped(id=media_id, reason="Media not found"))
-            continue
-        try:
-            target = _move_media(media, body.destination_dir)
-        except (
-            InvalidMediaPathError,
-            MediaFileCollisionError,
-            MediaFileMissingError,
-            ReadOnlyMediaRootError,
-        ) as exc:
-            skipped.append(MediaBulkMoveSkipped(id=media_id, reason=str(exc)))
-            continue
-        media.path = os.fspath(target)
-        session.add(media)
-        moved_ids.append(media_id)
-    safe_commit(session)
+    from app.services.media_files import rollback_media_moves
+
+    moves: list[tuple[Path, Path]] = []
+    try:
+        for media_id in dict.fromkeys(body.media_ids):
+            media = session.get(Media, media_id)
+            if media is None:
+                skipped.append(MediaBulkMoveSkipped(id=media_id, reason="Media not found"))
+                continue
+            source = Path(media.path).expanduser().resolve()
+            try:
+                target = _move_media(media, body.destination_dir)
+            except (
+                InvalidMediaPathError,
+                MediaFileCollisionError,
+                MediaFileMissingError,
+                ReadOnlyMediaRootError,
+            ) as exc:
+                skipped.append(MediaBulkMoveSkipped(id=media_id, reason=str(exc)))
+                continue
+            moves.append((source, target))
+            media.path = os.fspath(target)
+            session.add(media)
+            moved_ids.append(media_id)
+        safe_commit(session)
+    except Exception:
+        session.rollback()
+        rollback_media_moves(moves)
+        raise
     return MediaBulkMoveResponse(moved_ids=moved_ids, skipped=skipped)
 
 
@@ -780,6 +790,7 @@ def move_media(
     media = session.get(Media, media_id)
     if media is None:
         raise HTTPException(status_code=404, detail="Media not found")
+    source = Path(media.path).expanduser().resolve()
     try:
         target = _move_media(media, body.destination_dir)
     except (
@@ -791,7 +802,14 @@ def move_media(
         raise _media_file_conflict(exc)
     media.path = os.fspath(target)
     session.add(media)
-    safe_commit(session)
+    try:
+        safe_commit(session)
+    except Exception:
+        from app.services.media_files import rollback_media_moves
+
+        session.rollback()
+        rollback_media_moves([(source, target)])
+        raise
     session.refresh(media)
     return media
 
@@ -806,6 +824,7 @@ def rename_media(
     media = session.get(Media, media_id)
     if media is None:
         raise HTTPException(status_code=404, detail="Media not found")
+    source = Path(media.path).expanduser().resolve()
     try:
         target = _rename_media(media, body.filename)
     except InvalidMediaPathError as exc:
@@ -819,7 +838,14 @@ def rename_media(
     media.path = os.fspath(target)
     media.filename = target.name
     session.add(media)
-    safe_commit(session)
+    try:
+        safe_commit(session)
+    except Exception:
+        from app.services.media_files import rollback_media_moves
+
+        session.rollback()
+        rollback_media_moves([(source, target)])
+        raise
     session.refresh(media)
     return media
 

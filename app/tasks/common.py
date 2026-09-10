@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from fastapi import BackgroundTasks, HTTPException
+from sqlalchemy import update
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, select
 
@@ -17,6 +18,44 @@ from app.models import ProcessingTask
 from .state import clear_task_progress
 
 __all__ = ["create_and_run_task"]
+
+
+def _start_task(session: Session, task: ProcessingTask) -> bool:
+    """Start admitted work without reviving a cancelled or interrupted task."""
+    result = session.exec(
+        update(ProcessingTask)
+        .where(
+            ProcessingTask.id == task.id,
+            ProcessingTask.status.in_(("pending", "running")),
+        )
+        .values(
+            status="running",
+            processed=0,
+            started_at=task.started_at or datetime.now(timezone.utc),
+        )
+        .execution_options(synchronize_session=False)
+    )
+    safe_commit(session)
+    if not result.rowcount:
+        return False
+    session.refresh(task)
+    return True
+
+
+def _finish_task(session: Session, task: ProcessingTask, status: str) -> bool:
+    """Finalize only still-running work; shutdown and cancellation take priority."""
+    result = session.exec(
+        update(ProcessingTask)
+        .where(ProcessingTask.id == task.id, ProcessingTask.status == "running")
+        .values(status=status, finished_at=datetime.now(timezone.utc))
+        .execution_options(synchronize_session=False)
+    )
+    safe_commit(session)
+    if not result.rowcount:
+        session.expire(task)
+        return False
+    session.refresh(task)
+    return True
 
 
 def _run_task_guarded(callable_task: Callable[[str], None], task_id: str) -> None:
@@ -88,7 +127,7 @@ def create_and_run_task(
         existing_task = session.exec(
             select(ProcessingTask).where(
                 ProcessingTask.task_type == task_type,
-                ProcessingTask.status == "running",
+                ProcessingTask.status.in_(("pending", "running")),
             )
         ).first()
     except OperationalError as exc:
@@ -98,7 +137,7 @@ def create_and_run_task(
         )
 
     if existing_task and reuse_running:
-        logger.info("%s is already running. Reusing existing task.", task_type)
+        logger.info("%s is already active. Reusing existing task.", task_type)
         return existing_task
 
     task = ProcessingTask(task_type=task_type, total=0, processed=0, params=params)

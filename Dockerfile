@@ -97,4 +97,4 @@ ENV IS_DOCKER=true
 # 7. Switch to the non-root user
 USER appuser
 EXPOSE 8123
-CMD ["/bin/bash", "-c", "alembic upgrade head; uvicorn app.main:app --host 0.0.0.0 --port 8123"]
+CMD ["/bin/bash", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8123"]

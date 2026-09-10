@@ -427,21 +427,27 @@ def list_tasks(session: Session = Depends(get_session)):
     summary="List all active tasks with transient details",
 )
 def list_active_tasks(session: Session = Depends(get_session)):
-    try:
-        active = session.exec(
-            select(ProcessingTask)
-            .where(ProcessingTask.status.in_(("running", "pending")))
-            .order_by(
-                case((ProcessingTask.status == "running", 0), else_=1),
-                ProcessingTask.created_at.asc(),
-            )
-        ).all()
-        progress_map = task_state.get_task_progress()
-        return [_to_read(task, progress_map) for task in active]
-    except OperationalError:
-        # database might be contended; retry briefly
-        time.sleep(0.5)
-        return list_active_tasks(session)
+    query = (
+        select(ProcessingTask)
+        .where(ProcessingTask.status.in_(("running", "pending")))
+        .order_by(
+            case((ProcessingTask.status == "running", 0), else_=1),
+            ProcessingTask.created_at.asc(),
+        )
+    )
+    for attempt in range(3):
+        try:
+            # Each failed attempt releases its connection and transaction.
+            with Session(session.get_bind()) as fresh_session:
+                active = fresh_session.exec(query).all()
+                progress_map = task_state.get_task_progress()
+                return [_to_read(task, progress_map) for task in active]
+        except OperationalError as exc:
+            if attempt == 2:
+                raise HTTPException(
+                    status_code=503, detail="Database is busy; try again shortly."
+                ) from exc
+            time.sleep(0.1 * (2 ** attempt))
 
 
 @router.get(

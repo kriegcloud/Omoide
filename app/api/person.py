@@ -22,7 +22,7 @@ from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, delete, distinct, select, text, update
 
-from app.config import settings
+from app.config import require_mutation_allowed, settings
 from app.database import get_session, safe_commit, safe_execute
 from app.logger import logger
 from app.models import (
@@ -37,6 +37,7 @@ from app.models import (
     PersonTagLink,
     Tag,
     TimelineEvent,
+    TrainingDataset,
 )
 from app.schemas.face import CursorPage as FaceCursorPage
 from app.schemas.person import (
@@ -92,8 +93,8 @@ from app.utils import (
     update_person_embedding,
 )
 
-router = APIRouter()
-merge_queue_router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_mutation_allowed)])
+merge_queue_router = APIRouter(dependencies=[Depends(require_mutation_allowed)])
 
 
 def _require_person(person_id: int, session: Session) -> Person:
@@ -244,8 +245,25 @@ def get_person_timeline(
     person_id: int,
     session: Session = Depends(get_session),
     cursor: str | None = None,
-    limit: int = 1000,
+    limit: int = Query(1000, ge=1, le=1000),
 ):
+    from sqlalchemy import Integer, String, column, values
+
+    cursor_key = None
+    if cursor is not None:
+        try:
+            raw_date, cursor_type, raw_id = cursor.split("|", 2)
+            cursor_date = date.fromisoformat(raw_date)
+            cursor_id = int(raw_id)
+            if cursor_type not in {"media", "event"} or not 1 <= cursor_id <= 9223372036854775807:
+                raise ValueError("Invalid timeline cursor")
+            cursor_key = (cursor_date.isoformat(), cursor_type, cursor_id)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=422,
+                detail="Invalid cursor format. Use YYYY-MM-DD|item_type|item_id.",
+            )
+
     media_ids_union = union_all(
         select(Face.media_id.label("media_id")).where(Face.person_id == person_id),
         select(PersonMediaLink.media_id.label("media_id")).where(
@@ -262,77 +280,24 @@ def get_person_timeline(
         .where(Media.id.in_(media_ids_subquery))
         .where(Media.created_at.is_not(None))
     )
-
-    # Subquery for one-time TimelineEvent items
     events_query = (
         select(
             TimelineEvent.id.label("item_id"),
-            TimelineEvent.event_date.label("timeline_date"),
+            func.date(TimelineEvent.event_date).label("timeline_date"),
             literal_column("'event'").label("item_type"),
         )
         .where(TimelineEvent.person_id == person_id)
         .where(TimelineEvent.recurrence.is_(None))
     )
-
-    timeline_cte = union_all(media_query, events_query).cte("timeline")
-
-    final_query = select(
-        timeline_cte.c.item_id,
-        timeline_cte.c.timeline_date.label("timeline_date"),
-        timeline_cte.c.item_type,
-    )
-    if cursor:
-        try:
-            cursor_date = date.fromisoformat(cursor)
-            final_query = final_query.where(timeline_cte.c.timeline_date < cursor_date)
-        except (ValueError, TypeError):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid cursor format. Use YYYY-MM-DD.",
-            )
-
-    final_query = final_query.order_by(timeline_cte.c.timeline_date.desc()).limit(
-        limit + 1
-    )
-
-    page_items_result = session.exec(final_query).all()
-
-    has_next_page = len(page_items_result) > limit
-    page_items = page_items_result[:limit]
-
-    next_cursor = str(page_items[-1].timeline_date) if has_next_page else None
-
-    if not page_items:
+    base_timeline = union_all(media_query, events_query).cte("base_timeline")
+    minimum, maximum = session.exec(
+        select(func.min(base_timeline.c.timeline_date), func.max(base_timeline.c.timeline_date))
+    ).one()
+    if minimum is None or maximum is None:
+        # Yearly events overlay the recorded timeline; they do not create an
+        # unbounded timeline when there are no media or one-time events.
         return {"items": [], "next_cursor": None}
-
-    page_min_date = date.fromisoformat(page_items[-1].timeline_date)
-    page_max_date = date.fromisoformat(page_items[0].timeline_date)
-
-    media_ids_to_fetch = [
-        item.item_id for item in page_items if item.item_type == "media"
-    ]
-    event_ids_to_fetch = [
-        item.item_id for item in page_items if item.item_type == "event"
-    ]
-
-    media_on_page = session.exec(
-        select(Media).where(Media.id.in_(media_ids_to_fetch))
-    ).all()
-    events_on_page = session.exec(
-        select(TimelineEvent).where(TimelineEvent.id.in_(event_ids_to_fetch))
-    ).all()
-
-    media_map = {m.id: m for m in media_on_page}
-    event_map = {e.id: e for e in events_on_page}
-
-    combined_items = []
-    for item in page_items:
-        if item.item_type == "media":
-            combined_items.append(media_map.get(item.item_id))
-        elif item.item_type == "event":
-            combined_items.append(event_map.get(item.item_id))
-
-    combined_items = [i for i in combined_items if i]
+    first_date, last_date = date.fromisoformat(minimum), date.fromisoformat(maximum)
 
     recurring_events = session.exec(
         select(TimelineEvent).where(
@@ -340,43 +305,66 @@ def get_person_timeline(
             TimelineEvent.recurrence == "yearly",
         )
     ).all()
-
+    occurrences: list[tuple[int, str]] = []
     for event in recurring_events:
-        for year in range(page_min_date.year, page_max_date.year + 1):
+        for year in range(first_date.year, last_date.year + 1):
             try:
-                occurrence_date = event.event_date.replace(year=year)
-                if page_min_date <= occurrence_date <= page_max_date:
-                    event_data = event.model_dump()
-                    event_data["event_date"] = occurrence_date
-                    event_occurrence = TimelineEvent.model_validate(event_data)
-                    combined_items.append(event_occurrence)
+                occurrence = event.event_date.replace(year=year)
             except ValueError:
+                # February 29 has no occurrence in a non-leap year.
                 continue
+            if first_date <= occurrence <= last_date:
+                occurrences.append((event.id, occurrence.isoformat()))
 
-    def get_date(item: Media | TimelineEvent) -> date:
-        return item.created_at.date() if isinstance(item, Media) else item.event_date
+    timeline_cte = base_timeline
+    if occurrences:
+        yearly_rows = values(
+            column("item_id", Integer), column("timeline_date", String)
+        ).data(occurrences).cte("yearly_occurrences")
+        timeline_cte = union_all(
+            select(base_timeline.c.item_id, base_timeline.c.timeline_date, base_timeline.c.item_type),
+            select(yearly_rows.c.item_id, yearly_rows.c.timeline_date, literal_column("'event'")),
+        ).cte("timeline")
 
-    combined_items.sort(key=get_date, reverse=True)
+    final_query = select(
+        timeline_cte.c.item_id, timeline_cte.c.timeline_date, timeline_cte.c.item_type
+    )
+    if cursor_key is not None:
+        final_query = final_query.where(
+            tuple_(timeline_cte.c.timeline_date, timeline_cte.c.item_type, timeline_cte.c.item_id)
+            < cursor_key
+        )
+    final_query = final_query.order_by(
+        timeline_cte.c.timeline_date.desc(), timeline_cte.c.item_type.desc(),
+        timeline_cte.c.item_id.desc(),
+    ).limit(limit + 1)
+    page_result = session.exec(final_query).all()
+    page_items = page_result[:limit]
+    if not page_items:
+        return {"items": [], "next_cursor": None}
+    last = page_items[-1]
+    next_cursor = (
+        f"{last.timeline_date}|{last.item_type}|{last.item_id}"
+        if len(page_result) > limit else None
+    )
 
+    media_ids = [item.item_id for item in page_items if item.item_type == "media"]
+    event_ids = [item.item_id for item in page_items if item.item_type == "event"]
+    media_map = {row.id: row for row in session.exec(select(Media).where(Media.id.in_(media_ids)))}
+    event_map = {row.id: row for row in session.exec(select(TimelineEvent).where(TimelineEvent.id.in_(event_ids)))}
     timeline_items = []
-    for item in combined_items:
-        if isinstance(item, Media):
-            timeline_items.append(
-                {
-                    "type": "media",
-                    "date": get_date(item),
-                    "items": item,
-                }
-            )
-        elif isinstance(item, TimelineEvent):
-            timeline_items.append(
-                {
-                    "type": "event",
-                    "date": get_date(item),
-                    "event": item,
-                }
-            )
-
+    for item in page_items:
+        occurrence_date = date.fromisoformat(item.timeline_date)
+        if item.item_type == "media":
+            media = media_map.get(item.item_id)
+            if media is not None:
+                timeline_items.append({"type": "media", "date": occurrence_date, "items": media})
+        else:
+            event = event_map.get(item.item_id)
+            if event is not None:
+                if event.recurrence == "yearly":
+                    event = TimelineEvent.model_validate({**event.model_dump(), "event_date": occurrence_date})
+                timeline_items.append({"type": "event", "date": occurrence_date, "event": event})
     return {"items": timeline_items, "next_cursor": next_cursor}
 
 
@@ -1380,6 +1368,23 @@ def _merge_person_into_target(
         session.add(new_relationship)
         existing_cache[cache_key] = new_relationship
 
+    # Move ORM relationships as well as their keys so delete-orphan cascade
+    # cannot remove a transferred link from an already-loaded source collection.
+    target_links = {(link.platform, link.handle) for link in target.social_links}
+    for link in list(source.social_links):
+        key = (link.platform, link.handle)
+        if key in target_links:
+            session.delete(link)
+        else:
+            link.person = target
+            target_links.add(key)
+    session.exec(
+        update(TrainingDataset).where(TrainingDataset.person_id == source_id)
+        .values(person_id=target_id)
+    )
+    session.flush()
+    session.expire(source, ["social_links"])
+
     if target.profile_face_id is None:
         auto_select_profile_face(session, target.id)
 
@@ -1481,6 +1486,7 @@ def delete_persons_bulk(
         seen.add(person_id)
 
         try:
+            _ensure_person_has_no_datasets(session, person_id)
             result = remove_person(person_id, session, reason="bulk-delete")
             if isinstance(result, HTTPException):
                 raise result
@@ -1591,12 +1597,23 @@ def unhide_person(person_id: int, session: Session = Depends(get_session)):
     return _set_person_hidden(person_id, hidden=False, session=session)
 
 
+def _ensure_person_has_no_datasets(session: Session, person_id: int) -> None:
+    dependency = session.exec(
+        select(TrainingDataset.id).where(TrainingDataset.person_id == person_id).limit(1)
+    ).first()
+    if dependency is not None:
+        raise HTTPException(
+            409, f"Person is the subject of dataset {dependency}; reassign or delete the dataset first."
+        )
+
+
 @router.delete(
     "/{person_id}",
     summary="Delete a person and all their faces",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 def delete_person(person_id: int, session: Session = Depends(get_session)):
+    _ensure_person_has_no_datasets(session, person_id)
     return remove_person(person_id, session, reason="delete")
 
 
@@ -1712,6 +1729,17 @@ def auto_merge_similar_persons(
             continue
         seen_ids.add(source_id)
         if source_id == person_id:
+            continue
+        # Re-read each pair immediately before merging; earlier merges can
+        # take time and a user may have saved a new decision in the meantime.
+        a, b = sorted((source_id, person_id))
+        blocked = session.exec(select(PersonPairDecision.id).where(
+            PersonPairDecision.person_a_id == a,
+            PersonPairDecision.person_b_id == b,
+            PersonPairDecision.decision == "not_same",
+        )).first()
+        if blocked is not None:
+            skipped_ids.append(source_id)
             continue
         try:
             _merge_person_into_target(session, source_id, person_id)

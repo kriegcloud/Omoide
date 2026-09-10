@@ -4,6 +4,7 @@ from collections import Counter
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from sqlalchemy import delete, update
 from sqlmodel import Session, func, select
 
 import app.database as db
@@ -20,6 +21,7 @@ from app.models import (
 )
 
 from .state import clear_task_progress, set_task_progress
+from .common import _finish_task, _start_task
 
 __all__ = ["run_build_events", "run_geocode_places"]
 
@@ -33,26 +35,10 @@ def _get_task(session: Session, task_id: str) -> ProcessingTask | None:
     return task
 
 
-def _start_task(session: Session, task: ProcessingTask) -> None:
-    task.status = "running"
-    task.processed = 0
-    task.started_at = datetime.now(UTC)
-    session.add(task)
-    safe_commit(session)
-
-
-def _finish_task(session: Session, task: ProcessingTask, status: str) -> None:
-    session.refresh(task)
-    task.status = status if task.status != "cancelled" else "cancelled"
-    task.finished_at = datetime.now(UTC)
-    session.add(task)
-    safe_commit(session)
-
-
 def _is_cancelled(task_id: str) -> bool:
     with Session(db.engine) as s:
         t = s.get(ProcessingTask, task_id)
-        return bool(t and t.status == "cancelled")
+        return not t or t.status in {"cancelled", "interrupted"}
 
 
 def _event_title(cities: Counter, countries: Counter) -> str | None:
@@ -75,11 +61,12 @@ def run_build_events(task_id: str) -> None:
     """
     with heavy_writer(
         name="build_events", cancelled=lambda: _is_cancelled(task_id)
-    ), Session(db.engine) as session:
-        task = _get_task(session, task_id)
-        if not task:
+    ) as acquired, Session(db.engine) as session:
+        if not acquired:
             return
-        _start_task(session, task)
+        task = _get_task(session, task_id)
+        if not task or not _start_task(session, task):
+            return
         set_task_progress(
             task_id, current_step="clustering", current_item=None
         )
@@ -141,13 +128,7 @@ def run_build_events(task_id: str) -> None:
                 if media_ids:
                     renamed_snapshots.append((old_event.title, media_ids))
 
-        # Rebuild from scratch.
-        for link in session.exec(select(EventMediaLink)).all():
-            session.delete(link)
-        for event in session.exec(select(Event)).all():
-            session.delete(event)
-        session.flush()
-
+        replacements: list[tuple[Event, list[int]]] = []
         created = 0
         processed = 0
         for cluster in clusters:
@@ -156,7 +137,8 @@ def run_build_events(task_id: str) -> None:
                 continue
             if _is_cancelled(task_id):
                 logger.info("build_events cancelled.")
-                break
+                clear_task_progress(task_id)
+                return
             cities = Counter(
                 row[2] for row in cluster if row[2] is not None
             )
@@ -191,20 +173,32 @@ def run_build_events(task_id: str) -> None:
                 media_count=len(cluster),
                 cover_media_id=cluster[0][0],
             )
+            replacements.append((event, [row[0] for row in cluster]))
+            created += 1
+            set_task_progress(task_id, current_step="clustering", current_item=f"{processed}/{len(rows)} media")
+
+        if _is_cancelled(task_id):
+            clear_task_progress(task_id)
+            return
+
+        # Acquire SQLite's write reservation and recheck task status in the
+        # same transaction as the swap. A cancellation that wins the race
+        # leaves the complete previous generation untouched.
+        admitted = session.exec(
+            update(ProcessingTask)
+            .where(ProcessingTask.id == task_id, ProcessingTask.status == "running")
+            .values(processed=processed)
+        ).rowcount
+        if not admitted:
+            session.rollback()
+            clear_task_progress(task_id)
+            return
+        session.exec(delete(EventMediaLink))
+        session.exec(delete(Event))
+        for event, media_ids in replacements:
             session.add(event)
             session.flush()
-            for row in cluster:
-                session.add(
-                    EventMediaLink(event_id=event.id, media_id=row[0])
-                )
-            created += 1
-            task.processed = processed
-            if created % 50 == 0:
-                session.add(task)
-                safe_commit(session)
-
-        task.processed = processed
-        session.add(task)
+            session.add_all([EventMediaLink(event_id=event.id, media_id=mid) for mid in media_ids])
         safe_commit(session)
         logger.info(
             "build_events: %d events from %d media.", created, len(rows)
@@ -251,11 +245,12 @@ def run_geocode_places(task_id: str) -> None:
 
     with heavy_writer(
         name="geocode_places", cancelled=lambda: _is_cancelled(task_id)
-    ), Session(db.engine) as session:
-        task = _get_task(session, task_id)
-        if not task:
+    ) as acquired, Session(db.engine) as session:
+        if not acquired:
             return
-        _start_task(session, task)
+        task = _get_task(session, task_id)
+        if not task or not _start_task(session, task):
+            return
         set_task_progress(
             task_id, current_step="geocoding", current_item=None
         )

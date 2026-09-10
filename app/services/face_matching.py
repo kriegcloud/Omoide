@@ -172,7 +172,7 @@ def match_faces_to_persons(
         if match.score >= threshold and match.margin >= min_margin
     }
     if assignments:
-        _bulk_assign_faces_to_persons(session, assignments)
+        assignments = _bulk_assign_faces_to_persons(session, assignments)
         person_ids = set(assignments.values())
         recalculate_person_appearance_counts(session, person_ids)
         for person_id in sorted(person_ids):
@@ -426,25 +426,31 @@ def _bulk_assign_faces_to_persons(
     assignments: dict[int, int],
     *,
     chunk_size: int = 500,
-) -> None:
+) -> dict[int, int]:
     if not assignments:
-        return
+        return {}
 
+    claimed: dict[int, int] = {}
     by_person_id: dict[int, list[int]] = {}
     for face_id, person_id in assignments.items():
         by_person_id.setdefault(int(person_id), []).append(int(face_id))
 
     for person_id, person_face_ids in by_person_id.items():
         for face_chunk in _iter_chunks(person_face_ids, chunk_size):
-            placeholders, params = _build_in_clause_params(face_chunk, prefix="f")
-            session.exec(
+            claimed_ids = session.exec(
                 update(Face).where(
-                    Face.id.in_(face_chunk), Face.person_id.is_distinct_from(person_id)
+                    Face.id.in_(face_chunk), Face.person_id.is_(None)
                 ).values(**face_assignment_values(person_id, FaceAssignmentSource.AUTO_MATCH))
-            )
+                .returning(Face.id)
+            ).scalars().all()
+            if not claimed_ids:
+                continue
+            claimed.update({int(face_id): person_id for face_id in claimed_ids})
+            placeholders, params = _build_in_clause_params(claimed_ids, prefix="f")
 
             sql_face_embedding = text(
                 "UPDATE face_embeddings SET person_id = :pid"
                 f" WHERE face_id IN ({placeholders})"
             ).bindparams(pid=person_id, **params)
             session.exec(sql_face_embedding)
+    return claimed

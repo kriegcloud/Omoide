@@ -11,7 +11,6 @@ from sqlmodel import select, text
 from tqdm import tqdm
 
 from app.accelerators import resolve_onnx_providers
-from app.api.media import delete_media_record
 from app.config import settings
 from app.database import safe_commit
 from app.logger import logger
@@ -394,9 +393,11 @@ class FaceProcessor(MediaProcessor):
                     # plain PIL.Image -> ensure correct orientation + RGB
                     scene = ImageOps.exif_transpose(scene)
                     scene = np.array(scene.convert("RGB"))
-            except OSError:
-                logger.warning("FAILED ON %s", media.path)
-                delete_media_record(media.id, session)
+            except OSError as exc:
+                logger.warning("Failed to read face scene for %s: %s", media.path, exc)
+                media.processing_error = f"Face extraction read failed: {exc}"
+                session.add(media)
+                safe_commit(session)
                 return False
 
             # Guard against invalid/empty frames

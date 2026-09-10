@@ -19,6 +19,7 @@ import app.database as db
 from app.concurrency import heavy_writer
 from app.config import settings
 from app.database import safe_commit
+from app.tasks.common import _finish_task, _start_task
 from app.logger import logger
 from app.models import (
     Face,
@@ -37,10 +38,9 @@ from app.services.face_matching import (
     matching_thresholds,
     score_faces,
 )
-from app.services.face_provenance import face_assignment_values, stamp_face_assignment
+from app.services.face_provenance import face_assignment_values
 from app.utils import (
     _distance_to_similarity,
-    complete_task,
     recalculate_person_appearance_counts,
     remove_person,
     vector_from_stored,
@@ -750,7 +750,7 @@ def merge_similar_persons(
                 update_progress()
                 with Session(db.engine) as session:
                     task = session.get(ProcessingTask, task_id)
-                    if task and task.status == "cancelled":
+                    if task and task.status in {"cancelled", "interrupted"}:
                         return total_merged
 
                     person_obj = session.get(Person, person_id)
@@ -906,50 +906,46 @@ def _assign_faces_to_clusters(
             )
         face_ids = [int(fid) for fid in face_ids_arr]
 
-        centroid = embeddings_arr.mean(axis=0)
-        similarities = embeddings_arr @ centroid
-        best_face_id = face_ids[int(np.argmax(similarities))]
-
         with Session(db.engine) as session:
             task = session.get(ProcessingTask, task_id)
-            if task and task.status == "cancelled":
+            if task and task.status in {"cancelled", "interrupted"}:
                 break
-            media_count = session.exec(
-                select(func.count(func.distinct(Face.media_id))).where(
-                    Face.id.in_(face_ids)
-                )
-            ).first()
-            media_count = int(media_count or 0)
-
-            if media_count < settings.face_recognition.person_min_media_count:
-                # logger.debug(
-                #     "Skipping cluster with %d media (< person_min_media_count %d)",
-                #     media_count,
-                #     settings.face_recognition.person_min_media_count,
-                # )
-                continue
-            new_person = Person(
-                name=None,
-                profile_face_id=best_face_id,
-                appearance_count=media_count,
-            )
+            new_person = Person(name=None, appearance_count=0)
             session.add(new_person)
             session.flush()
 
-            created += 1
-            new_person_ids.append(new_person.id)
+            # Inference ran outside this transaction. Only claim faces still
+            # unassigned at the UPDATE, so a newer human assignment wins.
+            claimed_ids = session.exec(
+                update(Face)
+                .where(Face.id.in_(face_ids), Face.person_id.is_(None))
+                .values(**face_assignment_values(new_person.id, FaceAssignmentSource.CLUSTER))
+                .returning(Face.id)
+            ).scalars().all()
+            media_count = int(session.exec(
+                select(func.count(func.distinct(Face.media_id)))
+                .where(Face.id.in_(claimed_ids))
+            ).one() or 0)
+            if (len(claimed_ids) < min_face_count
+                    or media_count < settings.face_recognition.person_min_media_count):
+                session.rollback()
+                continue
 
-            for face_id in face_ids:
-                face = session.get(Face, face_id)
-                if face:
-                    stamp_face_assignment(face, new_person.id, FaceAssignmentSource.CLUSTER)
-                    session.add(face)
-
-            for face_id in face_ids:
-                sql_face_emb = text(
-                    "UPDATE face_embeddings SET person_id = :p_id WHERE face_id= :f_id"
-                ).bindparams(p_id=new_person.id, f_id=face_id)
-                session.exec(sql_face_emb)
+            claimed_set = set(claimed_ids)
+            claimed_embeddings = np.asarray([
+                embedding for fid, embedding in zip(face_ids, embeddings_arr)
+                if fid in claimed_set
+            ])
+            face_ids = [fid for fid in face_ids if fid in claimed_set]
+            centroid = claimed_embeddings.mean(axis=0)
+            similarities = claimed_embeddings @ centroid
+            new_person.profile_face_id = face_ids[int(np.argmax(similarities))]
+            new_person.appearance_count = media_count
+            session.add(new_person)
+            for face_id in claimed_ids:
+                session.exec(text(
+                    "UPDATE face_embeddings SET person_id = :p_id WHERE face_id = :f_id"
+                ).bindparams(p_id=new_person.id, f_id=face_id))
 
             session.exec(
                 text(
@@ -978,6 +974,8 @@ def _assign_faces_to_clusters(
                 task.processed += len(face_ids)
                 session.add(task)
             safe_commit(session)
+            created += 1
+            new_person_ids.append(new_person.id)
     return created, new_person_ids
 
 
@@ -1013,8 +1011,7 @@ def _is_task_cancelled(session: Session, task_id: str) -> bool:
     ).first()
     if not row:
         return False
-    status = row[0] if isinstance(row, tuple) else row
-    return str(status) == "cancelled"
+    return row[0] in {"cancelled", "interrupted"}
 
 
 def _match_unassigned_to_existing(
@@ -1103,11 +1100,15 @@ def _match_unassigned_to_existing(
                 current_item=f"Matching face {end}/{total_faces} in current batch",
             )
 
-    assigned_count = len(assignments)
-    if assigned_count > 0:
-        _bulk_assign_faces_to_persons(session, assignments)
+    if assignments:
+        proposed = assignments
+        assignments = _bulk_assign_faces_to_persons(session, proposed)
+        # The caller derives this worker's matched count from the remaining
+        # ids; a manual assignment that won the race is not an auto match.
+        unassigned_after_match.extend(fid for fid in proposed if fid not in assignments)
+        recalculate_person_appearance_counts(session, set(assignments.values()))
         safe_commit(session)
-        logger.info("Matched %d faces to existing persons.", assigned_count)
+        logger.info("Matched %d faces to existing persons.", len(assignments))
     if cancelled:
         logger.info("Matching was cancelled; leaving remaining faces unassigned.")
 
@@ -1135,7 +1136,7 @@ def _match_remaining_single_faces(
         prototypes = _load_person_prototype_matrix(session)
         remaining_total = _get_face_total(session)
         task = session.get(ProcessingTask, task_id)
-        if task and task.status != "cancelled":
+        if task and task.status == "running":
             task.processed = 0
             task.total = remaining_total
             session.add(task)
@@ -1173,7 +1174,7 @@ def _match_remaining_single_faces(
         )
         with Session(db.engine) as progress_session:
             task = progress_session.get(ProcessingTask, task_id)
-            if task and task.status != "cancelled":
+            if task and task.status == "running":
                 task.processed = total_scanned
                 progress_session.add(task)
                 safe_commit(progress_session)
@@ -1198,8 +1199,8 @@ def run_person_clustering(task_id: str) -> None:
             logger.error("Task %s not found.", task_id)
             return
 
-        task.status = "running"
-        task.started_at = datetime.now(UTC)
+        if not _start_task(session, task):
+            return
         # count only faces eligible to seed clusters so the progress bar
         # matches what the batch loop actually processes; the quality-excluded
         # remainder is accounted for separately in the matching phase
@@ -1214,7 +1215,7 @@ def run_person_clustering(task_id: str) -> None:
     def is_cancelled() -> bool:
         with Session(db.engine) as s:
             t = s.get(ProcessingTask, task_id)
-            return bool(t and t.status == "cancelled")
+            return not t or t.status in {"cancelled", "interrupted"}
 
     def finalize_cancelled() -> None:
         with Session(db.engine) as session:
@@ -1227,14 +1228,7 @@ def run_person_clustering(task_id: str) -> None:
 
     with heavy_writer(name="cluster_persons", cancelled=is_cancelled) as acquired:
         if not acquired:
-            with Session(db.engine) as session:
-                task = session.get(ProcessingTask, task_id)
-                if task:
-                    task.status = "cancelled"
-                    task.finished_at = datetime.now(UTC)
-                    session.add(task)
-                    safe_commit(session)
-            clear_task_progress(task_id)
+            finalize_cancelled()
             return
 
         set_task_progress(
@@ -1244,6 +1238,9 @@ def run_person_clustering(task_id: str) -> None:
         batch_index = 0
         new_person_candidates: list[int] = []
         while True:
+            if is_cancelled():
+                finalize_cancelled()
+                return
             logger.info("--- Starting new Clustering Batch ---")
             with Session(db.engine) as session:
                 logger.debug("Continuing from id: %s", last_id)
@@ -1354,7 +1351,7 @@ def run_person_clustering(task_id: str) -> None:
                         )
                         with Session(db.engine) as progress_session:
                             task = progress_session.get(ProcessingTask, task_id)
-                            if task and task.status != "cancelled":
+                            if task and task.status == "running":
                                 task.processed += len(chunk_faces)
                                 progress_session.add(task)
                                 safe_commit(progress_session)
@@ -1424,7 +1421,7 @@ def run_person_clustering(task_id: str) -> None:
             if batch_face_ids:
                 with Session(db.engine) as session:
                     task = session.get(ProcessingTask, task_id)
-                    if task and task.status != "cancelled":
+                    if task and task.status == "running":
                         task.processed += len(batch_face_ids)
                         session.add(task)
                         safe_commit(session)
@@ -1479,5 +1476,9 @@ def run_person_clustering(task_id: str) -> None:
                 "matched": matched_leftovers,
                 "merged": merged_persons,
             }
-            complete_task(session, task)
+            session.add(task)
+            if not _finish_task(session, task, "completed"):
+                clear_task_progress(task_id)
+                return
+    clear_task_progress(task_id)
     rebuild_person_relationships()

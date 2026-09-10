@@ -14,6 +14,7 @@ from app.concurrency import heavy_writer
 from app.config import settings
 from app.logger import logger
 from app.models import Media, ProcessingTask
+from app.tasks.common import _finish_task, _start_task
 
 __all__ = ["compute_blur_scores"]
 
@@ -76,24 +77,24 @@ def compute_blur_scores(task_id: str) -> None:
 
     with Session(db.engine) as session:
         task = session.get(ProcessingTask, task_id)
-
-        total = session.exec(
-            select(func.count(Media.id)).where(Media.laplacian_score.is_(None))
-        ).first() or 0
-        if task:
-            task.total = total
-            task.processed = 0
-            session.add(task)
-            session.commit()
+        if not task:
+            return
 
         def is_cancelled() -> bool:
-            if not task:
-                return False
-            session.refresh(task, attribute_names=["status"])
-            return task.status == "cancelled"
+            status = session.exec(
+                select(ProcessingTask.status).where(ProcessingTask.id == task_id)
+            ).first()
+            return status not in ("pending", "running")
 
         processed = 0
-        with heavy_writer(name="compute_blur_scores", cancelled=is_cancelled):
+        with heavy_writer(name="compute_blur_scores", cancelled=is_cancelled) as acquired:
+            if not acquired or not _start_task(session, task):
+                return
+            task.total = session.exec(
+                select(func.count(Media.id)).where(Media.laplacian_score.is_(None))
+            ).first() or 0
+            session.add(task)
+            session.commit()
             while True:
                 if is_cancelled():
                     return
@@ -123,6 +124,8 @@ def compute_blur_scores(task_id: str) -> None:
                             logger.warning("Blur score failed for media %s: %s", media_id, exc)
                             scores[media_id] = -1.0
 
+                if is_cancelled():
+                    return
                 # Write results back via the session (single-threaded).
                 for media in batch:
                     media.laplacian_score = scores.get(media.id, -1.0)
@@ -139,7 +142,4 @@ def compute_blur_scores(task_id: str) -> None:
                     session.add(task)
                     session.commit()
 
-        if task:
-            task.status = "completed"
-            session.add(task)
-            session.commit()
+        _finish_task(session, task, "completed")

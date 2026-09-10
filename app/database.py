@@ -3,7 +3,6 @@ import ctypes.util
 import os
 import sys
 import threading
-import time
 from enum import Enum
 from pathlib import Path
 
@@ -353,18 +352,19 @@ def safe_commit(session, retries=5, delay=0.5):
 
 
 def safe_execute(session: Session, query, retries=5, delay=0.5) -> ScalarResult:
-    for i in range(retries):
-        try:
-            return session.exec(query)
-        except OperationalError as e:
-            if "locked" in str(e):
-                session.rollback()
-                if i < retries - 1:
-                    time.sleep(delay * (2**i))
-                    continue
-            session.rollback()
-            raise
-    raise RuntimeError("Failed to commit due to database lock.")
+    """Execute within the caller's transaction; never retry a partial unit.
+
+    Rolling back also discards pending ORM writes. Retrying just a vector
+    statement could then commit metadata that disagrees with those ORM rows.
+    The caller must retry its entire transaction from the original inputs.
+    ``retries`` and ``delay`` remain for compatibility with existing callers.
+    """
+    del retries, delay
+    try:
+        return session.exec(query)
+    except OperationalError:
+        session.rollback()
+        raise
 
 
 def get_session():

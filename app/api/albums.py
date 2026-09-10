@@ -7,13 +7,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_
 from sqlmodel import Session, func, select
 
-from app.config import settings
+from app.config import require_mutation_allowed, settings
 from app.database import get_session, safe_commit
 from app.logger import logger
 from app.models import Album, AlbumMediaLink, Media
 from app.schemas.media import CursorPage
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_mutation_allowed)])
 
 
 class AlbumCreate(BaseModel):

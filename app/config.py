@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Annotated, Any, TypeVar
 
 import yaml
+from fastapi import HTTPException, Request
 from pydantic import (
     BaseModel,
     Field,
@@ -462,12 +463,15 @@ class GeneralSettings(BaseModel):
     def ensure_media_path_writable(self, target: Path) -> None:
         """Raise if the path is not writable due to mount/read-only restrictions."""
         normalized = _resolve_path_safe(target)
-        for base, read_only in self.resolved_media_dirs():
-            if _is_within(normalized, base):
-                if read_only:
-                    raise ReadOnlyMediaError(normalized, base)
-                return
-        raise MediaPathNotMountedError(normalized)
+        matches = [
+            (base, read_only) for base, read_only in self.resolved_media_dirs()
+            if _is_within(normalized, base)
+        ]
+        if not matches:
+            raise MediaPathNotMountedError(normalized)
+        base, read_only = max(matches, key=lambda entry: len(entry[0].parts))
+        if read_only:
+            raise ReadOnlyMediaError(normalized, base)
 
 
 class TaggingSettings(BaseModel):
@@ -1243,3 +1247,24 @@ def reload_settings():
 
 
 settings = load_settings()
+
+
+async def require_mutation_allowed(request: Request) -> None:
+    """Default API writes to disabled in presentation mode, before validation.
+
+    Config retains its own access policy so presentation mode can be exited.
+    Annotation routes retain their independent, explicit controls. Image search
+    accepts an upload as query input without saving it or changing the library.
+    """
+    path = request.url.path
+    if not settings.general.presentation_mode or request.method not in {
+        "POST", "PATCH", "PUT", "DELETE"
+    } or not (path == "/api" or path.startswith("/api/")):
+        return
+    if path in {"/api/config", "/api/annotations"} or path.startswith(
+        ("/api/config/", "/api/annotations/")
+    ):
+        return
+    if request.method == "POST" and path == "/api/search/by-image":
+        return
+    raise HTTPException(403, "Mutations are disabled in presentation mode.")

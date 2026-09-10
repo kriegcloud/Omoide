@@ -8,7 +8,6 @@ from sqlalchemy import text
 from sqlmodel import select
 from tqdm import tqdm
 
-from app.api.media import delete_media_record
 from app.config import settings, get_clip_bundle
 from app.logger import logger
 from app.models import Media, Scene, Tag
@@ -168,7 +167,8 @@ class EmbeddingExtractor(MediaProcessor):
                             "EmbeddingExtractor: model returned empty embedding for %s",
                             media.path,
                         )
-                        delete_media_record(media.id, session)
+                        media.processing_error = "Embedding extraction failed to read or encode image."
+                        session.add(media)
                         safe_commit(session)
                         return False
 

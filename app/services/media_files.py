@@ -98,7 +98,7 @@ def resolve_destination_dir(
 
 
 def validate_filename(filename: str, current_filename: str) -> str:
-    value = filename.strip()
+    value = filename
     if (
         not value
         or value in {".", ".."}
@@ -127,18 +127,51 @@ def _verify_copy(source: Path, target: Path) -> None:
 
 
 def _replace_with_fallback(source: Path, target: Path) -> None:
+    """Move without replacing a destination created by another writer."""
     try:
-        os.replace(source, target)
+        os.link(source, target)
+    except FileExistsError as exc:
+        raise MediaFileCollisionError("Target file already exists") from exc
     except OSError as exc:
-        if exc.errno != errno.EXDEV:
+        if exc.errno not in {errno.EXDEV, errno.EPERM, errno.EOPNOTSUPP, errno.ENOSYS}:
             raise
+        created = False
         try:
-            shutil.copy2(source, target)
+            with source.open("rb") as source_file, target.open("xb") as target_file:
+                created = True
+                shutil.copyfileobj(source_file, target_file)
+                target_file.flush()
+                os.fsync(target_file.fileno())
+            shutil.copystat(source, target)
             _verify_copy(source, target)
+            source.unlink()
+        except FileExistsError as exc:
+            raise MediaFileCollisionError("Target file already exists") from exc
+        except Exception:
+            if created:
+                target.unlink(missing_ok=True)
+            raise
+    else:
+        try:
             source.unlink()
         except Exception:
             target.unlink(missing_ok=True)
             raise
+
+
+def rollback_media_moves(moves: list[tuple[Path, Path]]) -> None:
+    """Restore filesystem moves after their database transaction failed."""
+    errors: list[str] = []
+    for source, target in reversed(moves):
+        if source == target:
+            continue
+        try:
+            _replace_with_fallback(target, source)
+        except Exception as exc:
+            # Do not overwrite a newly occupied original path during recovery.
+            errors.append(f"{target} -> {source}: {exc}")
+    if errors:
+        raise RuntimeError("Could not restore moved media; files remain at their destinations: " + "; ".join(errors))
 
 
 def move_media_file(

@@ -620,8 +620,8 @@ def search_scenes(
     response_model=CursorPage[PersonReadSimple],
 )
 def search_people(
-    limit: int = 20,
-    cursor: str | None = Query(None, description="Encoded as `<count>_<id>`"),
+    limit: int = Query(20, ge=1, le=500),
+    cursor: str | None = Query(None, pattern=r"^[0-9]{1,19}_[1-9][0-9]{0,18}$", description="Encoded as `<count>_<id>`"),
     query: str = Query("", description="Person name query"),
     session: Session = Depends(get_session),
 ):
@@ -636,12 +636,14 @@ def search_people(
     if cursor:
         try:
             cursor_count, cursor_id = map(int, cursor.split("_"))
+            if not (0 <= cursor_count <= 9223372036854775807 and 1 <= cursor_id <= 9223372036854775807):
+                raise ValueError("Cursor is out of range")
             q = q.where(
                 tuple_(Person.appearance_count, Person.id)
                 < (cursor_count, cursor_id)
             )
         except (ValueError, TypeError):
-            raise HTTPException(status_code=400, detail="Invalid cursor format")
+            raise HTTPException(status_code=422, detail="Invalid cursor format")
 
     q = q.order_by(desc(Person.appearance_count), desc(Person.id)).limit(limit)
     people = session.exec(q).all()
@@ -662,9 +664,9 @@ def search_people(
     response_model=CursorPage[TagRead],
 )
 def search_tags(
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=500),
     cursor: str | None = Query(
-        None, description="The ID of the last tag from the previous page"
+        None, pattern=r"^[1-9][0-9]{0,18}$", description="The ID of the last tag from the previous page"
     ),
     query: str = Query("", description="Tag name query"),
     session: Session = Depends(get_session),
@@ -677,9 +679,11 @@ def search_tags(
     if cursor:
         try:
             cursor_id = int(cursor)
+            if not 1 <= cursor_id <= 9223372036854775807:
+                raise ValueError("Tag id is out of range")
             q = q.where(Tag.id < cursor_id)
         except (ValueError, TypeError):
-            raise HTTPException(status_code=400, detail="Invalid cursor format")
+            raise HTTPException(status_code=422, detail="Invalid cursor format")
 
     q = q.order_by(desc(Tag.id)).limit(limit)
     tags = session.exec(q).all()

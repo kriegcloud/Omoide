@@ -97,9 +97,9 @@ services:
         - >-
           import json, urllib.request;
           response = urllib.request.urlopen(
-          'http://127.0.0.1:8123/api/version', timeout=5);
+          'http://127.0.0.1:8123/api/health', timeout=5);
           payload = json.load(response); response.close();
-          raise SystemExit(0 if payload.get('version') else 1)
+          raise SystemExit(0 if payload.get('status') == 'ok' and payload.get('migrations') else 1)
       interval: 30s
       timeout: 10s
       retries: 5

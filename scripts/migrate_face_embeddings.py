@@ -142,12 +142,12 @@ def migrate(batch_size: int, limit: int | None) -> None:
         completed = (
             select(text("face_id"))
             .select_from(text("face_embedding_migration"))
-            .where(text("fingerprint = :fingerprint"))
+            .where(text("fingerprint = :fingerprint AND outcome = 'migrated'"))
             .params(fingerprint=FACE_MODEL_FINGERPRINT)
         )
         query = (
             select(Face)
-            .where(Face.thumbnail_path.is_not(None), Face.id.not_in(completed))
+            .where(Face.id.not_in(completed))
             .order_by(Face.id)
         )
         if limit is not None:
@@ -158,26 +158,38 @@ def migrate(batch_size: int, limit: int | None) -> None:
         for face in faces:
             outcome = "no_embedding"
             embedding = None
-            try:
-                thumbnail = settings.general.thumb_dir / face.thumbnail_path
-                with Image.open(thumbnail) as image:
-                    rgb = np.asarray(ImageOps.exif_transpose(image).convert("RGB"))
-                detected = client.get(rgb)
-                if detected:
-                    embedding = _largest_face(detected).embedding
-            except (OSError, RuntimeError):
-                outcome = "unreadable_thumbnail"
+            rgb = None
+            if face.thumbnail_path is None:
+                outcome = "missing_thumbnail"
+            else:
+                try:
+                    thumbnail = settings.general.thumb_dir / face.thumbnail_path
+                    with Image.open(thumbnail) as image:
+                        rgb = np.asarray(ImageOps.exif_transpose(image).convert("RGB"))
+                except OSError:
+                    outcome = "unreadable_thumbnail"
+            if rgb is not None:
+                try:
+                    detected = client.get(rgb)
+                    if detected:
+                        embedding = _largest_face(detected).embedding
+                except (OSError, RuntimeError):
+                    # Service failures say nothing about the thumbnail's readability.
+                    outcome = "inference_error"
 
-            session.exec(
-                text("DELETE FROM face_embeddings WHERE face_id = :face_id").bindparams(
-                    face_id=face.id
-                )
-            )
             if embedding is not None:
                 normalized = np.asarray(embedding, dtype=np.float32)
                 norm = float(np.linalg.norm(normalized))
                 if np.isfinite(norm) and norm > 0.0:
                     normalized /= norm
+                    replacement = vector_to_blob(normalized)
+                    # Keep the previous vector until a valid replacement exists;
+                    # deletion and insertion belong to the same transaction.
+                    session.exec(
+                        text("DELETE FROM face_embeddings WHERE face_id = :face_id").bindparams(
+                            face_id=face.id
+                        )
+                    )
                     session.exec(
                         text(
                             """
@@ -186,16 +198,15 @@ def migrate(batch_size: int, limit: int | None) -> None:
                             """
                         ).bindparams(
                             face_id=face.id,
-                            person_id=face.person_id
-                            if face.person_id is not None
-                            else -1,
-                            embedding=vector_to_blob(normalized),
+                            person_id=face.person_id if face.person_id is not None else -1,
+                            embedding=replacement,
                         )
                     )
                     outcome = "migrated"
                     migrated += 1
             if outcome != "migrated":
                 skipped += 1
+                print(f"Face {face.id}: {outcome}; existing vector retained, pending retry.")
             session.exec(
                 text(
                     """
@@ -218,7 +229,7 @@ def migrate(batch_size: int, limit: int | None) -> None:
 
         remaining = session.exec(
             select(Face.id)
-            .where(Face.thumbnail_path.is_not(None), Face.id.not_in(completed))
+            .where(Face.id.not_in(completed))
             .limit(1)
         ).first()
         if remaining is None:
@@ -236,7 +247,7 @@ def migrate(batch_size: int, limit: int | None) -> None:
             safe_commit(session)
             print("AdaFace migration complete; person centroids rebuilt.")
         else:
-            print("Partial migration committed; rerun without --limit to finish.")
+            print("Partial migration committed; unresolved thumbnails or inference results remain. Repair and rerun to finish.")
 
 
 def main() -> None:

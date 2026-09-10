@@ -5,7 +5,6 @@ import re
 import time
 from collections.abc import Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import update
@@ -18,8 +17,9 @@ from app.config import settings
 from app.image_limits import apply_pillow_limits
 from app.database import safe_commit
 from app.logger import logger
-from app.models import Media, ProcessingTask
+from app.models import Blacklist, Media, ProcessingTask
 from app.utils import generate_thumbnail, process_file, save_thumbnail_image
+from .common import _finish_task, _start_task
 from .state import (
     clear_task_progress,
     get_failure_count,
@@ -166,10 +166,8 @@ def run_scan(task_id: str) -> None:
         if not task:
             logger.error("Task %s not found.", task_id)
             return
-        task.status = "running"
-        task.processed = 0
-        task.started_at = datetime.now(timezone.utc)
-        safe_commit(sess)
+        if not _start_task(sess, task):
+            return
         set_task_progress(task_id, current_step="indexing", current_item=None)
 
     new_files: list[Path] = []
@@ -177,6 +175,9 @@ def run_scan(task_id: str) -> None:
     missing_candidates: dict[str, int] = {}
 
     with Session(db.engine) as sess:
+        blacklisted_paths = {
+            _scan_path_key(path) for path in sess.exec(select(Blacklist.path)).all()
+        }
         try:
             for d in media_dirs:
                 try:
@@ -215,6 +216,8 @@ def run_scan(task_id: str) -> None:
         ):
             spath = os.fspath(path)
             path_key = _scan_path_key(spath)
+            if path_key in blacklisted_paths:
+                continue
             candidate_id = missing_candidates.pop(path_key, None)
             if candidate_id is not None:
                 recovered_ids.add(candidate_id)
@@ -230,6 +233,10 @@ def run_scan(task_id: str) -> None:
                 task.total = len(new_files)
                 sess.add(task)
                 safe_commit(sess)
+                sess.refresh(task, attribute_names=["status"])
+                if task.status in {"cancelled", "interrupted"}:
+                    clear_task_progress(task_id)
+                    return
                 since_update = 0
                 next_total_update = time.monotonic() + discovery_update_interval
         if recovered_ids:
@@ -247,14 +254,13 @@ def run_scan(task_id: str) -> None:
     if not new_files:
         with Session(db.engine) as sess:
             task = sess.get(ProcessingTask, task_id)
-            task.status = "completed"
-            task.finished_at = datetime.now(timezone.utc)
             task.result = {
                 **(task.result or {}),
                 "new_files": len(new_files),
                 "skipped": get_failure_count(task_id),
             }
             safe_commit(sess)
+            _finish_task(sess, task, "completed")
         clear_task_progress(task_id)
         logger.info("No new files to process. Scan finished.")
         return
@@ -262,7 +268,7 @@ def run_scan(task_id: str) -> None:
     def is_cancelled() -> bool:
         with Session(db.engine) as s:
             t = s.get(ProcessingTask, task_id)
-            return bool(t and t.status == "cancelled")
+            return not t or t.status in {"cancelled", "interrupted"}
 
     def process_candidate(filepath: Path):
         logger.debug("Parsing: %s", filepath)
@@ -290,12 +296,13 @@ def run_scan(task_id: str) -> None:
             )
             return None, f"Unexpected error generating thumbnail: {exc}"
 
-    with heavy_writer(name="scan", cancelled=is_cancelled):
+    with heavy_writer(name="scan", cancelled=is_cancelled) as acquired:
+        if not acquired:
+            clear_task_progress(task_id)
+            return
         with Session(db.engine) as sess:
             task = sess.get(ProcessingTask, task_id)
             processed = task.processed or 0
-            check_every_sec = 5
-            next_cancel_check = time.monotonic() + check_every_sec
 
             set_task_progress(
                 task_id, current_step="processing", current_item=None
@@ -303,12 +310,10 @@ def run_scan(task_id: str) -> None:
 
             with ThreadPoolExecutor(max_workers=_PROCESS_WORKERS) as pool:
                 for start in range(0, len(new_files), _PROCESS_BATCH_SIZE):
-                    if time.monotonic() >= next_cancel_check:
-                        next_cancel_check = time.monotonic() + check_every_sec
-                        sess.refresh(task, attribute_names=["status"])
-                        if task.status == "cancelled":
-                            logger.info("Scan cancelled by user.")
-                            break
+                    sess.refresh(task, attribute_names=["status"])
+                    if task.status in {"cancelled", "interrupted"}:
+                        logger.info("Scan stopped.")
+                        break
 
                     batch = new_files[start : start + _PROCESS_BATCH_SIZE]
 
@@ -316,10 +321,33 @@ def run_scan(task_id: str) -> None:
                     # all DB access stays on this thread.
                     results = list(pool.map(process_candidate, batch))
 
+                    # Reserve this write transaction and check admission
+                    # again after slow I/O. Blacklist writers are serialized
+                    # with the following check and inserts.
+                    admitted = sess.exec(
+                        update(ProcessingTask)
+                        .where(ProcessingTask.id == task_id, ProcessingTask.status == "running")
+                        .values(processed=processed)
+                    ).rowcount
+                    if not admitted:
+                        sess.rollback()
+                        for _, thumb_img, _ in results:
+                            if thumb_img is not None:
+                                thumb_img.close()
+                        break
+                    blacklisted_paths = {
+                        _scan_path_key(path)
+                        for path in sess.exec(select(Blacklist.path)).all()
+                    }
+
                     pending = []
                     for filepath, (media_obj, thumb_img, process_error) in zip(
                         batch, results
                     ):
+                        if _scan_path_key(filepath) in blacklisted_paths:
+                            if thumb_img is not None:
+                                thumb_img.close()
+                            continue
                         if not media_obj:
                             reason = (
                                 process_error
@@ -374,10 +402,6 @@ def run_scan(task_id: str) -> None:
                     safe_commit(sess)
 
             sess.refresh(task)
-            task.status = (
-                "completed" if task.status != "cancelled" else "cancelled"
-            )
-            task.finished_at = datetime.now(timezone.utc)
             task.processed = processed
             task.result = {
                 **(task.result or {}),
@@ -386,6 +410,7 @@ def run_scan(task_id: str) -> None:
             }
             sess.add(task)
             safe_commit(sess)
+            _finish_task(sess, task, "completed")
             set_task_progress(task_id, current_step="finalizing", current_item=None)
 
     clear_task_progress(task_id)

@@ -122,7 +122,10 @@ class PosePrototypeTests(unittest.TestCase):
                     )
                 )
                 bulk_assign = stack.enter_context(
-                    patch("app.tasks.person_clustering._bulk_assign_faces_to_persons")
+                    patch(
+                        "app.tasks.person_clustering._bulk_assign_faces_to_persons",
+                        side_effect=lambda _session, assignments: dict(assignments),
+                    )
                 )
                 stack.enter_context(
                     patch("app.tasks.person_clustering.safe_commit")

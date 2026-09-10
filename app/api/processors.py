@@ -1,12 +1,15 @@
 import subprocess
 import sys
+import os
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 import ffmpeg
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from sqlmodel import Session
+from sqlalchemy import update
+from sqlmodel import Session, select
 
 import app.database as db
 from app.accelerators import get_ffmpeg_accel_config
@@ -17,7 +20,8 @@ from app.logger import logger
 from app.models import Media, ProcessingTask
 from app.processor_registry import load_processors
 from app.subprocess_helpers import popen_silent
-from app.tasks.state import set_task_progress
+from app.tasks.common import _finish_task, _start_task
+from app.tasks.state import clear_task_progress, set_task_progress
 
 router = APIRouter()
 
@@ -77,6 +81,21 @@ def start_conversion(
     return task
 
 
+def _stop_conversion_process(proc) -> None:
+    """Stop only this task's FFmpeg child, with bounded termination and reaping."""
+    if proc.poll() is not None:
+        return
+    try:
+        proc.terminate()
+        try:
+            proc.communicate(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate(timeout=2.0)
+    except (OSError, subprocess.TimeoutExpired):
+        logger.warning("Conversion child did not exit within the shutdown deadline")
+
+
 def _run_conversion(task_id: str, media_path: str, media_id: int):
     with Session(db.engine) as session:
         task = session.get(ProcessingTask, task_id)
@@ -84,29 +103,34 @@ def _run_conversion(task_id: str, media_path: str, media_id: int):
             logger.error(f"Task {task_id} not found.")
             return
 
-        task.status = "running"
-        task.started_at = datetime.now(timezone.utc)
-        session.add(task)
-        session.commit()
+        if not _start_task(session, task):
+            return
 
         media_path_obj = Path(media_path)
-        temp_output_path = media_path_obj.with_name(media_path_obj.stem + "_temp.mp4")
-        progress_path = media_path_obj.with_name(
-            f"{media_path_obj.stem}_{task_id}.progress"
-        )
+        temp_output_path: Path | None = None
+        progress_path: Path | None = None
+        preserve_output = False
+        proc = None
+
+        def _is_stopped() -> bool:
+            return session.exec(
+                select(ProcessingTask.status).where(ProcessingTask.id == task_id)
+            ).first() != "running"
 
         try:
             settings.general.ensure_media_path_writable(media_path_obj)
-        except PermissionError as exc:
-            logger.warning("Conversion blocked: %s", exc)
-            task.status = "failed"
-            task.error = str(exc)
-            task.finished_at = datetime.now(timezone.utc)
-            session.add(task)
-            session.commit()
-            return
-
-        try:
+            # Reserve both files exclusively in the source filesystem. FFmpeg may
+            # overwrite only these task-owned files, never a guessed sibling name.
+            descriptor, filename = tempfile.mkstemp(
+                prefix=f".omoide-convert-{task_id}-", suffix=".mp4", dir=media_path_obj.parent
+            )
+            os.close(descriptor)
+            temp_output_path = Path(filename)
+            descriptor, filename = tempfile.mkstemp(
+                prefix=f".omoide-convert-{task_id}-", suffix=".progress", dir=media_path_obj.parent
+            )
+            os.close(descriptor)
+            progress_path = Path(filename)
             ffmpeg_bin = ensure_ffmpeg_available()
             if not ffmpeg_bin:
                 raise RuntimeError(
@@ -149,10 +173,9 @@ def _run_conversion(task_id: str, media_path: str, media_id: int):
                 "-y",
                 str(temp_output_path),
             ]
+            if _is_stopped():
+                return
             logger.info(f"Running FFmpeg command: {' '.join(cmd)}")
-            if progress_path.exists():
-                progress_path.unlink()
-
             proc = popen_silent(
                 cmd,
                 stdout=subprocess.DEVNULL,
@@ -205,6 +228,8 @@ def _run_conversion(task_id: str, media_path: str, media_id: int):
 
             try:
                 while True:
+                    if _is_stopped():
+                        return
                     out_us, progress_end = _read_progress()
                     if out_us is not None and dur_us > 0:
                         pct = min(99, int(out_us / dur_us * 100))
@@ -228,6 +253,8 @@ def _run_conversion(task_id: str, media_path: str, media_id: int):
             finally:
                 if progress_path.exists():
                     progress_path.unlink()
+            if _is_stopped():
+                return
             if proc.returncode != 0:
                 logger.error(
                     f"FFmpeg failed for {media_path} with exit code {proc.returncode}"
@@ -235,24 +262,43 @@ def _run_conversion(task_id: str, media_path: str, media_id: int):
                 logger.error(f"FFmpeg stderr: {stderr}")
                 raise Exception(f"FFmpeg conversion failed: {stderr}")
 
-            task.processed = 100
-            task.status = "completed"
-            task.finished_at = datetime.now(timezone.utc)
-
+            # Claim the final write while this task is still running. SQLite's
+            # writer lock then serializes interruption with the replacement and
+            # completion, so a previously interrupted task cannot replace media.
+            claimed = session.exec(
+                update(ProcessingTask)
+                .where(ProcessingTask.id == task_id, ProcessingTask.status == "running")
+                .values(processed=100)
+                .execution_options(synchronize_session=False)
+            )
+            if not claimed.rowcount:
+                session.rollback()
+                return
             media = session.get(Media, media_id)
-            if media and temp_output_path.exists():
-                media_path_obj.unlink()
-                new_file = temp_output_path.rename(media_path_obj)
-                media.path = str(new_file)
-                media.filename = new_file.name
-                session.add(media)
-            session.add(task)
-            session.commit()
+            if media is None or not temp_output_path.exists():
+                raise RuntimeError("Converted output or media record no longer exists")
+            preserve_output = True
+            new_file = temp_output_path.replace(media_path_obj)
+            preserve_output = False
+            media.path = str(new_file)
+            media.filename = new_file.name
+            session.add(media)
+            _finish_task(session, task, "completed")
         except Exception as e:
             logger.error(f"Conversion task {task_id} failed: {e}")
-            task.status = "failed"
-            task.error = str(e)
+            session.rollback()
+            if _is_stopped():
+                return
+            task.result = {"error": str(e)}
+            if preserve_output and temp_output_path is not None:
+                task.result = {**task.result, "recovery_path": str(temp_output_path)}
             session.add(task)
-            session.commit()
-            if temp_output_path.exists():
-                temp_output_path.unlink()  # Clean up temp file on failure
+            _finish_task(session, task, "failed")
+        finally:
+            if proc is not None:
+                _stop_conversion_process(proc)
+            if progress_path is not None:
+                progress_path.unlink(missing_ok=True)
+            if temp_output_path is not None and not preserve_output:
+                temp_output_path.unlink(missing_ok=True)
+            clear_task_progress(task_id)

@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.api.exports import _person_media
-from app.config import settings
+from app.config import require_mutation_allowed, settings
 from app.database import get_session
 from app.models import (
     AnnotationKind,
@@ -124,7 +124,7 @@ from app.tasks.dataset_frame_mining import mine_dataset_frames
 from app.tasks.eval_batch import run_eval_batch
 
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_mutation_allowed)])
 
 
 def _mutating() -> None:
@@ -498,6 +498,14 @@ def update_dataset(dataset_id: int, payload: DatasetUpdate, session: Session = D
 def delete_dataset(dataset_id: int, session: Session = Depends(get_session)) -> None:
     _mutating()
     dataset = _dataset_or_404(session, dataset_id)
+    dependent_id = session.exec(select(TrainingDataset.id).where(
+        TrainingDataset.regularization_dataset_id == dataset_id,
+        TrainingDataset.id != dataset_id,
+    ).limit(1)).first()
+    if dependent_id is not None:
+        raise HTTPException(
+            409, f"Dataset is used for regularization by dataset {dependent_id}; unlink it first."
+        )
     session.delete(dataset)
     session.commit()
 

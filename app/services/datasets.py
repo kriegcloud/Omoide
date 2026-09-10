@@ -27,6 +27,7 @@ from app.models import (
     ProcessingTask,
     TrainingDataset,
 )
+from app.schemas.dataset import validate_dataset_path_token
 from app.schemas.media import EditOp
 from app.services.image_edits import apply_edit_ops
 from app.tasks.state import set_task_progress
@@ -199,6 +200,17 @@ def _ai_toolkit_config(dataset: TrainingDataset, output_dir: Path) -> dict:
     return config
 
 
+def _export_path(root: Path, *parts: str | Path) -> Path:
+    """Check resolved containment immediately before an export filesystem write."""
+    # Callers pass the already-resolved export root. Keep that anchor stable if
+    # a directory is subsequently replaced by a symlink.
+    resolved_root = root.absolute()
+    target = root.joinpath(*parts).resolve()
+    if not target.is_relative_to(resolved_root) or target == resolved_root:
+        raise ValueError("Dataset output path must stay beneath its export directory")
+    return target
+
+
 def build_export(session: Session, export_id: int, task_id: str) -> dict:
     """Materialize one immutable training dataset export."""
     export = session.get(DatasetExport, export_id)
@@ -237,10 +249,15 @@ def build_export(session: Session, export_id: int, task_id: str) -> dict:
         if regularization_dataset
         else []
     )
+    # Validate stored legacy values too, before creating any export directory.
+    for candidate in (dataset, regularization_dataset):
+        if candidate is not None:
+            validate_dataset_path_token(candidate.trigger_word)
+            validate_dataset_path_token(candidate.class_token)
     root = settings.general.resolved_datasets_dir()
-    output_dir = root / dataset.slug / datetime.now().strftime("%Y%m%d-%H%M%S")
+    output_dir = _export_path(root, dataset.slug, datetime.now().strftime("%Y%m%d-%H%M%S"))
     if output_dir.exists():
-        output_dir = output_dir.with_name(f"{output_dir.name}-{export.id:02d}")
+        output_dir = _export_path(root, output_dir.with_name(f"{output_dir.name}-{export.id:02d}"))
     output_dir.mkdir(parents=True, exist_ok=False)
     export.output_dir = str(output_dir)
     export.item_count = len(items)
@@ -255,13 +272,14 @@ def build_export(session: Session, export_id: int, task_id: str) -> dict:
         images_dir = output_dir / "img" / f"{dataset.repeats}_{dataset.trigger_word} {dataset.class_token}"
     else:
         images_dir = output_dir / "images"
+    images_dir = _export_path(output_dir, images_dir)
     images_dir.mkdir(parents=True, exist_ok=True)
 
     person = session.get(Person, dataset.person_id) if dataset.person_id else None
     manifest_items: list[dict] = []
     for index, item in enumerate(items, start=1):
         session.refresh(task)
-        if str(task.status) == "cancelled":
+        if str(task.status) in {"cancelled", "interrupted"}:
             break
         media = session.get(Media, item.media_id)
         if media is None:
@@ -280,7 +298,7 @@ def build_export(session: Session, export_id: int, task_id: str) -> dict:
                 )
             is_png = source_path.suffix.lower() == ".png"
             suffix = ".png" if is_png else ".jpg"
-            output_path = images_dir / f"{index:04d}_{media.id}{suffix}"
+            output_path = _export_path(output_dir, images_dir / f"{index:04d}_{media.id}{suffix}")
             save_options = {"quality": 95} if not is_png else {}
             save_image = image if is_png else image.convert("RGB")
             save_image.save(
@@ -289,7 +307,7 @@ def build_export(session: Session, export_id: int, task_id: str) -> dict:
 
         caption = resolve_caption(dataset, item, media, person, session)
         if caption is not None:
-            output_path.with_suffix(".txt").write_text(caption + "\n", encoding="utf-8")
+            _export_path(output_dir, output_path.with_suffix(".txt")).write_text(caption + "\n", encoding="utf-8")
         manifest_items.append(
             {
                 "index": index,
@@ -316,8 +334,12 @@ def build_export(session: Session, export_id: int, task_id: str) -> dict:
     manifest_regularization: list[dict] = []
     if regularization_dataset and regularization_items:
         reg_dir = output_dir / "reg" / f"{regularization_dataset.repeats}_{regularization_dataset.class_token}"
+        reg_dir = _export_path(output_dir, reg_dir)
         reg_dir.mkdir(parents=True, exist_ok=True)
         for index, item in enumerate(regularization_items, start=1):
+            session.refresh(task)
+            if str(task.status) in {"cancelled", "interrupted"}:
+                break
             media = session.get(Media, item.media_id)
             if media is None:
                 continue
@@ -334,7 +356,7 @@ def build_export(session: Session, export_id: int, task_id: str) -> dict:
                         Image.Resampling.LANCZOS,
                     )
                 is_png = source_path.suffix.lower() == ".png"
-                output_path = reg_dir / f"{index:04d}_{media.id}{'.png' if is_png else '.jpg'}"
+                output_path = _export_path(output_dir, reg_dir / f"{index:04d}_{media.id}{'.png' if is_png else '.jpg'}")
                 (image if is_png else image.convert("RGB")).save(
                     output_path,
                     format="PNG" if is_png else "JPEG",
@@ -342,7 +364,7 @@ def build_export(session: Session, export_id: int, task_id: str) -> dict:
                 )
             caption = resolve_caption(regularization_dataset, item, media, None, session)
             if caption is not None:
-                output_path.with_suffix(".txt").write_text(caption + "\n", encoding="utf-8")
+                _export_path(output_dir, output_path.with_suffix(".txt")).write_text(caption + "\n", encoding="utf-8")
             manifest_regularization.append(
                 {
                     "index": index,
@@ -376,15 +398,15 @@ def build_export(session: Session, export_id: int, task_id: str) -> dict:
         "items": manifest_items,
         "regularization_items": manifest_regularization,
     }
-    (output_dir / "manifest.json").write_text(
+    _export_path(output_dir, "manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8"
     )
     if export.layout == DatasetExportLayout.AI_TOOLKIT:
-        (output_dir / "config.yaml").write_text(
+        _export_path(output_dir, "config.yaml").write_text(
             yaml.safe_dump(_ai_toolkit_config(dataset, output_dir), sort_keys=False),
             encoding="utf-8",
         )
-        (output_dir / "README.md").write_text(
+        _export_path(output_dir, "README.md").write_text(
             "# Training\n\n```sh\npython run.py config.yaml\n```\n", encoding="utf-8"
         )
     export.manifest = manifest

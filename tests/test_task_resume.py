@@ -99,6 +99,12 @@ class TaskResumeTests(unittest.TestCase):
                     task = verification.get(ProcessingTask, response.json()["id"])
                     self.assertEqual(task.params, expected)
                     self.assertTrue(is_resumable(task))
+                    # The mocked worker never starts or finishes. Complete this
+                    # fixture so another case can create the same task type;
+                    # real pending workers are now deliberately reused.
+                    task.status = "completed"
+                    verification.add(task)
+                    verification.commit()
         self.assertEqual(self.runner.call_count, len(cases))
 
     def test_cleanup_interrupts_only_resumable_running_tasks_and_deletes_pending(self):
