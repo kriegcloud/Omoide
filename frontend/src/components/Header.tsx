@@ -1,3 +1,5 @@
+import KeyboardIcon from "@mui/icons-material/Keyboard";
+import { useHotkey, useHotkeyHelp } from "../hotkeys/useHotkey";
 import React, { useEffect, useState } from "react";
 import {
   useNavigate,
@@ -106,6 +108,8 @@ function TaskStatusButton({ onClick }: { onClick: () => void }) {
 }
 
 export function Header() {
+  const openHelp = useHotkeyHelp();
+  const searchRef = React.useRef<HTMLInputElement>(null);
   const theme = useTheme();
   const base = import.meta.env.BASE_URL || "/";
   const wordmarkSrc = `${base}brand/omoide_header_${theme.palette.mode}.png`;
@@ -148,6 +152,11 @@ export function Header() {
       setCategory(urlCategory);
     }
   }, [location.pathname, location.search]);
+
+  useHotkey({ key: "/" }, () => {
+    setIsSearchVisible(true);
+    requestAnimationFrame(() => searchRef.current?.focus());
+  }, { scope: "global", description: "Focus search" });
 
   function onSearchSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -254,6 +263,8 @@ export function Header() {
         variant="outlined"
         size="small"
         fullWidth
+        inputRef={searchRef}
+        inputProps={{ "aria-label": "Search library" }}
         value={q}
         onChange={(e) => setQ(e.target.value)}
         placeholder="Search..."
@@ -327,6 +338,7 @@ export function Header() {
         }}
       >
         <Toolbar sx={{ gap: 2 }}>
+          <Tooltip title="Keyboard shortcuts (?)"><IconButton aria-label="Keyboard shortcuts" onClick={openHelp}><KeyboardIcon /></IconButton></Tooltip>
           {isSearchVisible ? renderSearchHeader() : renderDefaultHeader()}
         </Toolbar>
       </AppBar>

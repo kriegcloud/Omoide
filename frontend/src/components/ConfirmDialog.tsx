@@ -7,7 +7,8 @@ import {
   DialogContentText,
   DialogTitle,
 } from "@mui/material";
-import React from "react";
+import React, { useId, useRef } from "react";
+import { useDialogHotkeyScope, useHotkey } from "../hotkeys/useHotkey";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -36,14 +37,28 @@ export default function ConfirmDialog({
   onConfirm,
   onClose,
 }: ConfirmDialogProps) {
+  const titleId = useId();
+  const dialogRef = useDialogHotkeyScope(open);
+  const confirming = useRef(false);
+  if (!open) confirming.current = false;
+  const confirm = async () => {
+    if (loading || confirming.current) return;
+    confirming.current = true;
+    try { await onConfirm(); } finally { confirming.current = false; }
+  };
+  useHotkey({ key: "Enter" }, () => { void confirm(); }, {
+    scope: "dialog", dialogRef, enabled: open, description: confirmLabel, destructive: true,
+  });
   return (
     <Dialog
+      ref={dialogRef}
+      aria-labelledby={titleId}
       open={open}
       onClose={loading ? undefined : onClose}
       maxWidth="xs"
       fullWidth
     >
-      <DialogTitle>{title}</DialogTitle>
+      <DialogTitle id={titleId}>{title}</DialogTitle>
       <DialogContent>
         {typeof message === "string" ? (
           <DialogContentText>{message}</DialogContentText>
@@ -56,7 +71,8 @@ export default function ConfirmDialog({
           {cancelLabel}
         </Button>
         <Button
-          onClick={onConfirm}
+          autoFocus
+          onClick={() => void confirm()}
           color={confirmColor}
           variant="contained"
           disabled={loading}

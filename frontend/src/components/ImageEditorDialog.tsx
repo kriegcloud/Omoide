@@ -29,6 +29,7 @@ import SaveAltIcon from "@mui/icons-material/SaveAlt";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import { useNavigate } from "react-router-dom";
 import { API } from "../config";
+import { useDialogHotkeyScope, useHotkey, useHotkeyHelp, useHotkeys } from "../hotkeys/useHotkey";
 import { editMedia, getFaceCropSuggestions } from "../services/mediaActions";
 import { useListStore } from "../stores/useListStore";
 import { useLastEditStore } from "../stores/useLastEditStore";
@@ -91,6 +92,23 @@ const SHORTCUTS = [
   ["Ctrl/⌘+S", "Save copy"],
   ["Ctrl/⌘+Shift+S", "Overwrite original"],
   ["Esc", "Cancel"],
+] as const;
+
+const EDITOR_HOTKEYS = [
+  { key: "r", description: "Rotate image right" },
+  { key: "r", shift: true, description: "Rotate image left" },
+  { key: "h", description: "Flip image horizontally" },
+  { key: "v", description: "Flip image vertically" },
+  { key: "c", description: "Select crop tool" },
+  { key: "0", description: "Zoom image to fit" },
+  { key: "`", description: "Hold to compare with original" },
+  { key: "~", shift: true, description: "Hold to compare with original" },
+  { key: "Escape", description: "Close image editor" },
+] as const;
+
+const OVERWRITE_HOTKEYS = [
+  { key: "s", ctrl: true, shift: true, description: "Confirm overwrite original" },
+  { key: "s", meta: true, shift: true, description: "Confirm overwrite original" },
 ] as const;
 
 const FRAMING_PRESETS: Array<{ framing: CropFraming; label: string }> = [
@@ -164,16 +182,20 @@ export default function ImageEditorDialog({
 }: ImageEditorDialogProps) {
   const navigate = useNavigate();
   const muiTheme = useTheme();
+  const hotkeyScope = useDialogHotkeyScope(open);
   const addItem = useListStore((state) => state.addItem);
   const updateItem = useListStore((state) => state.updateItem);
   const setLastEdit = useLastEditStore((state) => state.setLastEdit);
+  // Media edit_design_state is historical: copy/overwrite already baked it
+  // into the source pixels. Only virtual edits supply unapplied operations
+  // for their unchanged source; every write session starts neutral.
   // Filerobot treats loadableDesignState as a state to (re)load, so it must
   // only ever carry the saved state the dialog opened with. Feeding the live
   // onModify state back into it re-applies every change and recurses until
   // the stack overflows.
   const initialDesignState = useMemo(
-    () => loadableDesignState ?? (media.edit_design_state as FilerobotDesignState | null) ?? undefined,
-    [open, media.id, loadableDesignState]
+    () => mode === "virtual" ? loadableDesignState ?? undefined : undefined,
+    [open, media.id, mode, loadableDesignState]
   );
   const [designState, setDesignState] = useState<FilerobotDesignState | null>(
     initialDesignState ?? null
@@ -491,102 +513,105 @@ export default function ImageEditorDialog({
     }
   };
 
+  const onEditorKeyDown = (event: KeyboardEvent) => {
+    if (event.code === "Backquote" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      if (!event.repeat) {
+        setCompareHeld(true);
+        void updateImageOverlay();
+      }
+      return;
+    }
+
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+      event.preventDefault();
+      if (!hasChanges || saving) return;
+      if (event.shiftKey && mode === "write") setConfirmOverwrite(true);
+      else if (!event.shiftKey) void save("copy");
+      return;
+    }
+
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    switch (event.key.toLowerCase()) {
+      case "escape":
+        event.preventDefault();
+        if (saving) return;
+        if (confirmOverwrite) setConfirmOverwrite(false);
+        else if (shortcutsAnchor) setShortcutsAnchor(null);
+        else onClose();
+        break;
+      case "r":
+        event.preventDefault();
+        updateAdjustments((adjustments) => ({
+          ...adjustments,
+          rotation: (adjustments.rotation ?? 0) + (event.shiftKey ? -90 : 90),
+        }));
+        break;
+      case "h":
+        event.preventDefault();
+        updateAdjustments((adjustments) => ({
+          ...adjustments,
+          isFlippedX: !adjustments.isFlippedX,
+        }));
+        break;
+      case "v":
+        event.preventDefault();
+        updateAdjustments((adjustments) => ({
+          ...adjustments,
+          isFlippedY: !adjustments.isFlippedY,
+        }));
+        break;
+      case "c":
+        event.preventDefault();
+        selectCropTool();
+        break;
+      case "0":
+        event.preventDefault();
+        zoomToFit();
+        break;
+    }
+  };
+
+  const openHelp = useHotkeyHelp();
+  useHotkey({ key: "?" }, openHelp, { scope: "dialog", dialogRef: hotkeyScope, enabled: open, description: "Show keyboard shortcuts" });
+  useHotkeys(EDITOR_HOTKEYS, onEditorKeyDown, {
+    scope: "dialog",
+    enabled: open,
+    dialogRef: hotkeyScope,
+  });
+  useHotkeys([
+    { key: "s", ctrl: true, description: mode === "virtual" ? "Save virtual image edits" : "Save image copy" },
+    { key: "s", meta: true, description: mode === "virtual" ? "Save virtual image edits" : "Save image copy" },
+  ], onEditorKeyDown, {
+    scope: "dialog",
+    enabled: open,
+    dialogRef: hotkeyScope,
+  });
+  useHotkeys(OVERWRITE_HOTKEYS, onEditorKeyDown, {
+    scope: "dialog",
+    enabled: open && mode === "write",
+    destructive: true,
+    dialogRef: hotkeyScope,
+  });
+
   useEffect(() => {
     if (!open) return;
-
-    const isEditableTarget = (target: EventTarget | null) =>
-      target instanceof HTMLElement &&
-      (target.matches("input, textarea, select") ||
-        target.isContentEditable ||
-        Boolean(target.closest("[contenteditable='true']")));
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (isEditableTarget(event.target)) return;
-
-      if (event.code === "Backquote" && !event.ctrlKey && !event.metaKey && !event.altKey) {
-        event.preventDefault();
-        if (!event.repeat) {
-          setCompareHeld(true);
-          void updateImageOverlay();
-        }
-        return;
-      }
-
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
-        event.preventDefault();
-        if (!hasChanges || saving) return;
-        if (event.shiftKey && mode === "write") setConfirmOverwrite(true);
-        else if (!event.shiftKey) void save("copy");
-        return;
-      }
-
-      if (event.ctrlKey || event.metaKey || event.altKey) return;
-      switch (event.key.toLowerCase()) {
-        case "escape":
-          event.preventDefault();
-          if (saving) return;
-          if (confirmOverwrite) setConfirmOverwrite(false);
-          else if (shortcutsAnchor) setShortcutsAnchor(null);
-          else onClose();
-          break;
-        case "r":
-          event.preventDefault();
-          updateAdjustments((adjustments) => ({
-            ...adjustments,
-            rotation: (adjustments.rotation ?? 0) + (event.shiftKey ? -90 : 90),
-          }));
-          break;
-        case "h":
-          event.preventDefault();
-          updateAdjustments((adjustments) => ({
-            ...adjustments,
-            isFlippedX: !adjustments.isFlippedX,
-          }));
-          break;
-        case "v":
-          event.preventDefault();
-          updateAdjustments((adjustments) => ({
-            ...adjustments,
-            isFlippedY: !adjustments.isFlippedY,
-          }));
-          break;
-        case "c":
-          event.preventDefault();
-          selectCropTool();
-          break;
-        case "0":
-          event.preventDefault();
-          zoomToFit();
-          break;
-      }
-    };
-
     const stopComparing = (event?: KeyboardEvent) => {
       if (!event || event.code === "Backquote") setCompareHeld(false);
     };
 
-    window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", stopComparing);
     window.addEventListener("blur", stopComparing);
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", stopComparing);
       window.removeEventListener("blur", stopComparing);
     };
-  }, [
-    open,
-    hasChanges,
-    saving,
-    mode,
-    confirmOverwrite,
-    shortcutsAnchor,
-    onClose,
-    designState,
-  ]);
+  }, [open]);
 
   return (
     <>
       <Dialog
+        ref={hotkeyScope}
         fullScreen
         open={open}
         onClose={saving ? undefined : onClose}

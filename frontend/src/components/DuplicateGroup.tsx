@@ -6,10 +6,6 @@ import {
   Typography,
   Box,
   Button,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
   Snackbar,
   Alert,
   Checkbox,
@@ -19,7 +15,9 @@ import Grid from "@mui/material/Grid";
 import { DuplicateGroup as GroupType } from "../types";
 import { DuplicateMediaCard } from "./DuplicateMediaCard";
 import { resolveDuplicates } from "../services/duplicates";
-import { CircularProgress } from "@mui/material";
+import ConfirmDialog from "./ConfirmDialog";
+import { useHotkeys } from "../hotkeys/useHotkey";
+import config from "../config";
 import type { SelectionClickEvent } from "../hooks/useMarqueeSelection";
 
 interface DuplicateGroupProps {
@@ -89,8 +87,23 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
       "This will KEEP every file in this group and remember they are not duplicates so future scans will skip them.",
   };
 
+  const groupRef = React.useRef<HTMLDivElement>(null);
+  useHotkeys([
+    { key: "Enter", description: "Keep master, delete the other files…", destructive: true },
+    { key: "n", description: "Keep all, mark as not duplicates…", destructive: true },
+    ...Array.from({ length: 9 }, (_, index) => ({ key: String(index + 1), description: `Choose master at position ${index + 1}` })),
+  ], event => {
+    if (event.key === "Enter") setConfirmAction("DELETE_FILES");
+    else if (event.key.toLowerCase() === "n") setConfirmAction("MARK_NOT_DUPLICATE");
+    else {
+      const media = group.items[Number(event.key) - 1];
+      if (media) onSelectMaster(media.id);
+    }
+  }, { scope: "page", enabled: !isProcessing && !config.PRESENTATION_MODE,
+    when: event => event.target === groupRef.current });
+
   return (
-    <Paper variant="outlined">
+    <Paper ref={groupRef} tabIndex={0} aria-label={`Duplicate group ${group.group_id}`} variant="outlined">
       <Box
         sx={{
           p: 2,
@@ -177,33 +190,9 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
       </Grid>
 
       {/* Confirmation Dialog */}
-      <Dialog open={!!confirmAction} onClose={() => setConfirmAction(null)}>
-        <DialogTitle>Confirm Action</DialogTitle>
-        <DialogContent>
-          <Typography>
-            {confirmAction ? actionText[confirmAction] : ""}
-          </Typography>
-          <Typography color="text.secondary" sx={{ mt: 2 }}>
-            This action cannot be undone.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button
-            onClick={() => setConfirmAction(null)}
-            disabled={isProcessing}
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={handleResolve}
-            color="primary"
-            variant="contained"
-            disabled={isProcessing}
-          >
-            {isProcessing ? <CircularProgress size={24} /> : "Confirm"}
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <ConfirmDialog open={!!confirmAction} onClose={() => setConfirmAction(null)}
+        title="Confirm Action" message={confirmAction ? `${actionText[confirmAction]} This action cannot be undone.` : ""}
+        loading={isProcessing} onConfirm={handleResolve} />
       <Snackbar
         open={!!errorMessage}
         autoHideDuration={6000}

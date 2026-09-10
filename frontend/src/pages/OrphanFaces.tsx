@@ -1,3 +1,6 @@
+import config from "../config";
+import { useHotkey } from "../hotkeys/useHotkey";
+import { SelectionHotkeyDialogs } from "../hotkeys/SelectionHotkeyDialogs";
 import { useUndo, useUndoRefresh } from "../context/UndoContext";
 import { refreshCachedList } from "../stores/useListStore";
 import React, { useState, useEffect, useRef } from "react";
@@ -256,6 +259,9 @@ function AllOrphanFaces() {
     }
   };
 
+  useHotkey({ key: "a" }, openAssignDialog, { scope: "page", enabled: selectedFaceIds.length > 0 && !isProcessing && !config.PRESENTATION_MODE, description: "Assign selected faces…" });
+  useHotkey({ key: "Escape" }, () => setSelectedFaceIds([]), { scope: "page", enabled: selectedFaceIds.length > 0, description: "Clear face selection" });
+
   if (isLoading && orphans.length === 0) {
     return (
       <Box
@@ -371,6 +377,13 @@ function AllOrphanFaces() {
         </Box>
       )}
       {hasMore && <Box ref={loaderRef} sx={{ height: "50px" }} />}
+
+      <SelectionHotkeyDialogs includeDelete enabled={!isProcessing}
+        mediaIds={[...new Set(orphans.filter(face => selectedFaceIds.includes(face.id)).map(face => face.media_id))]}
+        onProcessed={ids => {
+          removeItems(listKey, orphans.filter(face => ids.includes(face.media_id)).map(face => face.id));
+          setSelectedFaceIds([]);
+        }} />
 
       {/* --- Dialogs --- */}
       {/* Assign Dialog */}

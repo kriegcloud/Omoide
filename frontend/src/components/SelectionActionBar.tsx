@@ -1,3 +1,7 @@
+import { useHotkeys, useHotkey } from "../hotkeys/useHotkey";
+import { selectionBindings } from "../hotkeys/keymap";
+import ConfirmDialog from "./ConfirmDialog";
+import { resolveConfirmCopy } from "./BulkResolveToolbar";
 import { useUndo } from "../context/UndoContext";
 import React, { useState } from "react";
 import {
@@ -25,7 +29,7 @@ import { RerunProcessorsDialog } from "./RerunProcessorsDialog";
 import { AddToAlbumDialog } from "./AddToAlbumDialog";
 import AssignMediaToPersonDialog from "./AssignMediaToPersonDialog";
 import FolderPickerDialog from "./FolderPickerDialog";
-import { batchEditMedia, bulkMoveMedia } from "../services/mediaActions";
+import { batchEditMedia, bulkMoveMedia, bulkDeleteMedia, type BulkDeleteAction } from "../services/mediaActions";
 import { attachMediaToPersonBulk, detachMediaFromPersonBulk } from "../services/personActions";
 import { assignFace } from "../services/faceActions";
 import { useListStore } from "../stores/useListStore";
@@ -35,7 +39,7 @@ import { describeEditOps } from "../utils/editorOps";
 import RepairDialog from "./RepairDialog";
 
 export const SelectionActionBar: React.FC = () => {
-  const { selectedIds, clear, loadedCount, hasMore } = useSelection();
+  const { selectedIds, clear, loadedCount, hasMore, listKey } = useSelection();
   const { push, refreshVisible } = useUndo();
   const { removeItems } = useListStore();
   const lastEditOps = useLastEditStore((state) => state.ops);
@@ -57,6 +61,85 @@ export const SelectionActionBar: React.FC = () => {
   }>({ open: false, message: "", severity: "success" });
 
   const count = selectedIds.size;
+  const [pendingDelete, setPendingDelete] = useState<{ ids: number[]; action: BulkDeleteAction; listKey: string | null } | null>(null);
+  const [pendingDetach, setPendingDetach] = useState<{ ids: number[]; personId: number } | null>(null);
+  const requestDelete = (action: BulkDeleteAction) => {
+    if (!count || busy || config.PRESENTATION_MODE) return;
+    setPendingDelete({ ids: [...selectedIds], action, listKey });
+  };
+  const requestDetach = () => {
+    if (personId === null || !count || busy || config.PRESENTATION_MODE) return;
+    setPendingDetach({ ids: [...selectedIds], personId });
+  };
+  const confirmDelete = async () => {
+    if (!pendingDelete || busy || config.PRESENTATION_MODE) return;
+    setBusy(true);
+    try {
+      const result = await bulkDeleteMedia(pendingDelete.ids, pendingDelete.action);
+      if (pendingDelete.listKey) removeItems(pendingDelete.listKey, result.processed_ids);
+      clear();
+      setPendingDelete(null);
+      setSnackbar({ open: true, message: `Deleted ${result.removed}${result.skipped_ids.length ? `; ${result.skipped_ids.length} skipped` : ""}${result.errors.length ? `; ${result.errors.length} failed` : ""}`, severity: result.errors.length ? "error" : "success" });
+    } catch (error) {
+      setSnackbar({ open: true, message: error instanceof Error ? error.message : "Failed to delete media", severity: "error" });
+    } finally { setBusy(false); }
+  };
+  useHotkeys(selectionBindings, (event) => {
+    if (event.key === "Delete") requestDelete(event.shiftKey ? "DELETE_RECORDS" : "DELETE_FILES");
+    else if (event.key.toLowerCase() === "x") requestDelete("BLACKLIST_RECORDS");
+    else if (event.key.toLowerCase() === "a") setAssignDialogOpen(true);
+    else if (event.key.toLowerCase() === "m") setFolderDialogOpen(true);
+    else if (event.key.toLowerCase() === "l") setAlbumDialogOpen(true);
+    else if (event.key.toLowerCase() === "t") setDatasetDialogOpen(true);
+    else if (event.key.toLowerCase() === "r") setDialogOpen(true);
+  }, { scope: "global", enabled: count > 0 && !busy && !config.PRESENTATION_MODE });
+  useHotkey({ key: "d" }, requestDetach, { scope: "global", enabled: count > 0 && personId !== null && !busy && !config.PRESENTATION_MODE, destructive: true, description: "Detach selected appearances from this person…" });
+  const confirmDetach = async () => {
+    if (!pendingDetach || busy || config.PRESENTATION_MODE) return;
+
+    setBusy(true);
+    try {
+      const result = await detachMediaFromPersonBulk(pendingDetach.personId, pendingDetach.ids);
+      setSnackbar({
+        open: !result.detached_ids?.length,
+        message: `Detached ${result.detached_ids?.length ?? 0} item(s).`,
+        severity: "success",
+      });
+      for (const key of Object.keys(useListStore.getState().lists)) {
+        if (key.startsWith(`person-${pendingDetach.personId}-media-appearances-`)) {
+          removeItems(key, result.detached_ids ?? []);
+        }
+      }
+      const detachedIds = [...(result.detached_ids ?? [])];
+      const detachedFaces = result.detached_faces ?? [];
+      if (detachedIds.length) push({
+        label: `Detached ${detachedIds.length} item(s) from this person`,
+        undo: async () => {
+          if (detachedFaces.length) {
+            await assignFace(detachedFaces.map((face) => face.id), pendingDetach.personId, "undo");
+          }
+          const inverse = await attachMediaToPersonBulk(pendingDetach.personId, detachedIds);
+          await refreshVisible();
+          // Face-backed appearances are intentionally skipped by attach.
+          const faceMediaIds = new Set(detachedFaces.map((face) => face.media_id));
+          const skipped = inverse.skipped_ids.filter((id) => !faceMediaIds.has(id));
+          if (skipped.length) throw new Error(`${skipped.length} item(s) could not be reattached`);
+        },
+      });
+      clear();
+      setPendingDetach(null);
+    } catch (error) {
+      setSnackbar({
+        open: true,
+        message: error instanceof Error ? error.message : "Failed to detach media",
+        severity: "error",
+      });
+    } finally {
+      setBusy(false);
+    }
+
+  };
+  const deleteCopy = pendingDelete ? resolveConfirmCopy(pendingDelete.action, pendingDelete.ids.length) : null;
 
   return (
     <>
@@ -81,6 +164,9 @@ export const SelectionActionBar: React.FC = () => {
             maxWidth: "calc(100vw - 32px)",
           }}
         >
+          <Button size="small" color="error" disabled={busy || config.PRESENTATION_MODE} onClick={() => requestDelete("DELETE_FILES")}>Delete files…</Button>
+          <Button size="small" color="error" disabled={busy || config.PRESENTATION_MODE} onClick={() => requestDelete("DELETE_RECORDS")}>Remove records…</Button>
+          <Button size="small" disabled={busy || config.PRESENTATION_MODE} onClick={() => requestDelete("BLACKLIST_RECORDS")}>Blacklist…</Button>
           <Chip label={`${count} selected · ${loadedCount} loaded`} size="small" color="primary" />
           {hasMore && <Chip label="Load more to select the rest" size="small" variant="outlined" />}
           <Button
@@ -193,47 +279,7 @@ export const SelectionActionBar: React.FC = () => {
               size="small"
               startIcon={<PersonRemoveIcon fontSize="small" />}
               disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  const result = await detachMediaFromPersonBulk(personId, Array.from(selectedIds));
-                  setSnackbar({
-                    open: !result.detached_ids?.length,
-                    message: `Detached ${result.detached_ids?.length ?? 0} item(s).`,
-                    severity: "success",
-                  });
-                  for (const key of Object.keys(useListStore.getState().lists)) {
-                    if (key.startsWith(`person-${personId}-media-appearances-`)) {
-                      removeItems(key, result.detached_ids ?? []);
-                    }
-                  }
-                  const detachedIds = [...(result.detached_ids ?? [])];
-                  const detachedFaces = result.detached_faces ?? [];
-                  if (detachedIds.length) push({
-                    label: `Detached ${detachedIds.length} item(s) from this person`,
-                    undo: async () => {
-                      if (detachedFaces.length) {
-                        await assignFace(detachedFaces.map((face) => face.id), personId, "undo");
-                      }
-                      const inverse = await attachMediaToPersonBulk(personId, detachedIds);
-                      await refreshVisible();
-                      // Face-backed appearances are intentionally skipped by attach.
-                      const faceMediaIds = new Set(detachedFaces.map((face) => face.media_id));
-                      const skipped = inverse.skipped_ids.filter((id) => !faceMediaIds.has(id));
-                      if (skipped.length) throw new Error(`${skipped.length} item(s) could not be reattached`);
-                    },
-                  });
-                  clear();
-                } catch (error) {
-                  setSnackbar({
-                    open: true,
-                    message: error instanceof Error ? error.message : "Failed to detach media",
-                    severity: "error",
-                  });
-                } finally {
-                  setBusy(false);
-                }
-              }}
+              onClick={requestDetach}
               color="warning"
             >
               Detach from this person
@@ -249,6 +295,12 @@ export const SelectionActionBar: React.FC = () => {
           </Button>
         </Paper>
       </Fade>
+
+      <ConfirmDialog open={pendingDelete !== null} title={deleteCopy?.title ?? ""} message={deleteCopy?.message ?? ""}
+        confirmLabel={deleteCopy?.confirmLabel} loading={busy} onConfirm={confirmDelete} onClose={() => setPendingDelete(null)} />
+      <ConfirmDialog open={pendingDetach !== null} title="Detach from this person?"
+        message={`Detach ${pendingDetach?.ids.length ?? 0} selected appearance(s) from this person? The files stay in the library.`}
+        confirmLabel="Detach" confirmColor="warning" loading={busy} onConfirm={confirmDetach} onClose={() => setPendingDetach(null)} />
 
       <RerunProcessorsDialog
         open={dialogOpen}

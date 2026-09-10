@@ -104,6 +104,8 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
   const [processorsExpanded, setProcessorsExpanded] = useState(false);
   const [forceReprocess, setForceReprocess] = useState(false);
   const [resumingTaskIds, setResumingTaskIds] = useState<Set<string>>(new Set());
+  const [cancellingTaskIds, setCancellingTaskIds] = useState<Set<string>>(new Set());
+  const cancellingTaskIdsRef = useRef(new Set<string>());
   const [snack, setSnack] = useState<{
     open: boolean;
     msg: string;
@@ -268,11 +270,21 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
   };
 
   const cancelTask = async (id: string) => {
+    if (cancellingTaskIdsRef.current.has(id)) return;
+    cancellingTaskIdsRef.current.add(id);
+    setCancellingTaskIds(new Set(cancellingTaskIdsRef.current));
     try {
       await cancelTaskService(id);
       await forceRefresh();
-    } catch (err) {
-      console.error("Error cancelling task", id, err);
+    } catch (err: unknown) {
+      setSnack({
+        open: true,
+        msg: errorMessage(err, "Failed to cancel task"),
+        sev: "error",
+      });
+    } finally {
+      cancellingTaskIdsRef.current.delete(id);
+      setCancellingTaskIds(new Set(cancellingTaskIdsRef.current));
     }
   };
 
@@ -545,13 +557,15 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                           : ""}
                       </Typography>
                     )}
-                    {t.status === "running" && (
+                    {(t.status === "running" || t.status === "pending") && (
                       <Button
                         size="small"
                         onClick={() => cancelTask(t.id)}
+                        disabled={cancellingTaskIds.has(t.id)}
+                        aria-label={`Cancel ${TASK_LABELS[t.task_type] ?? t.task_type}`}
                         sx={{ mt: 0.5, ml: -1, color: "text.secondary" }}
                       >
-                        Cancel
+                        {cancellingTaskIds.has(t.id) ? "Cancelling…" : "Cancel"}
                       </Button>
                     )}
                   </Box>

@@ -1,3 +1,6 @@
+import { SelectionHotkeyDialogs } from "../hotkeys/SelectionHotkeyDialogs";
+import { useUndo } from "../context/UndoContext";
+import { useHotkey, useHotkeys } from "../hotkeys/useHotkey";
 import React, { useCallback, useState, useEffect, useMemo, useRef } from "react";
 import {
   Chip,
@@ -95,9 +98,11 @@ export default function DetectedFaces({
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
   const [assignTargetPerson, setAssignTargetPerson] = useState<Person | null>(null);
   const [openCreateDialog, setOpenCreateDialog] = useState(false);
+  const [detachIds, setDetachIds] = useState<number[] | null>(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [newPersonName, setNewPersonName] = useState("");
 
+  const { refreshVisible } = useUndo();
   const canMutate = !config.PRESENTATION_MODE;
   const [groupByVideo, setGroupByVideo] = useState(config.GROUP_FACES_BY_VIDEO);
   const isAnythingSelected = selectedFaceIds.length > 0;
@@ -223,18 +228,13 @@ export default function DetectedFaces({
     }
   }, [onSetProfile, canMutate, isProcessing]);
 
-  useEffect(() => {
-    if (!personId || !canMutate || isProcessing || isReviewing ||
-        isAssignDialogOpen || openCreateDialog || confirmDeleteOpen) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat || event.isComposing ||
-          event.altKey || event.ctrlKey || event.metaKey) return;
+  useHotkeys([
+    { key: "d", description: "Detach selected or focused faces…", destructive: true },
+    { key: "p", description: "Set selected or focused face as profile", destructive: true },
+  ], (event) => {
       const key = event.key.toLowerCase();
-      if (key !== "d" && key !== "p") return;
       const target = event.target;
-      if (!(target instanceof HTMLElement) ||
-          target.isContentEditable ||
-          target.closest('input, textarea, select, [contenteditable], [role="textbox"], [role="slider"], [role="dialog"], [role="menu"]')) return;
+      if (!(target instanceof HTMLElement)) return false;
       // A collapsed video group is not a single face. Space selects its faces;
       // expand it (or use the flat grid) before acting on a focused single face.
       const tile = target.closest<HTMLElement>("[data-roving-tile]:not([data-selection-group])");
@@ -244,17 +244,14 @@ export default function DetectedFaces({
       const ids = selectedFaceIds.length
         ? selectedFaceIds.filter((id) => availableIds.has(id))
         : focusedId !== undefined && availableIds.has(focusedId) ? [focusedId] : [];
-      if (!ids.length || (key === "p" && (!onSetProfile || ids.length !== 1))) return;
+      if (!ids.length || (key === "p" && (!onSetProfile || ids.length !== 1))) return false;
       event.preventDefault();
       event.stopPropagation();
-      if (key === "d") void handleDetach(ids);
+      if (key === "d") setDetachIds(ids);
       else void handleSetProfile(ids[0]);
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [personId, canMutate, isProcessing, isReviewing, isAssignDialogOpen,
-    openCreateDialog, confirmDeleteOpen, faces, pinnedFaces, selectedFaceIds,
-    onSetProfile, handleDetach, handleSetProfile]);
+  }, { scope: "page", enabled: !!personId && canMutate && !isProcessing && !isReviewing && !isAssignDialogOpen && !openCreateDialog && !confirmDeleteOpen });
+  useHotkey({ key: "a" }, () => handleAssignClick(), { scope: "page", enabled: canMutate && selectedFaceIds.length > 0 && !isProcessing, description: "Assign selected faces…" });
+  useHotkey({ key: "Escape" }, onClearSelection, { scope: "page", enabled: selectedFaceIds.length > 0, description: "Clear face selection" });
 
   if (faces.length === 0 && !isLoadingMore && !hasMore && title === "Detected Faces") {
     return null;
@@ -410,6 +407,9 @@ export default function DetectedFaces({
 
   return (
     <Paper variant="outlined" sx={{ p: 2, my: 4 }}>
+      <SelectionHotkeyDialogs includeDelete enabled={!isProcessing && !isReviewing}
+        mediaIds={[...new Set([...faces, ...(pinnedFaces ?? [])].filter(face => selectedFaceIds.includes(face.id)).map(face => face.media_id))]}
+        onProcessed={async () => { onClearSelection(); await refreshVisible(); }} />
       <Box sx={{ mb: 1 }}>
         <Stack direction="row" alignItems="center" sx={{ mb: 1 }}>
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
@@ -533,6 +533,13 @@ export default function DetectedFaces({
         </DialogActions>
       </Dialog>
 
+      <ConfirmDialog open={canMutate && detachIds !== null} title="Detach faces?"
+        message={`Detach ${detachIds?.length ?? 0} face(s) from this person?`} confirmLabel="Detach" confirmColor="warning"
+        loading={isReviewing} onClose={() => setDetachIds(null)} onConfirm={async () => {
+          if (!detachIds) return;
+          await handleDetach(detachIds);
+          setDetachIds(null);
+        }} />
       <ConfirmDialog
         open={canMutate && confirmDeleteOpen}
         title="Delete Faces"

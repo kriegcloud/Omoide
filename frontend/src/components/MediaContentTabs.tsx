@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, MutableRefObject } from "react";
+import React, { Suspense, lazy, MutableRefObject, useId } from "react";
 import { Box, Tabs, Tab, CircularProgress } from "@mui/material";
 
 import { TagsSection } from "./TagsSection";
@@ -24,13 +24,14 @@ const SimilarContent = lazy(() => import("./MediaRelatedContent"));
 interface TabPanelProps {
   children?: React.ReactNode;
   index: string;
+  idPrefix: string;
   value: string;
 }
 
 function TabPanel(props: TabPanelProps) {
-  const { children, value, index, ...other } = props;
+  const { children, value, index, idPrefix, ...other } = props;
   return (
-    <div role="tabpanel" hidden={value !== index} {...other}>
+    <div role="tabpanel" id={`${idPrefix}-panel-${index}`} aria-labelledby={`${idPrefix}-tab-${index}`} hidden={value !== index} {...other}>
       {value === index && <Box sx={{ pt: 3 }}>{children}</Box>}
     </div>
   );
@@ -60,6 +61,7 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
   } = props;
 
   const { media, persons, orphans } = detail;
+  const idPrefix = useId();
 
   const isVideo = typeof media?.duration === "number";
 
@@ -101,6 +103,8 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
           {tabs.map((t) => (
             <Tab
               key={t.key}
+              id={`${idPrefix}-tab-${t.key}`}
+              aria-controls={`${idPrefix}-panel-${t.key}`}
               value={t.key}
               label={t.label}
               icon={t.icon}
@@ -114,7 +118,7 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
       {media && (
         <>
           {isVideo && (
-            <TabPanel value={activeTab} index="scenes">
+            <TabPanel idPrefix={idPrefix} value={activeTab} index="scenes">
               <SceneManager
                 mediaId={media.id}
                 duration={media.duration!}
@@ -125,14 +129,14 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
             </TabPanel>
           )}
 
-          <TabPanel value={activeTab} index="similar">
+          <TabPanel idPrefix={idPrefix} value={activeTab} index="similar">
             <Suspense fallback={<CircularProgress />}>
               <SimilarContent mediaId={media.id} />
             </Suspense>
           </TabPanel>
 
           {config.ENABLE_PEOPLE && (
-            <TabPanel value={activeTab} index="people">
+            <TabPanel idPrefix={idPrefix} value={activeTab} index="people">
               {isVideo && (
                 <FaceAppearanceStrip
                   faces={media.faces ?? []}
@@ -148,7 +152,7 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
             </TabPanel>
           )}
 
-          <TabPanel value={activeTab} index="tags">
+          <TabPanel idPrefix={idPrefix} value={activeTab} index="tags">
             <TagsSection
               media={media}
               onTagAdded={onTagAdded}
@@ -156,7 +160,7 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
             />
           </TabPanel>
 
-          <TabPanel value={activeTab} index="annotations">
+          <TabPanel idPrefix={idPrefix} value={activeTab} index="annotations">
             <MediaAnnotationsTab
               key={media.id}
               mediaId={media.id}
@@ -164,11 +168,11 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
             />
           </TabPanel>
 
-          <TabPanel value={activeTab} index="exif">
+          <TabPanel idPrefix={idPrefix} value={activeTab} index="exif">
             <MediaExif mediaId={media.id} />
           </TabPanel>
 
-          <TabPanel value={activeTab} index="processors">
+          <TabPanel idPrefix={idPrefix} value={activeTab} index="processors">
             <MediaProcessorsTab mediaId={media.id} />
           </TabPanel>
         </>

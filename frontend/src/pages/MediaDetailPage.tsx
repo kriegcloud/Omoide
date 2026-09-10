@@ -39,8 +39,12 @@ import {
   deleteMediaFile,
   openMediaFolder,
   openMediaFile,
+  setMediaFavorite,
 } from "../services/mediaActions";
 import { getTask } from "../services/task";
+import config from "../config";
+import { useDialogHotkeyScope, useHotkey, useHotkeyHelp } from "../hotkeys/useHotkey";
+import { getTopModal } from "../hotkeys/keymap";
 
 const ImageEditorDialog = lazy(() => import("../components/ImageEditorDialog"));
 
@@ -88,6 +92,17 @@ export default function MediaDetailPage() {
     "convert" | "deleteRecord" | "deleteFile" | null
   >(null);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [actionTarget, setActionTarget] = useState<{ id: number; mediaListKey?: string } | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  const actionBusyRef = useRef(false);
+  const [favoriteBusy, setFavoriteBusy] = useState(false);
+  const [infoVisible, setInfoVisible] = useState(true);
+  const hotkeyScope = useDialogHotkeyScope(true);
+  const openHotkeyHelp = useHotkeyHelp();
+  const hasChildDialog = useCallback(() => {
+    const topModal = getTopModal();
+    return dialogType !== null || editorOpen || !!(topModal && topModal !== hotkeyScope.current);
+  }, [dialogType, editorOpen, hotkeyScope]);
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     message: string;
@@ -240,6 +255,7 @@ export default function MediaDetailPage() {
 
   const handleNavigate = useCallback(
     (direction: "prev" | "next") => {
+      if (hasChildDialog()) return;
       const targetId =
         direction === "prev" ? neighbors.previousId : neighbors.nextId;
       if (!targetId) return;
@@ -249,7 +265,7 @@ export default function MediaDetailPage() {
         replace: !!backgroundLocation,
       });
     },
-    [navigate, neighbors, buildNavigationState, backgroundLocation]
+    [navigate, neighbors, buildNavigationState, backgroundLocation, hasChildDialog]
   );
 
   useEffect(() => {
@@ -262,20 +278,6 @@ export default function MediaDetailPage() {
     }
   }, [isMobile, neighbors.nextId, neighbors.previousId]);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-      const target = e.target as HTMLElement | null;
-      if (target?.closest?.("input, textarea, [contenteditable='true']")) {
-        return;
-      }
-      if (dialogType || editorOpen) return;
-      if (e.key === "ArrowLeft") handleNavigate("prev");
-      if (e.key === "ArrowRight") handleNavigate("next");
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleNavigate, dialogType, editorOpen]);
 
   useEffect(() => {
     if (!task?.id || ["completed", "cancelled"].includes(task.status)) return;
@@ -340,11 +342,22 @@ export default function MediaDetailPage() {
     });
   };
 
-  const closeDialog = () => setDialogType(null);
+  const closeDialog = () => {
+    if (actionBusyRef.current) return;
+    setDialogType(null);
+    setActionTarget(null);
+  };
+  const openDialog = (type: "convert" | "deleteRecord" | "deleteFile") => {
+    if (!detail?.media || String(detail.media.id) !== id || config.PRESENTATION_MODE) return;
+    setActionTarget({ id: detail.media.id, mediaListKey });
+    setDialogType(type);
+  };
   const confirmConvert = async () => {
-    if (!detail || !detail.media) return;
+    if (!actionTarget || actionBusyRef.current) return;
+    actionBusyRef.current = true;
+    setActionBusy(true);
     try {
-      const t = await convertMedia(detail.media.id);
+      const t = await convertMedia(actionTarget.id);
       setTask(t);
       setSnackbar({
         open: true,
@@ -358,6 +371,8 @@ export default function MediaDetailPage() {
         severity: "error",
       });
     } finally {
+      actionBusyRef.current = false;
+      setActionBusy(false);
       closeDialog();
     }
   };
@@ -370,10 +385,13 @@ export default function MediaDetailPage() {
   }, [navigate, backgroundLocation]);
 
   const confirmDeleteRecord = async () => {
-    if (!detail || !detail.media) return;
+    if (!actionTarget || actionBusyRef.current) return;
+    const target = actionTarget;
+    actionBusyRef.current = true;
+    setActionBusy(true);
     try {
-      if (mediaListKey) removeItem(mediaListKey, detail.media.id);
-      await deleteMediaRecord(detail.media.id);
+      if (target.mediaListKey) removeItem(target.mediaListKey, target.id);
+      await deleteMediaRecord(target.id);
       setSnackbar({
         open: true,
         message: "Record deleted",
@@ -383,14 +401,19 @@ export default function MediaDetailPage() {
     } catch {
       setSnackbar({ open: true, message: "Delete failed", severity: "error" });
     } finally {
+      actionBusyRef.current = false;
+      setActionBusy(false);
       closeDialog();
     }
   };
   const confirmDeleteFile = async () => {
-    if (!detail || !detail.media) return;
+    if (!actionTarget || actionBusyRef.current) return;
+    const target = actionTarget;
+    actionBusyRef.current = true;
+    setActionBusy(true);
     try {
-      if (mediaListKey) removeItem(mediaListKey, detail.media.id);
-      await deleteMediaFile(detail.media.id);
+      if (target.mediaListKey) removeItem(target.mediaListKey, target.id);
+      await deleteMediaFile(target.id);
       setSnackbar({ open: true, message: "File deleted", severity: "success" });
       navigateAfterDelete();
     } catch {
@@ -400,21 +423,64 @@ export default function MediaDetailPage() {
         severity: "error",
       });
     } finally {
+      actionBusyRef.current = false;
+      setActionBusy(false);
       closeDialog();
     }
   };
 
   const handleClose = () => {
+    if (hasChildDialog()) return;
     if (backgroundLocation) {
       navigate(-1);
     } else {
       navigate("/");
     }
   };
+  const toggleFavorite = async () => {
+    if (!detail?.media || favoriteBusy) return;
+    const media = detail.media;
+    setFavoriteBusy(true);
+    try {
+      const updatedMedia = await setMediaFavorite(media.id, !media.is_favorite);
+      setDetail((current) => current?.media.id === media.id ? { ...current, media: updatedMedia } : current);
+      if (mediaListKey) updateItem(mediaListKey, updatedMedia);
+    } catch {
+      setSnackbar({ open: true, message: "Failed to update favorite", severity: "error" });
+    } finally {
+      setFavoriteBusy(false);
+    }
+  };
+  const mediaActionsEnabled = !!detail?.media && String(detail.media.id) === id && !isDetailLoading && !config.PRESENTATION_MODE;
+  const viewerHotkeys = { scope: "dialog" as const, dialogRef: hotkeyScope };
+  useHotkey({ key: "ArrowLeft" }, () => handleNavigate("prev"), {
+    ...viewerHotkeys, enabled: !!neighbors.previousId && !isDetailLoading, description: "Previous media",
+  });
+  useHotkey({ key: "ArrowRight" }, () => handleNavigate("next"), {
+    ...viewerHotkeys, enabled: !!neighbors.nextId && !isDetailLoading, description: "Next media",
+  });
+  useHotkey({ key: "f" }, () => void toggleFavorite(), {
+    ...viewerHotkeys, enabled: mediaActionsEnabled && !favoriteBusy, description: "Toggle favorite",
+  });
+  useHotkey({ key: "e" }, () => setEditorOpen(true), {
+    ...viewerHotkeys, enabled: mediaActionsEnabled && typeof detail?.media.duration !== "number", description: "Edit image",
+  });
+  useHotkey({ key: "Delete" }, () => openDialog("deleteFile"), {
+    ...viewerHotkeys, enabled: mediaActionsEnabled, destructive: true, description: "Delete file…",
+  });
+  useHotkey({ key: "Delete", shift: true }, () => openDialog("deleteRecord"), {
+    ...viewerHotkeys, enabled: mediaActionsEnabled, destructive: true, description: "Remove record…",
+  });
+  useHotkey({ key: "Escape" }, handleClose, { ...viewerHotkeys, description: "Close media viewer" });
+  useHotkey({ key: "i" }, () => setInfoVisible((visible) => !visible), {
+    ...viewerHotkeys, enabled: !!detail, description: "Toggle media information and tags",
+  });
+  useHotkey({ key: "?" }, openHotkeyHelp, { ...viewerHotkeys, description: "Show keyboard shortcuts" });
   const isLoading = !detail && isDetailLoading;
 
   return (
     <Dialog
+      ref={hotkeyScope}
       open={true}
       onClose={handleClose}
       fullWidth
@@ -436,6 +502,7 @@ export default function MediaDetailPage() {
       }}
     >
       <IconButton
+        aria-label="Close media viewer"
         onClick={handleClose}
         sx={{
           position: "absolute",
@@ -509,7 +576,7 @@ export default function MediaDetailPage() {
                 {!isMobile && neighbors.previousId && (
                   <IconButton
                     onClick={() => handleNavigate("prev")}
-                    disabled={isDetailLoading}
+                    disabled={isDetailLoading || dialogType !== null || editorOpen}
                     sx={{
                       position: "absolute",
                       left: -40,
@@ -527,7 +594,7 @@ export default function MediaDetailPage() {
                 >
                   <MediaHeader
                     media={detail.media}
-                    onOpenDialog={setDialogType}
+                    onOpenDialog={openDialog}
                     mediaListKey={mediaListKey}
                     onDeleted={navigateAfterDelete}
                     onEdit={() => setEditorOpen(true)}
@@ -577,7 +644,7 @@ export default function MediaDetailPage() {
                 {!isMobile && neighbors.nextId && (
                   <IconButton
                     onClick={() => handleNavigate("next")}
-                    disabled={isDetailLoading}
+                    disabled={isDetailLoading || dialogType !== null || editorOpen}
                     sx={{
                       position: "absolute",
                       right: -40,
@@ -591,6 +658,7 @@ export default function MediaDetailPage() {
               </Box>
               <ActionDialogs
                 dialogType={dialogType}
+                loading={actionBusy}
                 onClose={closeDialog}
                 onConfirmConvert={confirmConvert}
                 onConfirmDeleteRecord={confirmDeleteRecord}
@@ -644,16 +712,18 @@ export default function MediaDetailPage() {
                   <CircularProgress />
                 </Box>
               ) : (
-                <MediaContentTabs
-                  detail={detail}
-                  tabKey={tabKey}
-                  onTabChange={setTabKey}
-                  onTagAdded={handleTagAddedToMedia}
-                  onDetailReload={fetchDetail}
-                  onTagUpdate={handleMediaUpdate}
-                  onSeekRequest={handleSeekRequest}
-                  videoTimeRef={videoTimeRef}
-                />
+                <Box hidden={!infoVisible}>
+                  <MediaContentTabs
+                    detail={detail}
+                    tabKey={tabKey}
+                    onTabChange={setTabKey}
+                    onTagAdded={handleTagAddedToMedia}
+                    onDetailReload={fetchDetail}
+                    onTagUpdate={handleMediaUpdate}
+                    onSeekRequest={handleSeekRequest}
+                    videoTimeRef={videoTimeRef}
+                  />
+                </Box>
               )}
               <Snackbar
                 open={snackbar.open}
