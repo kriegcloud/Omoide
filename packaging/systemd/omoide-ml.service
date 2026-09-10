@@ -28,6 +28,10 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=/home/elpresidank/.local/share/omoide-portal/run
+# MIOpen (ROCm) writes kernel caches and lock files under these two directories.
+# Without them ProtectHome=read-only makes every inference fail with
+# "MIOpen Error: Read-only file system" (found 2026-09-10).
+ReadWritePaths=/home/elpresidank/.config/miopen /home/elpresidank/.cache/miopen
 InaccessiblePaths=-/run/media/elpresidank/T7
 InaccessiblePaths=-/run/media/elpresidank/T7XFER
 RestrictAddressFamilies=AF_UNIX
