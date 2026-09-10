@@ -25,11 +25,16 @@ when driving the browser, and scale screenshots down (0.2–0.5) if you must tak
 ## Verify before merging
 
 ```bash
-.venv/bin/python -m unittest discover -s tests        # 378 OK as of 2026-09-09
+.venv/bin/python -m unittest discover -s tests        # 582 OK as of 2026-09-10
 cd frontend && npm run build                          # must be green
 cd frontend && npx eslint src --ext .ts,.tsx          # baseline 54 problems; add none
-.venv/bin/alembic heads                               # exactly one head
+.venv/bin/alembic heads                               # exactly one head (3d4e5f607182)
+node --test-isolation=none --test frontend/tests/selection.test.cjs   # 30 node tests, no npm deps
+for f in frontend/src/hotkeys/tests/*.test.cjs; do node "$f" || break; done   # 72 node tests
 ```
+
+Audit-driven fixes follow "failing test first": reproduce the claim with a test,
+then fix; a claim that does not reproduce is reported as such, never patched blind.
 
 Tests, build and lint are necessary, not sufficient. UI and API changes get proven
 in the real browser against the running container before they count as done.
@@ -75,6 +80,35 @@ Config edits: `POST /api/config/` writes `config.yaml` only; follow it with
   changes. Use it to find and revert anything a QA run assigned.
 - Undo in the UI is a single slot with an 8 s window (`UndoContext`). Run
   action → check → undo in one script when proving a flow.
+
+## Conventions added in round 6
+
+- **Missing files** are detect / hide / review: the "Detect Missing Files" task only
+  flags (`missing_since`); every browse query goes through `exclude_missing()` in
+  `app/api/_media_filters.py`; removal happens only from the Missing Files page or
+  grace-based auto-cleanup. `delete_record` must clean every media FK without an
+  `ON DELETE` (the FK sweep test enumerates them).
+- **Folder scoping** uses the stored `media.folder` column and the shared predicate in
+  `app/api/_media_filters.py` (LIKE wildcards escaped, separator boundary). Pages keep
+  the folder in the `folder` URL param.
+- **Hotkeys** are declared data registered through `frontend/src/hotkeys/useHotkey`
+  (scopes global < page < dialog, shared typing guard). `?` opens the help overlay,
+  which is generated from the registry, so a new action needs a binding, not docs.
+  Destructive keys always go through `ConfirmDialog` (Confirm autofocused, Enter
+  confirms, target id snapshotted at open).
+- **Selection**: tiles render through `SelectableTileFrame`; checkbox clicks carry the
+  real modifier keys; double-click, the hover Open button and Enter open a tile
+  without leaving select mode; marquee auto-scroll is instant-scroll with eased
+  velocity against the nearest scrollport. Keep those behaviours in the frame, not
+  in pages.
+- **Face ownership** is claimed, never overwritten: background matching and clustering
+  update only rows whose `person_id IS NULL` and stamp provenance for claimed ids.
+- **Presentation mode** is enforced by one app-level dependency on every mutating
+  `/api` route; new routers inherit it.
+- `/api/health` returns 503 until migrations and startup finish; unknown `/api/*`
+  paths return JSON 404, never the SPA page.
+- `scripts/deploy-frontend.sh` keeps previous hashed assets (`ASSET_RETENTION_DAYS`)
+  so open tabs can still lazy-load; it verifies every asset the new index references.
 
 ## Reading the database
 
