@@ -13,6 +13,7 @@ export interface Media {
   thumbnail_path?: string;
   extracted_scenes: boolean;
   is_favorite: boolean;
+  missing_since?: string | null;
   edit_design_state?: Record<string, unknown> | null;
   cache_version?: number;
 }
@@ -925,6 +926,12 @@ export interface DatasetCaptionPage {
 export interface MediaDuplicate extends MediaPreview {
   size: number;
   path: string;
+  best: boolean;
+}
+
+export interface MediaResolveResult {
+  removed: number;
+  processed_ids: number[];
 }
 
 export interface DuplicateGroup {

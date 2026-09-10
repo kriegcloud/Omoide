@@ -20,7 +20,8 @@ def resolve_media_action(
     base_filter: Any,
     filter_ids: bool = True,
     not_found_detail: str = "No matching media found.",
-) -> int:
+    allow_empty: bool = False,
+) -> dict:
     """Shared handler for the maintenance resolve endpoints.
 
     When ``select_all`` is true the action applies to every media row matching
@@ -50,34 +51,42 @@ def resolve_media_action(
         if filter_ids:
             query = query.where(base_filter)
 
-    media_list = session.exec(query).all()
-    if not media_list:
+    # Materialize identities before per-item commits expire ORM rows. A failed
+    # transaction is rolled back independently and cannot poison later items.
+    selected_ids = [media.id for media in session.exec(query).all()]
+    if not selected_ids and not allow_empty:
         raise HTTPException(status_code=404, detail=not_found_detail)
-
-    processed = 0
-    for media in media_list:
-        if action == "DELETE_FILES":
-            try:
-                delete_file(session, media.id)
-            except HTTPException as exc:
-                if exc.status_code == 403:
-                    logger.warning(
-                        "Skipping delete for media id=%s: %s",
-                        media.id,
-                        exc.detail,
-                    )
-                    continue
-                raise
-        elif action == "DELETE_RECORDS":
-            delete_record(media.id, session)
-        else:
-            existing = session.exec(
-                select(Blacklist).where(Blacklist.path == media.path)
-            ).first()
-            if existing is None:
-                session.add(Blacklist(path=media.path))
-            delete_record(media.id, session)
-        processed += 1
-
-    session.commit()
-    return processed
+    processed_ids: list[int] = []
+    requested_ids = list(dict.fromkeys(media_ids))
+    selected_id_set = set(selected_ids)
+    skipped_ids = [media_id for media_id in requested_ids if media_id not in selected_id_set]
+    errors: list[dict] = []
+    for media_id in selected_ids:
+        try:
+            media = session.get(Media, media_id)
+            if media is None:
+                skipped_ids.append(media_id)
+                continue
+            if action == "DELETE_FILES":
+                delete_file(session, media_id)
+            elif action == "DELETE_RECORDS":
+                delete_record(media_id, session)
+            else:
+                existing = session.exec(select(Blacklist).where(Blacklist.path == media.path)).first()
+                if existing is None:
+                    session.add(Blacklist(path=media.path))
+                delete_record(media_id, session)
+            session.commit()
+            processed_ids.append(media_id)
+        except Exception as exc:
+            session.rollback()
+            skipped_ids.append(media_id)
+            reason = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
+            errors.append({"id": media_id, "reason": reason})
+            logger.warning("Could not resolve media id=%s: %s", media_id, reason)
+    return {
+        "removed": len(processed_ids),
+        "processed_ids": processed_ids,
+        "skipped_ids": skipped_ids,
+        "errors": errors,
+    }

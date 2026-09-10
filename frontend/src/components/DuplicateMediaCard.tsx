@@ -10,6 +10,7 @@ import {
   Typography,
   Radio,
   FormControlLabel,
+  Chip,
   useTheme,
 } from "@mui/material";
 import { MediaDuplicate } from "../types";
@@ -71,6 +72,7 @@ export const DuplicateMediaCard: React.FC<DuplicateMediaCardProps> = ({
         }}
         footer={
           <CardContent>
+            {media.best && <Chip size="small" label="Largest" sx={{ mb: 0.5 }} />}
             <FormControlLabel
               data-tile-control
               data-no-marquee

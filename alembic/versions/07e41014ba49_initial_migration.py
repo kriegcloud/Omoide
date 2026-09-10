@@ -383,7 +383,6 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_media_filename"), table_name="media")
     op.drop_index(op.f("ix_media_faces_extracted"), table_name="media")
     op.drop_index(op.f("ix_media_embeddings_created"), table_name="media")
-    op.drop_index(op.f("ix_media_embedding"), table_name="media")
     op.drop_index(op.f("ix_media_created_at"), table_name="media")
     op.drop_table("media")
     op.drop_table("face")

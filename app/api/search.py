@@ -1,6 +1,9 @@
 import io
 import re
+import threading
 import time
+import weakref
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -11,9 +14,10 @@ from sqlalchemy import and_, desc, func, or_, text, tuple_
 from sqlmodel import Session, select
 
 from app.config import get_clip_bundle, settings
+from app.api._media_filters import exclude_missing
 from app.database import get_session
 from app.logger import logger
-from app.models import Media, Person, Scene, Tag
+from app.models import Media, MediaTagLink, Person, Scene, Tag
 from app.schemas.media import MediaPreview
 from app.schemas.person import PersonRead, PersonReadSimple
 from app.schemas.search import (
@@ -29,6 +33,13 @@ router = APIRouter()
 # Maximum number of ANN results fetched for the global KNN path.
 # Determines how many pages of results are reachable (e.g. 300 / limit=20 = 15 pages).
 _MAX_KNN_RESULTS = 300
+
+# Derive raw sqlite-vec candidate predicates from the shared browsing rule.
+# Filtering inside the vector query prevents missing files using up its k slots.
+_VISIBLE_MEDIA_SQL = str(exclude_missing(select(Media.id)))
+_VISIBLE_SCENES_SQL = str(exclude_missing(
+    select(Scene.id).join(Media, Scene.media_id == Media.id)
+))
 
 # ---------------------------------------------------------------------------
 # In-memory person name cache
@@ -149,9 +160,44 @@ def encode_uploaded_image(image_bytes: bytes) -> np.ndarray:
     return image_feat.squeeze(0).cpu().numpy().tolist()
 
 
-def encode_text_query(query: str) -> np.ndarray:
-    import torch
+_TEXT_EMBEDDING_CACHE_SIZE = 256
+_text_embedding_cache: OrderedDict[str, tuple[float, ...]] = OrderedDict()
+_text_embedding_bundle_ref: weakref.ReferenceType | None = None
+_text_embedding_lock = threading.RLock()
+
+
+def _clear_released_text_bundle(reference: weakref.ReferenceType) -> None:
+    global _text_embedding_bundle_ref
+    with _text_embedding_lock:
+        if _text_embedding_bundle_ref is reference:
+            _text_embedding_cache.clear()
+            _text_embedding_bundle_ref = None
+
+
+def encode_text_query(query: str) -> list[float]:
+    """Reuse query vectors for the current bundle without retaining its model."""
+    global _text_embedding_bundle_ref
     clip_model, _, tokenizer = get_clip_bundle()
+    # Keep case and internal whitespace: multilingual tokenizers can use both.
+    normalized = query.strip()
+    with _text_embedding_lock:
+        if _text_embedding_bundle_ref is None or _text_embedding_bundle_ref() is not clip_model:
+            _text_embedding_cache.clear()
+            _text_embedding_bundle_ref = weakref.ref(clip_model, _clear_released_text_bundle)
+        cached = _text_embedding_cache.get(normalized)
+        if cached is None:
+            cached = tuple(_encode_text_query_uncached(normalized, clip_model, tokenizer))
+            _text_embedding_cache[normalized] = cached
+            if len(_text_embedding_cache) > _TEXT_EMBEDDING_CACHE_SIZE:
+                _text_embedding_cache.popitem(last=False)
+        else:
+            _text_embedding_cache.move_to_end(normalized)
+        # Callers get their own mutable result, never the cached tuple.
+        return list(cached)
+
+
+def _encode_text_query_uncached(query: str, clip_model, tokenizer) -> list[float]:
+    import torch
     tokenized = tokenizer([query])
     try:
         device = next(clip_model.parameters()).device
@@ -207,7 +253,7 @@ def _find_by_filename(query: str, session: Session) -> list[Media]:
     escaped = q_lower.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return list(
         session.exec(
-            select(Media).where(
+            exclude_missing(select(Media)).where(
                 or_(
                     func.lower(Media.filename) == q_lower,
                     func.lower(Media.filename).like(escaped + ".%", escape="\\"),
@@ -241,12 +287,13 @@ def search_by_image(
         return []
 
     sql = text(
-        """
+        f"""
         SELECT media_id, distance
         FROM media_embeddings
         WHERE embedding MATCH :vec
             AND k = :k
             AND distance < :max_dist
+            AND media_id IN ({_VISIBLE_MEDIA_SQL})
         ORDER BY distance
         """
     ).bindparams(vec=vec_blob, max_dist=max_dist, k=limit)
@@ -256,7 +303,7 @@ def search_by_image(
     if not media_ids:
         return []
 
-    media_objs = session.exec(select(Media).where(Media.id.in_(media_ids))).all()
+    media_objs = session.exec(exclude_missing(select(Media)).where(Media.id.in_(media_ids))).all()
     id_to_obj = {m.id: m for m in media_objs}
     return [MediaPreview.model_validate(id_to_obj[mid]) for mid in media_ids if mid in id_to_obj]
 
@@ -319,11 +366,12 @@ def search_combined(
                 UNION
                 SELECT media_id FROM personmedialink WHERE person_id IN ({ids_str})
             )
+            AND id IN ({_VISIBLE_MEDIA_SQL})
             ORDER BY inserted_at DESC
             LIMIT :lim
         """).bindparams(lim=limit)
         media_ids = [r[0] for r in session.exec(sql).all()]
-        media_objs = session.exec(select(Media).where(Media.id.in_(media_ids))).all()
+        media_objs = session.exec(exclude_missing(select(Media)).where(Media.id.in_(media_ids))).all()
         id_map = {m.id: m for m in media_objs}
         return CombinedMediaSearchResult(
             persons=persons,
@@ -368,7 +416,8 @@ def search_combined(
                            vec_distance_cosine(me.embedding, :vec_blob) AS distance
                     FROM media_embeddings me
                     WHERE me.media_id IN (
-                        {media_filter}
+                        {_VISIBLE_MEDIA_SQL}
+                        AND media.id IN ({media_filter})
                     )
                 ) ranked
                 WHERE distance < :max_dist
@@ -385,13 +434,14 @@ def search_combined(
             # k = _MAX_KNN_RESULTS so pagination works up to _MAX_KNN_RESULTS / limit pages.
             # distance > :min_dist is pushed into the vec0 index; we apply the media_id
             # tiebreak in Python since compound distance conditions aren't supported by vec0.
-            sql = text("""
+            sql = text(f"""
                 SELECT media_id, distance
                 FROM media_embeddings
                 WHERE embedding MATCH :vec_blob
                   AND k = :k
                   AND distance < :max_dist
                   AND distance > :min_dist
+                  AND media_id IN ({_VISIBLE_MEDIA_SQL})
                 ORDER BY distance
             """).bindparams(
                 vec_blob=vec_blob, max_dist=max_dist,
@@ -410,7 +460,7 @@ def search_combined(
         has_more = len(rows) > limit
 
         media_ids = [r[0] for r in page_rows]
-        media_objs = session.exec(select(Media).where(Media.id.in_(media_ids))).all()
+        media_objs = session.exec(exclude_missing(select(Media)).where(Media.id.in_(media_ids))).all()
         id_map = {m.id: m for m in media_objs}
         ordered = [id_map[mid] for mid in media_ids if mid in id_map]
 
@@ -445,17 +495,19 @@ def search_combined(
             SELECT me.media_id
             FROM media_embeddings me
             WHERE me.media_id IN (
-                {media_filter}
+                {_VISIBLE_MEDIA_SQL}
+                AND media.id IN ({media_filter})
             )
             AND vec_distance_cosine(me.embedding, :vec_blob) < :max_dist
         """).bindparams(vec_blob=vec_blob, max_dist=max_dist)
     else:
-        vec_sql = text("""
+        vec_sql = text(f"""
             SELECT media_id
             FROM media_embeddings
             WHERE embedding MATCH :vec_blob
               AND k = :k
               AND distance < :max_dist
+              AND media_id IN ({_VISIBLE_MEDIA_SQL})
             ORDER BY distance
         """).bindparams(vec_blob=vec_blob, max_dist=max_dist, k=_MAX_KNN_RESULTS)
 
@@ -463,7 +515,7 @@ def search_combined(
     if not candidate_ids:
         return CombinedMediaSearchResult(persons=persons)
 
-    q = select(Media).where(Media.id.in_(candidate_ids))
+    q = exclude_missing(select(Media)).where(Media.id.in_(candidate_ids))
     if cursor_dt is not None:
         q = q.where(
             or_(
@@ -539,7 +591,8 @@ def search_scenes(
                        vec_distance_cosine(se.embedding, :vec_blob) AS distance
                 FROM scene_embeddings se
                 WHERE se.media_id IN (
-                    {media_filter}
+                    {_VISIBLE_MEDIA_SQL}
+                    AND media.id IN ({media_filter})
                 )
             ) ranked
             WHERE distance < :max_dist
@@ -552,13 +605,14 @@ def search_scenes(
         )
         rows = list(session.exec(sql).all())
     else:
-        sql = text("""
+        sql = text(f"""
             SELECT scene_id, media_id, distance
             FROM scene_embeddings
             WHERE embedding MATCH :vec_blob
               AND k = :k
               AND distance < :max_dist
               AND distance > :min_dist
+              AND scene_id IN ({_VISIBLE_SCENES_SQL})
             ORDER BY distance
         """).bindparams(
             vec_blob=vec_blob, max_dist=max_dist,
@@ -582,7 +636,7 @@ def search_scenes(
     distance_map = {r[0]: float(r[2]) for r in page_rows}
 
     scene_data = session.exec(
-        select(Scene, Media)
+        exclude_missing(select(Scene, Media))
         .join(Media, Scene.media_id == Media.id)
         .where(Scene.id.in_(scene_ids))
     ).all()
@@ -689,6 +743,18 @@ def search_tags(
         next_cursor = str(tags[-1].id)
 
     return CursorPage(
-        items=[TagRead.model_validate(t) for t in tags],
+        items=[
+            TagRead(
+                id=tag.id,
+                name=tag.name,
+                media=session.exec(
+                    exclude_missing(select(Media))
+                    .join(MediaTagLink, MediaTagLink.media_id == Media.id)
+                    .where(MediaTagLink.tag_id == tag.id)
+                ).all(),
+                persons=tag.persons,
+            )
+            for tag in tags
+        ],
         next_cursor=next_cursor,
     )

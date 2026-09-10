@@ -23,6 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, delete, distinct, select, text, update
 
 from app.config import settings
+from app.api._media_filters import exclude_missing
 from app.database import get_session, safe_commit, safe_execute
 from app.logger import logger
 from app.models import (
@@ -263,6 +264,8 @@ def get_person_timeline(
         .where(Media.created_at.is_not(None))
     )
 
+    media_query = exclude_missing(media_query)
+
     # Subquery for one-time TimelineEvent items
     events_query = (
         select(
@@ -281,26 +284,36 @@ def get_person_timeline(
         timeline_cte.c.timeline_date.label("timeline_date"),
         timeline_cte.c.item_type,
     )
+    cursor_date = None
+    cursor_kind = None
     if cursor:
         try:
-            cursor_date = date.fromisoformat(cursor)
-            final_query = final_query.where(timeline_cte.c.timeline_date < cursor_date)
+            if "|" in cursor:
+                token_date, cursor_kind, token_id = cursor.split("|")
+                cursor_date = date.fromisoformat(token_date)
+                if cursor_kind not in {"media", "event"}:
+                    raise ValueError("Invalid item type")
+                final_query = final_query.where(
+                    tuple_(timeline_cte.c.timeline_date, timeline_cte.c.item_type, timeline_cte.c.item_id)
+                    < (cursor_date.isoformat(), cursor_kind, int(token_id))
+                )
+            else:
+                # Keep old day-only bookmarks usable.
+                cursor_date = date.fromisoformat(cursor)
+                final_query = final_query.where(timeline_cte.c.timeline_date < cursor_date)
         except (ValueError, TypeError):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid cursor format. Use YYYY-MM-DD.",
-            )
+            raise HTTPException(status_code=400, detail="Invalid timeline cursor.")
 
-    final_query = final_query.order_by(timeline_cte.c.timeline_date.desc()).limit(
-        limit + 1
-    )
+    final_query = final_query.order_by(
+        timeline_cte.c.timeline_date.desc(), timeline_cte.c.item_type.desc(), timeline_cte.c.item_id.desc()
+    ).limit(limit + 1)
 
     page_items_result = session.exec(final_query).all()
 
     has_next_page = len(page_items_result) > limit
     page_items = page_items_result[:limit]
 
-    next_cursor = str(page_items[-1].timeline_date) if has_next_page else None
+    next_cursor = (f"{page_items[-1].timeline_date}|{page_items[-1].item_type}|{page_items[-1].item_id}" if has_next_page else None)
 
     if not page_items:
         return {"items": [], "next_cursor": None}
@@ -345,7 +358,7 @@ def get_person_timeline(
         for year in range(page_min_date.year, page_max_date.year + 1):
             try:
                 occurrence_date = event.event_date.replace(year=year)
-                if page_min_date <= occurrence_date <= page_max_date:
+                if page_min_date <= occurrence_date <= page_max_date and not (cursor_kind and occurrence_date == cursor_date):
                     event_data = event.model_dump()
                     event_data["event_date"] = occurrence_date
                     event_occurrence = TimelineEvent.model_validate(event_data)
@@ -909,7 +922,7 @@ def get_appearances(
         return MediaCursorPage(items=[], next_cursor=None)
 
     q = (
-        select(Media)
+        exclude_missing(select(Media))
         .where(Media.id.in_(matching_media_ids))
         .order_by(Media.created_at.desc())
     )

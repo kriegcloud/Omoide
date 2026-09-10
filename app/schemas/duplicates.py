@@ -5,9 +5,13 @@ from pydantic import BaseModel
 from app.schemas.media import MediaPreview
 
 
+class DuplicateMediaPreview(MediaPreview):
+    best: bool = False
+
+
 class DuplicateGroup(BaseModel):
     group_id: int
-    items: list[MediaPreview]
+    items: list[DuplicateMediaPreview]
 
     class Config:
         from_attributes = True  # If using ORM models

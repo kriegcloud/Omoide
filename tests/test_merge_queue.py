@@ -288,7 +288,7 @@ class MergeQueueTests(unittest.TestCase):
 class MergeQueueMigrationTests(unittest.TestCase):
     def test_migration_head_is_single_and_chained_from_previous_head(self):
         script = ScriptDirectory.from_config(Config("alembic.ini"))
-        self.assertEqual(script.get_heads(), ["2c3d4e5f6071"])
+        self.assertEqual(script.get_heads(), ["3d4e5f607182"])
         self.assertEqual(script.get_revision("0a1b2c3d4e5f").down_revision, "f9a0b1c2d3e5")
 
     def test_migration_upgrade_constraints_cascade_and_downgrade(self):

@@ -30,5 +30,6 @@ class LowResResolveRequest(BaseModel):
     media_ids: list[int] = []
     action: Literal["DELETE_FILES", "DELETE_RECORDS", "BLACKLIST_RECORDS"]
     select_all: bool = False
+    folder: str | None = None
     max_pixels: int = 1_000_000
     media_type: str | None = None

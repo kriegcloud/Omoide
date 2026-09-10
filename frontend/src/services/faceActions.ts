@@ -46,3 +46,12 @@ export const detachFace = async (faceIds: number[]) => {
   });
   if (!res.ok) throw new Error(`Detach failed: ${res.status}`);
 };
+
+export const deleteAllOrphanFaces = async (): Promise<{ deleted: number }> => {
+  const response = await fetch(`${API}/api/faces/orphans`, { method: "DELETE" });
+  if (!response.ok) {
+    const error: { detail?: unknown } = await response.json().catch(() => ({}));
+    throw new Error(typeof error.detail === "string" ? error.detail : "Failed to delete all unassigned faces");
+  }
+  return response.json();
+};

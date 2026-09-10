@@ -57,7 +57,7 @@ type TaskLabels = Record<TaskType, string>;
 const TASK_LABELS: TaskLabels = {
   scan: "Scan for New Files",
   process_media: "Process Unindexed Media",
-  clean_missing_files: "Remove Missing Records",
+  clean_missing_files: "Detect Missing Files",
   cluster_persons: "Cluster Persons",
   find_duplicates: "Find Duplicates",
   compute_blur_scores: "Score Blur",
@@ -669,7 +669,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                 <ListItemIcon>
                   <CleaningServicesIcon />
                 </ListItemIcon>
-                <ListItemText primary="Remove Missing Records" />
+                <ListItemText primary="Detect Missing Files" />
               </ListItemButton>
             </ListItem>
             {config.ENABLE_PEOPLE && (

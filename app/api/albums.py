@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_
 from sqlmodel import Session, func, select
 
+from app.api._media_filters import exclude_missing
 from app.config import settings
 from app.database import get_session, safe_commit
 from app.logger import logger
@@ -51,16 +52,17 @@ class AlbumRead(BaseModel):
 
 def _cover_thumbnail(session: Session, album: Album) -> str | None:
     if album.cover_media_id:
-        cover = session.get(Media, album.cover_media_id)
+        cover = session.exec(
+            exclude_missing(select(Media)).where(Media.id == album.cover_media_id)
+        ).first()
         if cover and cover.thumbnail_path:
             return cover.thumbnail_path
     row = session.exec(
-        select(Media.thumbnail_path)
+        exclude_missing(select(Media.thumbnail_path))
         .join(AlbumMediaLink, AlbumMediaLink.media_id == Media.id)
         .where(
             AlbumMediaLink.album_id == album.id,
             Media.thumbnail_path.is_not(None),
-            Media.missing_since.is_(None),
         )
         .order_by(AlbumMediaLink.created_at.desc())
         .limit(1)
@@ -71,9 +73,11 @@ def _cover_thumbnail(session: Session, album: Album) -> str | None:
 def _album_read(session: Session, album: Album) -> AlbumRead:
     count = (
         session.exec(
-            select(func.count(AlbumMediaLink.media_id)).where(
-                AlbumMediaLink.album_id == album.id
+            exclude_missing(
+                select(func.count(AlbumMediaLink.media_id))
+                .join(Media, Media.id == AlbumMediaLink.media_id)
             )
+            .where(AlbumMediaLink.album_id == album.id)
         ).first()
         or 0
     )
@@ -249,12 +253,11 @@ def list_album_media(
     if not session.get(Album, album_id):
         raise HTTPException(404, "Album not found")
     q = (
-        select(Media)
+        exclude_missing(select(Media))
         .join(AlbumMediaLink, AlbumMediaLink.media_id == Media.id)
         .where(
             AlbumMediaLink.album_id == album_id,
             Media.processing_error.is_(None),
-            Media.missing_since.is_(None),
         )
         .order_by(Media.created_at.desc(), Media.id.desc())
     )

@@ -10,13 +10,13 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel
-from sqlalchemy import func, or_
-from sqlmodel import Session, delete, select, text
+from sqlalchemy import func
+from sqlmodel import Session, delete, select, text, update
 
 from app.config import settings
 from app.database import get_session, safe_commit, safe_execute
 from app.logger import logger
-from app.models import Face, FaceAssignmentSource, Person, PersonMediaLink, PersonRelationship, PersonTagLink
+from app.models import Face, FaceAssignmentSource, Person, PersonMediaLink
 from app.schemas.face import (
     AssignSuggestedFaces,
     AssignSuggestedFacesResult,
@@ -35,10 +35,9 @@ from app.services.face_matching import (
 )
 from app.services.face_provenance import stamp_face_assignment
 from app.utils import (
-    auto_select_profile_face,
     log_person_deleted,
-    recalculate_person_appearance_counts,
-    update_person_embedding,
+    refresh_persons,
+    remove_person,
 )
 
 router = APIRouter()
@@ -132,9 +131,7 @@ async def assign_faces(
             session, face, new_person, affected_person_ids, FaceAssignmentSource(body.source)
         )
 
-    recalculate_person_appearance_counts(session, affected_person_ids)
-    if new_person_id and new_person_id > 0:
-        update_person_embedding(session, new_person_id)
+    refresh_persons(session, affected_person_ids)
     safe_commit(session)
     return {"message": "Faces assigned successfully"}
 
@@ -170,9 +167,7 @@ async def assign_suggested_faces(
             SkippedFaceAssignment(face_id=assignment.face_id, reason=reason)
         )
 
-    recalculate_person_appearance_counts(session, affected_person_ids)
-    for person_id in sorted(affected_person_ids):
-        update_person_embedding(session, person_id)
+    refresh_persons(session, affected_person_ids)
     safe_commit(session)
     return AssignSuggestedFacesResult(assigned=assigned, skipped=skipped)
 
@@ -213,10 +208,7 @@ async def detach_faces(
             session, face_id, -1
         )  # -1 detaches face from person in embedding table
         # update embedding of person to fix suggested faces after detach
-    recalculate_person_appearance_counts(session, affected_person_ids)
-    for pid in affected_person_ids:
-        if session.get(Person, pid):
-            update_person_embedding(session, pid)
+    refresh_persons(session, affected_person_ids)
     safe_commit(session)
     return {"message": "Faces detached successfully"}
 
@@ -260,36 +252,46 @@ def delete_faces(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
-    affected_person_ids: set[int] = set()
-    for face_id in face_ids:
-        face = session.get(Face, face_id)
-        if not face:
-            logger.warning(f"Face with ID {face_id} not found, skipping deletion.")
-            continue
-
-        # remove thumbnail from disk
-        if face.thumbnail_path:
-            thumb = settings.general.thumb_dir / face.thumbnail_path
-            if thumb.exists():
-                thumb.unlink()
-
-        if person := face.person:
-            person_id = face.person.id
-            affected_person_ids.add(person_id)
-        else:
-            person_id = None
-        session.delete(face)
-
-        update_face_embedding(session, face_id, person_id, delete_face=True)
-        if person_id:
-            old_person_can_be_deleted(session, person_id, reason="faces-delete")
-    recalculate_person_appearance_counts(session, affected_person_ids)
-    for pid in affected_person_ids:
-        if session.get(Person, pid):
-            auto_select_profile_face(session, pid)
-            update_person_embedding(session, pid)
-    safe_commit(session)
+    _delete_face_batch(session, list(dict.fromkeys(face_ids)))
     return {"message": "Faces deleted successfully"}
+
+
+def _delete_face_batch(session: Session, face_ids: list[int], *, only_orphans: bool = False) -> int:
+    conditions = [Face.id.in_(face_ids)]
+    if only_orphans:
+        conditions.append(Face.person_id.is_(None))
+    # Acquire a SQLite write lease before reading the faces to clean. Assignment
+    # writers cannot race between this predicate check and vector/row removal.
+    session.exec(update(Face).where(*conditions).values(id=Face.id))
+    faces = session.exec(select(Face).where(*conditions)).all()
+    ids = [face.id for face in faces]
+    affected_person_ids = {face.person_id for face in faces if face.person_id is not None}
+    profile_person_ids = session.exec(select(Person.id).where(Person.profile_face_id.in_(ids))).all()
+    affected_person_ids.update(profile_person_ids)
+    thumbnails = [settings.general.thumb_dir / face.thumbnail_path for face in faces if face.thumbnail_path]
+    # Profile references must be cleared before a face delete can autoflush.
+    session.exec(update(Person).where(Person.profile_face_id.in_(ids)).values(profile_face_id=None))
+    for face in faces:
+        update_face_embedding(session, face.id, face.person_id, delete_face=True)
+    session.exec(delete(Face).where(Face.id.in_(ids)))
+    deleted_people = []
+    for person_id in sorted(affected_person_ids):
+        person = session.get(Person, person_id)
+        if old_person_can_be_deleted(session, person_id, reason="faces-delete", commit=False) and person is not None:
+            deleted_people.append(person)
+    refresh_persons(session, affected_person_ids)
+    safe_commit(session)
+    for person in deleted_people:
+        log_person_deleted(person, reason="empty-after-faces-delete")
+    for thumbnail in thumbnails:
+        try:
+            thumbnail.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning("Could not remove face thumbnail %s: %s", thumbnail, exc)
+    return len(ids)
+
 
 class FaceCreatePerson(BaseModel):
     name: str | None = None
@@ -359,6 +361,27 @@ def get_orphan_count(session: Session = Depends(get_session)) -> dict[str, int]:
         select(func.count()).select_from(Face).where(Face.person_id.is_(None))
     ).one()
     return {"count": count}
+
+@router.delete("/orphans", summary="Delete all unassigned face records")
+def delete_all_orphans(session: Session = Depends(get_session)) -> dict[str, int]:
+    if settings.general.presentation_mode:
+        raise HTTPException(status_code=403, detail="Not allowed in presentation mode.")
+    count = session.exec(select(func.count(Face.id)).where(Face.person_id.is_(None))).one()
+    if count > 20_000:
+        raise HTTPException(status_code=409, detail="More than 20000 orphan faces; delete in batches using face selection.")
+    deleted = 0
+    last_id = 0
+    while True:
+        ids = session.exec(
+            select(Face.id).where(Face.person_id.is_(None), Face.id > last_id)
+            .order_by(Face.id).limit(500)
+        ).all()
+        if not ids:
+            break
+        deleted += _delete_face_batch(session, ids, only_orphans=True)
+        last_id = ids[-1]
+    return {"deleted": deleted}
+
 
 @router.get("/orphans", response_model=CursorPage)
 def get_orphans(
@@ -438,15 +461,13 @@ async def create_person_from_faces(
         update_face_embedding(session, face.id, person_id)
     target_person_ids = set(previous_person_ids)
     target_person_ids.add(person_id)
-    recalculate_person_appearance_counts(session, target_person_ids)
-    if person_id:
-        update_person_embedding(session, person_id)
+    refresh_persons(session, target_person_ids)
     safe_commit(session)
     session.close()
     return PersonMinimal(id=person_id)
 
 def old_person_can_be_deleted(
-    session: Session, person_id: int | None, *, reason: str
+    session: Session, person_id: int | None, *, reason: str, commit: bool = True
 ):
     if person_id is None:
         return True
@@ -466,20 +487,5 @@ def old_person_can_be_deleted(
     if person is None:
         return True
 
-    # delete any tag links
-    safe_execute(
-        session,
-        delete(PersonTagLink).where(PersonTagLink.person_id == person_id),
-    )
-    session.exec(
-        delete(PersonRelationship).where(
-            or_(
-                PersonRelationship.person_a_id == person_id,
-                PersonRelationship.person_b_id == person_id,
-            )
-        )
-    )
-    session.delete(person)
-    safe_commit(session)
-    log_person_deleted(person, reason=f"empty-after-{reason}")
+    remove_person(person_id, session, reason=f"empty-after-{reason}", commit=commit)
     return True

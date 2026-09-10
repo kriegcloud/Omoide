@@ -143,7 +143,7 @@ class CompositionTests(unittest.TestCase):
         config = Config(str(root / "alembic.ini"))
         config.set_main_option("script_location", str(root / "alembic"))
         heads = ScriptDirectory.from_config(config).get_heads()
-        self.assertEqual(heads, ["2c3d4e5f6071"])
+        self.assertEqual(heads, ["3d4e5f607182"])
 
 
 if __name__ == "__main__":

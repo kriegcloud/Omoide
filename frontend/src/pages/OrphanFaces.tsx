@@ -1,6 +1,6 @@
 import { useUndo, useUndoRefresh } from "../context/UndoContext";
 import { refreshCachedList } from "../stores/useListStore";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Chip,
   Container,
@@ -23,12 +23,13 @@ import {
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useInView } from "react-intersection-observer";
 import { useListStore, defaultListState } from "../stores/useListStore";
-import { getOrphanFaces } from "../services/face";
+import { getOrphanFaces, getOrphanFaceCount } from "../services/face";
 import {
   assignFace,
   detachFace,
   createPersonFromFaces,
   deleteFace,
+  deleteAllOrphanFaces,
 } from "../services/faceActions";
 import PersonPicker from "../components/PersonPicker";
 import { Person } from "../types";
@@ -95,11 +96,15 @@ function AllOrphanFaces() {
   // All UI state is now managed directly by the page
   const [isProcessing, setIsProcessing] = useState(false);
   const [selectedFaceIds, setSelectedFaceIds] = useState<number[]>([]);
+  const [orphanCount, setOrphanCount] = useState<number | null>(null);
+  const [countError, setCountError] = useState<string | null>(null);
+  const countRequest = useRef(0);
 
   // State for dialogs
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [confirmDeleteAllOpen, setConfirmDeleteAllOpen] = useState(false);
   const [newPersonName, setNewPersonName] = useState("");
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
@@ -118,7 +123,7 @@ function AllOrphanFaces() {
   // The 'skip' option is a crucial fix: it disables the observer while data is loading.
   const { ref: loaderRef, inView } = useInView({
     threshold: 0.5,
-    skip: isLoading || !hasMore,
+    skip: isLoading || !hasMore || isProcessing,
     rootMargin: "0px 0px 200px 0px",
   });
 
@@ -128,12 +133,47 @@ function AllOrphanFaces() {
   }, [clearList, fetchInitial, listKey]);
 
   useEffect(() => {
-    if (inView) {
+    if (inView && !isProcessing) {
       loadMore(listKey, (cursor) => getOrphanFaces(cursor));
     }
-  }, [inView, loadMore, listKey]);
+  }, [inView, loadMore, listKey, isProcessing]);
+
+  useEffect(() => {
+    const request = ++countRequest.current;
+    if (!isProcessing) {
+      getOrphanFaceCount()
+        .then((count) => {
+          if (countRequest.current !== request) return;
+          setOrphanCount(count);
+          setCountError(null);
+        })
+        .catch((reason: unknown) => {
+          if (countRequest.current !== request) return;
+          setOrphanCount(null);
+          setCountError(reason instanceof Error ? reason.message : "Failed to load the total face count");
+        });
+    }
+    return () => { countRequest.current += 1; };
+  }, [orphans.length, isProcessing]);
 
   // --- Action Handlers ---
+  const handleDeleteAll = async () => {
+    setIsProcessing(true);
+    try {
+      const { deleted } = await deleteAllOrphanFaces();
+      clearList(listKey);
+      setSelectedFaceIds([]);
+      setOrphanCount(0);
+      showMessage(`Deleted ${deleted.toLocaleString()} unassigned face${deleted === 1 ? "" : "s"}.`);
+      await fetchInitial(listKey, () => getOrphanFaces(null));
+    } catch (reason) {
+      showMessage(reason instanceof Error ? reason.message : "Failed to delete all unassigned faces.", "error");
+    } finally {
+      setIsProcessing(false);
+      setConfirmDeleteAllOpen(false);
+    }
+  };
+
   const handleBulkDelete = async () => {
     const faceIds = [...selectedFaceIds];
     setIsProcessing(true);
@@ -232,10 +272,19 @@ function AllOrphanFaces() {
   return (
     <Container id="unassigned-faces" maxWidth="xl" sx={{ pt: 4, pb: 7 }}>
       {/* The header and toolbar are now part of the page's main layout flow */}
-      <Box sx={{ display: "flex", alignItems: "center", mb: 2, gap: 2 }}>
+      <Box sx={{ display: "flex", alignItems: "center", flexWrap: "wrap", mb: 2, gap: 2 }}>
         <Typography variant="h4" sx={{ flexGrow: 1 }}>
           Unassigned Faces
         </Typography>
+        <Button
+          size="small"
+          variant="outlined"
+          color="error"
+          disabled={isProcessing || orphanCount === null || orphanCount === 0}
+          onClick={() => setConfirmDeleteAllOpen(true)}
+        >
+          Delete all ({orphanCount === null ? "…" : orphanCount.toLocaleString()})
+        </Button>
         <Button
           size="small"
           onClick={handleSelectAll}
@@ -246,6 +295,8 @@ function AllOrphanFaces() {
             : "Select None"}
         </Button>
       </Box>
+
+      {countError && <Alert severity="error" sx={{ mb: 2 }}>{countError}</Alert>}
 
       {selectedFaceIds.length > 0 && (
         <Paper elevation={2} sx={{ p: 1, mb: 2, bgcolor: "action.selected" }}>
@@ -368,6 +419,16 @@ function AllOrphanFaces() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <ConfirmDialog
+        open={confirmDeleteAllOpen}
+        title="Delete All Unassigned Faces"
+        message={`Permanently delete all ${(orphanCount ?? 0).toLocaleString()} unassigned faces, including faces that are not loaded on this page? Original photos and videos are kept. This cannot be undone.`}
+        confirmLabel="Delete all"
+        loading={isProcessing}
+        onConfirm={handleDeleteAll}
+        onClose={() => setConfirmDeleteAllOpen(false)}
+      />
 
       <ConfirmDialog
         open={confirmDeleteOpen}

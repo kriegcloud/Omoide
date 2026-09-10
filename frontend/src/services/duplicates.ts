@@ -6,7 +6,8 @@ export const getDuplicates = async (
   sortBy: "count" | "size" = "count",
   mediaType?: "image" | "video",
   limit: number = 10,
-  minCount: number = 2
+  minCount: number = 2,
+  folder?: string | null,
 ): Promise<DuplicatePage> => {
   const params = new URLSearchParams();
   if (cursor) params.append("cursor", cursor);
@@ -14,6 +15,7 @@ export const getDuplicates = async (
   if (sortBy !== "count") params.append("sort_by", sortBy);
   if (mediaType) params.append("media_type", mediaType);
   if (minCount > 2) params.append("min_count", minCount.toString());
+  if (folder) params.append("folder", folder);
 
   const response = await fetch(`${API}/api/duplicates?${params.toString()}`);
   if (!response.ok) {
@@ -22,8 +24,10 @@ export const getDuplicates = async (
   return response.json();
 };
 
-export const getDuplicateStats = async (): Promise<DuplicateStats> => {
-  const response = await fetch(API + "/api/duplicates/stats");
+export const getDuplicateStats = async (folder?: string | null): Promise<DuplicateStats> => {
+  const params = new URLSearchParams();
+  if (folder) params.append("folder", folder);
+  const response = await fetch(`${API}/api/duplicates/stats?${params}`);
   if (!response.ok) {
     throw new Error("Failed to fetch duplicate statistics");
   }

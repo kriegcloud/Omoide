@@ -29,4 +29,5 @@ class ShortVideoResolveRequest(BaseModel):
     media_ids: list[int] = []
     action: Literal["DELETE_FILES", "DELETE_RECORDS", "BLACKLIST_RECORDS"]
     select_all: bool = False
+    folder: str | None = None
     max_duration: float = 10.0

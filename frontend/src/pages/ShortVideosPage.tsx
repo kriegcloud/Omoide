@@ -17,6 +17,8 @@ import BulkResolveToolbar, {
   BulkResolveAction,
   FeedbackSeverity,
 } from "../components/BulkResolveToolbar";
+import { useSearchParams } from "react-router-dom";
+import FolderFilterSelect from "../components/FolderFilterSelect";
 import ReviewMediaGrid from "../components/ReviewMediaGrid";
 import SelectableMediaTile from "../components/SelectableMediaTile";
 import { formatBytes } from "../formatUtils";
@@ -31,6 +33,8 @@ const formatDuration = (seconds: number) => {
 };
 
 const ShortVideosPage: React.FC = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const folder = searchParams.get("folder") || null;
   const [maxDuration, setMaxDuration] = useState(DEFAULT_MAX_DURATION);
   const [pendingDuration, setPendingDuration] = useState(DEFAULT_MAX_DURATION);
 
@@ -44,8 +48,9 @@ const ShortVideosPage: React.FC = () => {
         maxDuration,
         cursor: cursor ?? undefined,
         limit: 50,
+        folder,
       }),
-    [maxDuration]
+    [maxDuration, folder]
   );
 
   const {
@@ -81,9 +86,9 @@ const ShortVideosPage: React.FC = () => {
   const resolveSelection = useCallback(
     ({ action, mediaIds, selectAll }: { action: BulkResolveAction; mediaIds?: number[]; selectAll?: boolean }) =>
       selectAll
-        ? resolveShortVideos({ action, select_all: true, max_duration: maxDuration })
-        : resolveShortVideos({ action, media_ids: mediaIds, max_duration: maxDuration }),
-    [maxDuration]
+        ? resolveShortVideos({ action, folder, select_all: true, max_duration: maxDuration })
+        : resolveShortVideos({ action, folder, media_ids: mediaIds, max_duration: maxDuration }),
+    [maxDuration, folder]
   );
 
   const handleResolved = useCallback(
@@ -135,6 +140,18 @@ const ShortVideosPage: React.FC = () => {
           sx={{ maxWidth: 480 }}
         />
       </Paper>
+
+      <Box sx={{ mb: 2 }}>
+        <FolderFilterSelect
+          value={folder}
+          onChange={(nextFolder) => {
+            const next = new URLSearchParams(searchParams);
+            if (nextFolder) next.set("folder", nextFolder);
+            else next.delete("folder");
+            setSearchParams(next);
+          }}
+        />
+      </Box>
 
       {/* Stats + bulk actions */}
       <BulkResolveToolbar

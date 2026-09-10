@@ -45,6 +45,9 @@ from app.models import (
     AlbumMediaLink,
     AnnotationAttempt,
     AnnotationAttemptStatus,
+    DatasetItem,
+    MediaCurationStats,
+    TrainingDataset,
     DuplicateIgnore,
     DuplicateMedia,
     Event,
@@ -813,18 +816,19 @@ def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:
                 run_silent(
                     cmd,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
                     timeout=20,
                     check=True,
                 )
             except subprocess.TimeoutExpired:
-                logger.error(
-                    "ffmpeg timed out generating thumbnail for %s (20s)",
-                    filepath,
-                )
                 return None, "ffmpeg timed out while generating thumbnail"
             except subprocess.CalledProcessError as e:
-                last_error = f"ffmpeg failed to generate thumbnail: {e}"
+                stderr = e.stderr or ""
+                if isinstance(stderr, bytes):
+                    stderr = stderr.decode("utf-8", errors="replace")
+                reason = stderr.strip()[-2000:] or str(e)
+                last_error = f"ffmpeg failed to generate thumbnail: {reason}"
                 logger.debug(
                     "ffmpeg failed with -ss %s for %s, %s",
                     seek,
@@ -842,9 +846,6 @@ def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:
             if thumb_path.exists():
                 break
         else:
-            logger.error(
-                "ffmpeg failed to generate thumbnail for %s", filepath
-            )
             return (
                 None,
                 last_error or "ffmpeg did not produce a thumbnail file",
@@ -973,16 +974,18 @@ def get_person_embedding(
     return blob
 
 
-def update_person_embedding(session: Session, person_id: int):
+def update_person_embedding(session: Session, person_id: int, *, commit: bool = True):
     centroid = get_person_embedding(session, person_id, new=True)
-    if centroid is None:
-        return
     del_sql = text(
         """
         DELETE FROM person_embeddings WHERE person_id=:p_id
     """
     ).bindparams(p_id=person_id)
     session.exec(del_sql)
+    if centroid is None:
+        if commit:
+            safe_commit(session)
+        return
     sql = text(
         """
         INSERT INTO person_embeddings(person_id, embedding)
@@ -990,7 +993,21 @@ def update_person_embedding(session: Session, person_id: int):
     """
     ).bindparams(p_id=person_id, emb=centroid)
     session.exec(sql)
-    safe_commit(session)
+    if commit:
+        safe_commit(session)
+
+
+def refresh_persons(session: Session, person_ids: Iterable[int]) -> None:
+    """Refresh derived person state without committing the caller's transaction."""
+    ids = {pid for pid in person_ids if pid is not None}
+    recalculate_person_appearance_counts(session, ids)
+    for person_id in sorted(ids):
+        person = session.get(Person, person_id)
+        if person is not None:
+            profile = session.get(Face, person.profile_face_id) if person.profile_face_id else None
+            if profile is None or profile.person_id != person_id:
+                auto_select_profile_face(session, person_id)
+        update_person_embedding(session, person_id, commit=False)
 
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
@@ -1490,7 +1507,7 @@ def delete_record(media_id, session: Session):
         return _delete_record_locked(media_id, session)
 
 
-def _delete_record_locked(media_id, session: Session):
+def _delete_record_locked(media_id, session: Session, *, delete_original: bool = False):
     # Acquire a database write/row lease before checking attempts. Annotation
     # creation takes the same lease, so an attempt either commits first and
     # blocks deletion, or deletion commits first and admission sees no media.
@@ -1544,10 +1561,12 @@ def _delete_record_locked(media_id, session: Session):
                 "attempt_id": pending_attempt_id,
             },
         )
+    if delete_original:
+        _require_original_writable(Path(media.path))
     to_unlink: list[Path] = []
     thumbnail = media.thumbnail_path
     if not thumbnail:
-        thumbnail = str(media.id)
+        thumbnail = f"{media.id}.jpg"
     thumb = Path(settings.general.thumb_dir / thumbnail)
     if thumb.is_file():
         to_unlink.append(thumb)
@@ -1651,56 +1670,57 @@ def _delete_record_locked(media_id, session: Session):
         .where(Event.cover_media_id == media.id)
         .values(cover_media_id=None)
     )
-    for pid in affected_person_ids:
-        auto_select_profile_face(session, pid)
+    session.exec(delete(DatasetItem).where(DatasetItem.media_id == media.id))
+    session.exec(delete(MediaCurationStats).where(MediaCurationStats.media_id == media.id))
+    session.exec(
+        update(TrainingDataset)
+        .where(TrainingDataset.cover_media_id == media.id)
+        .values(cover_media_id=None)
+    )
+    original_path = Path(media.path)
     session.delete(media)
-    safe_commit(session)
-
-    for p in to_unlink:
+    refresh_persons(session, affected_person_ids)
+    # Validate the catalog deletion before touching the original. No helper above
+    # commits, so an unlink failure can roll back the complete catalog change.
+    session.flush()
+    if delete_original:
+        _require_original_writable(original_path)
         try:
-            p.unlink()
+            original_path.unlink()
         except FileNotFoundError:
             pass
+        except OSError as exc:
+            session.rollback()
+            raise HTTPException(status_code=409, detail=f"Could not delete original file: {exc}") from exc
+    safe_commit(session)
+
+    for path in to_unlink:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning("Could not remove thumbnail %s: %s", path, exc)
+
+
+def _require_original_writable(path: Path) -> None:
+    try:
+        settings.general.ensure_media_path_writable(path)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 def delete_file(session: Session, media_id: int):
     media = session.get(Media, media_id)
-    if not media:
+    if media is None:
         raise HTTPException(status_code=404, detail="Media not found")
-
-    orig = Path(media.path)
-    try:
-        settings.general.ensure_media_path_writable(orig)
-    except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-
-    # Captured before delete_record() deletes and commits the row — accessing
-    # attributes on `media` afterward raises ObjectDeletedError since the row
-    # backing it no longer exists to refresh from.
-    thumbnail_path = media.thumbnail_path
-
-    delete_record(media_id, session)
-
-    # delete original file
-    try:
-        orig.unlink()
-    except FileNotFoundError:
-        pass
-    except OSError as exc:
-        logger.warning("Failed to delete original file %s: %s", orig, exc)
-
-    # delete thumbnail (delete_record() already removes it; this is a no-op
-    # safety net in case that step was skipped)
-    if not thumbnail_path:
-        thumb = settings.general.thumb_dir / f"{media_id}.jpg"
-    else:
-        thumb = settings.general.thumb_dir / thumbnail_path
-    try:
-        thumb.unlink()
-    except FileNotFoundError:
-        pass
-    except OSError as exc:
-        logger.warning("Failed to delete thumbnail %s: %s", thumb, exc)
+    _require_original_writable(Path(media.path))
+    with MEDIA_ANNOTATION_MUTATION_LOCK:
+        try:
+            return _delete_record_locked(media_id, session, delete_original=True)
+        except Exception:
+            session.rollback()
+            raise
 
 
 def log_person_deleted(person: Person, *, reason: str, **context) -> None:
@@ -1716,7 +1736,7 @@ def log_person_deleted(person: Person, *, reason: str, **context) -> None:
     )
 
 
-def remove_person(person_id, session, *, reason="delete", **context):
+def remove_person(person_id, session, *, reason="delete", commit: bool = True, **context):
     if settings.general.presentation_mode:
         raise HTTPException(
             status_code=403,
@@ -1764,9 +1784,13 @@ def remove_person(person_id, session, *, reason="delete", **context):
     session.exec(
         delete(PersonSocialLink).where(PersonSocialLink.person_id == person_id)
     )
+    session.exec(
+        update(TrainingDataset).where(TrainingDataset.person_id == person_id).values(person_id=None)
+    )
     session.delete(person)
-    safe_commit(session)
-    log_person_deleted(person, reason=reason, **context)
+    if commit:
+        safe_commit(session)
+        log_person_deleted(person, reason=reason, **context)
 
 
 def _distance_to_similarity(dist: float) -> float:

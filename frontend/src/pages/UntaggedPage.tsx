@@ -21,11 +21,15 @@ import BulkResolveToolbar, {
   BulkResolveAction,
   FeedbackSeverity,
 } from "../components/BulkResolveToolbar";
+import { useSearchParams } from "react-router-dom";
+import FolderFilterSelect from "../components/FolderFilterSelect";
 import ReviewMediaGrid from "../components/ReviewMediaGrid";
 import SelectableMediaTile from "../components/SelectableMediaTile";
 import { formatBytes } from "../formatUtils";
 
 const UntaggedPage: React.FC = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const folder = searchParams.get("folder") || null;
   const [mediaType, setMediaType] = useState<"" | "image" | "video">("");
 
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: FeedbackSeverity }>({
@@ -37,9 +41,10 @@ const UntaggedPage: React.FC = () => {
       getUntaggedMedia({
         cursor: cursor ?? undefined,
         limit: 50,
+        folder,
         mediaType: mediaType || undefined,
       }),
-    [mediaType]
+    [mediaType, folder]
   );
 
   const {
@@ -75,9 +80,9 @@ const UntaggedPage: React.FC = () => {
   const resolveSelection = useCallback(
     ({ action, mediaIds, selectAll }: { action: BulkResolveAction; mediaIds?: number[]; selectAll?: boolean }) =>
       selectAll
-        ? resolveUntagged({ action, select_all: true, media_type: mediaType || undefined })
-        : resolveUntagged({ action, media_ids: mediaIds, media_type: mediaType || undefined }),
-    [mediaType]
+        ? resolveUntagged({ action, folder, select_all: true, media_type: mediaType || undefined })
+        : resolveUntagged({ action, folder, media_ids: mediaIds, media_type: mediaType || undefined }),
+    [mediaType, folder]
   );
 
   const handleResolved = useCallback(
@@ -122,6 +127,18 @@ const UntaggedPage: React.FC = () => {
           </FormControl>
         </Stack>
       </Paper>
+
+      <Box sx={{ mb: 2 }}>
+        <FolderFilterSelect
+          value={folder}
+          onChange={(nextFolder) => {
+            const next = new URLSearchParams(searchParams);
+            if (nextFolder) next.set("folder", nextFolder);
+            else next.delete("folder");
+            setSearchParams(next);
+          }}
+        />
+      </Box>
 
       {/* Stats + bulk actions */}
       <BulkResolveToolbar

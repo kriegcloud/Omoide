@@ -25,11 +25,15 @@ import BulkResolveToolbar, {
   BulkResolveAction,
   FeedbackSeverity,
 } from "../components/BulkResolveToolbar";
+import { useSearchParams } from "react-router-dom";
+import FolderFilterSelect from "../components/FolderFilterSelect";
 import ReviewMediaGrid from "../components/ReviewMediaGrid";
 import SelectableMediaTile from "../components/SelectableMediaTile";
 import { formatBytes } from "../formatUtils";
 
 const NopersonsPage: React.FC = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const folder = searchParams.get("folder") || null;
   const [mediaType, setMediaType] = useState<"" | "image" | "video">("");
   const [scope, setScope] = useState<"processed" | "all">("processed");
 
@@ -50,10 +54,11 @@ const NopersonsPage: React.FC = () => {
       getNoPersonsMedia({
         cursor: cursor ?? undefined,
         limit: 50,
+        folder,
         mediaType: mediaType || undefined,
         scope,
       }),
-    [mediaType, scope]
+    [mediaType, scope, folder]
   );
 
   const {
@@ -89,9 +94,9 @@ const NopersonsPage: React.FC = () => {
   const resolveSelection = useCallback(
     ({ action, mediaIds, selectAll }: { action: BulkResolveAction; mediaIds?: number[]; selectAll?: boolean }) =>
       selectAll
-        ? resolveNoPersons({ action, select_all: true, media_type: mediaType || undefined, scope })
-        : resolveNoPersons({ action, media_ids: mediaIds, media_type: mediaType || undefined, scope }),
-    [mediaType, scope]
+        ? resolveNoPersons({ action, folder, select_all: true, media_type: mediaType || undefined, scope })
+        : resolveNoPersons({ action, folder, media_ids: mediaIds, media_type: mediaType || undefined, scope }),
+    [mediaType, scope, folder]
   );
 
   const handleResolved = useCallback(
@@ -162,6 +167,18 @@ const NopersonsPage: React.FC = () => {
           </FormControl>
         </Stack>
       </Paper>
+
+      <Box sx={{ mb: 2 }}>
+        <FolderFilterSelect
+          value={folder}
+          onChange={(nextFolder) => {
+            const next = new URLSearchParams(searchParams);
+            if (nextFolder) next.set("folder", nextFolder);
+            else next.delete("folder");
+            setSearchParams(next);
+          }}
+        />
+      </Box>
 
       {/* Stats + bulk actions */}
       <BulkResolveToolbar
