@@ -112,6 +112,8 @@ export default function TagCard({
               <Box
                 key={`${item.type}-${item.id}`}
                 component="img"
+                loading="lazy"
+                decoding="async"
                 src={item.url}
                 draggable={false}
                 sx={{

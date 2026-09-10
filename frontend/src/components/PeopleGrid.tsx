@@ -1,3 +1,5 @@
+import ListStateView from "./ListState";
+import { useListInvalidation } from "../stores/useListStore";
 import { useUndo, useUndoRefresh } from "../context/UndoContext";
 import { refreshCachedList } from "../stores/useListStore";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -34,7 +36,6 @@ import {
   useListStore,
 } from "../stores/useListStore";
 import { useTaskCompletionVersion } from "../TaskEventsContext";
-import { clearPeopleGrids, resortPeopleGrid } from "../stores/peopleCache";
 import { Person, PersonReadSimple } from "../types";
 import ConfirmDialog from "./ConfirmDialog";
 import ClusteringStatusStrip from "./ClusteringStatusStrip";
@@ -77,7 +78,10 @@ export default function PeopleGrid({
       (state.lists[listKey] as ListState<PersonReadSimple> | undefined) ??
       (defaultListState as ListState<PersonReadSimple>),
   );
-  const { fetchInitial, loadMore, clearList, removeItems } = useListStore();
+  const fetchInitial = useListStore(state => state.fetchInitial);
+const loadMore = useListStore(state => state.loadMore);
+const clearList = useListStore(state => state.clearList);
+  useListInvalidation(listKey);
   const refreshKey = useTaskCompletionVersion([
     "process_media",
     "cluster_persons",
@@ -171,17 +175,12 @@ export default function PeopleGrid({
         ? await unhidePersonsBulk(ids)
         : await hidePersonsBulk(ids);
       const changedIds = [...("unhidden_ids" in result ? result.unhidden_ids : result.hidden_ids)];
-      removeItems(listKey, changedIds);
-      // The hidden/visible counterpart and any gender-filtered variant now
-      // hold stale membership; drop them so they refetch on their next visit.
-      clearPeopleGrids([listKey]);
       setQueueVersion((version) => version + 1);
       updateSelectionAfterRemoval(changedIds);
       if (changedIds.length) push({
         label: `${hidden ? "Unhidden" : "Hidden"} ${changedIds.length} people`,
         undo: async () => {
           const inverse = hidden ? await hidePersonsBulk(changedIds) : await unhidePersonsBulk(changedIds);
-          clearPeopleGrids();
           await refreshVisible();
           if (inverse.skipped_ids.length) throw new Error(`${inverse.skipped_ids.length} people could not be restored`);
         },
@@ -222,8 +221,6 @@ export default function PeopleGrid({
     setIsDeleting(true);
     try {
       const result = await deletePersonsBulk(ids);
-      removeItems(listKey, result.deleted_ids);
-      clearPeopleGrids([listKey]);
       setQueueVersion((version) => version + 1);
       updateSelectionAfterRemoval(result.deleted_ids);
       const deletedCount = result.deleted_ids.length;
@@ -261,42 +258,6 @@ export default function PeopleGrid({
     setIsMerging(true);
     try {
       const result = await mergeMultiplePersons(target.id, sourceIds);
-      removeItems(listKey, result.merged_ids);
-      const mergedIds = new Set(result.merged_ids);
-      const addedAppearances = selectedPeople.reduce(
-        (sum, person) =>
-          mergedIds.has(person.id)
-            ? sum + (person.appearance_count ?? 0)
-            : sum,
-        0,
-      );
-      if (addedAppearances > 0) {
-        useListStore.setState((state) => {
-          const list = state.lists[listKey];
-          if (!list) return state;
-          return {
-            lists: {
-              ...state.lists,
-              [listKey]: {
-                ...list,
-                items: list.items.map((person: PersonReadSimple) =>
-                  person.id === target.id
-                    ? {
-                        ...person,
-                        appearance_count:
-                          (person.appearance_count ?? 0) + addedAppearances,
-                      }
-                    : person,
-                ),
-              },
-            },
-          };
-        });
-      }
-      // The target's count grew, so its position in the count-ordered grid
-      // changed; re-sort this grid and drop the other cached variants.
-      resortPeopleGrid(listKey);
-      clearPeopleGrids([listKey]);
       setQueueVersion((version) => version + 1);
       updateSelectionAfterRemoval(result.merged_ids);
       setMergeOpen(false);
@@ -428,26 +389,13 @@ export default function PeopleGrid({
           <MergeQueue
             refreshVersion={queueVersion + refreshKey}
             onMerged={() => {
-              clearPeopleGrids([listKey]);
               refetch();
             }}
           />
         </>
       )}
 
-      {error && (
-        <Alert
-          severity="error"
-          sx={{ mb: 3 }}
-          action={
-            <Button color="inherit" size="small" onClick={refetch}>
-              Retry
-            </Button>
-          }
-        >
-          Failed to load people: {error}
-        </Alert>
-      )}
+      <ListStateView loading={isLoading && people.length === 0} error={error} empty={!isLoading && people.length === 0} emptyMessage="No people found." onRetry={refetch} />
 
       <Grid
         ref={gridRef}

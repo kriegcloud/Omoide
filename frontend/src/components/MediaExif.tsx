@@ -1,7 +1,7 @@
+import ListState from "./ListState";
 import React, { useState, useEffect } from "react";
 import {
   Box,
-  CircularProgress,
   Typography,
   Paper,
   Divider,
@@ -18,7 +18,6 @@ import IsoIcon from "@mui/icons-material/Iso";
 import ShutterSpeedIcon from "@mui/icons-material/ShutterSpeed";
 import ApertureIcon from "@mui/icons-material/DonutLarge";
 import MyLocationIcon from "@mui/icons-material/MyLocation";
-import { API } from "../config";
 import { getExifData } from "../services/exif";
 
 interface ExifData {
@@ -42,6 +41,7 @@ export function MediaExif({ mediaId }: MediaExifProps) {
   const [status, setStatus] = useState<"loading" | "loaded" | "error">(
     "loading"
   );
+  const [retry, setRetry] = useState(0);
   const [exif, setExif] = useState<ExifData | null>(null);
 
   useEffect(() => {
@@ -67,29 +67,10 @@ export function MediaExif({ mediaId }: MediaExifProps) {
     return () => {
       isCancelled = true;
     };
-  }, [mediaId]); // Re-fetches if the mediaId changes while the tab is open
+  }, [mediaId, retry]); // Re-fetches if the mediaId changes while the tab is open
 
-  if (status === "loading") {
-    return (
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          minHeight: "200px",
-        }}
-      >
-        <CircularProgress />
-      </Box>
-    );
-  }
-
-  if (status === "error" || !exif || Object.keys(exif).length === 0) {
-    return (
-      <Typography sx={{ textAlign: "center", py: 4 }}>
-        No EXIF data available.
-      </Typography>
-    );
+  if (status !== "loaded" || !exif || Object.keys(exif).length === 0) {
+    return <ListState loading={status === "loading"} error={status === "error" ? "Failed to load EXIF data." : null} empty={status === "loaded"} emptyMessage="No EXIF data available." onRetry={() => setRetry(value => value + 1)} />;
   }
 
   // Helper to render each EXIF data point with an icon

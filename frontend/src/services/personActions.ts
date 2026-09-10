@@ -1,3 +1,4 @@
+import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
 import {
   MergeCandidatesPage,
@@ -83,7 +84,9 @@ export const addSocialLink = async (
   if (!response.ok) {
     throw await socialLinkError(response, "Failed to add social link");
   }
-  return response.json();
+  const result = await response.json();
+  mutationBus.emit({ type: "person:changed", ids: [personId] });
+  return result;
 };
 
 export const deleteSocialLink = async (
@@ -97,6 +100,7 @@ export const deleteSocialLink = async (
   if (!response.ok) {
     throw await socialLinkError(response, "Failed to delete social link");
   }
+  mutationBus.emit({ type: "person:changed", ids: [personId] });
 };
 
 export const getSocialLinkSuggestions = async (
@@ -127,7 +131,9 @@ export const updatePerson = async (
     body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error("Failed to update person");
-  return res.json();
+  const result = await res.json();
+  mutationBus.emit({ type: "person:changed", ids: [personId] });
+  return result;
 };
 
 export const deletePerson = async (personId: number) => {
@@ -135,6 +141,7 @@ export const deletePerson = async (personId: number) => {
     method: "DELETE",
   });
   if (!res.ok) throw new Error("Failed to delete person");
+  mutationBus.emit({ type: "person:changed", ids: [personId] });
 };
 
 export const deletePersonsBulk = async (
@@ -146,7 +153,9 @@ export const deletePersonsBulk = async (
     body: JSON.stringify({ person_ids: personIds }),
   });
   if (!res.ok) throw new Error("Failed to delete selected people");
-  return res.json();
+  const result = await res.json();
+  mutationBus.emit({ type: "person:changed", ids: result.deleted_ids });
+  return result;
 };
 
 export const hidePerson = async (personId: number): Promise<Person> => {
@@ -154,7 +163,9 @@ export const hidePerson = async (personId: number): Promise<Person> => {
     method: "POST",
   });
   if (!res.ok) throw new Error("Failed to hide person");
-  return res.json();
+  const result = await res.json();
+  mutationBus.emit({ type: "person:changed", ids: [personId] });
+  return result;
 };
 
 export const unhidePerson = async (personId: number): Promise<Person> => {
@@ -162,7 +173,9 @@ export const unhidePerson = async (personId: number): Promise<Person> => {
     method: "POST",
   });
   if (!res.ok) throw new Error("Failed to unhide person");
-  return res.json();
+  const result = await res.json();
+  mutationBus.emit({ type: "person:changed", ids: [personId] });
+  return result;
 };
 
 export const hidePersonsBulk = async (
@@ -174,7 +187,9 @@ export const hidePersonsBulk = async (
     body: JSON.stringify({ person_ids: personIds }),
   });
   if (!res.ok) throw new Error("Failed to hide selected people");
-  return res.json();
+  const result = await res.json();
+  mutationBus.emit({ type: "person:changed", ids: result.hidden_ids });
+  return result;
 };
 
 export const unhidePersonsBulk = async (
@@ -186,7 +201,9 @@ export const unhidePersonsBulk = async (
     body: JSON.stringify({ person_ids: personIds }),
   });
   if (!res.ok) throw new Error("Failed to unhide selected people");
-  return res.json();
+  const result = await res.json();
+  mutationBus.emit({ type: "person:changed", ids: result.unhidden_ids });
+  return result;
 };
 
 export const getMergeCandidates = async (
@@ -231,6 +248,7 @@ export const mergePersons = async (sourceId: number, targetId: number) => {
     body: JSON.stringify({ source_id: sourceId, target_id: targetId }),
   });
   if (!res.ok) throw new Error("Failed to merge persons");
+  mutationBus.emit({ type: "person:changed", ids: [sourceId, targetId] });
 };
 
 export const mergeMultiplePersons = async (
@@ -243,7 +261,9 @@ export const mergeMultiplePersons = async (
     body: JSON.stringify({ source_ids: sourceIds }),
   });
   if (!res.ok) throw new Error("Failed to merge selected persons");
-  return res.json();
+  const result = await res.json();
+  mutationBus.emit({ type: "person:changed", ids: [targetId, ...result.merged_ids] });
+  return result;
 };
 
 export const autoMergeSimilarPersons = async (
@@ -253,7 +273,9 @@ export const autoMergeSimilarPersons = async (
     method: "POST",
   });
   if (!res.ok) throw new Error("Failed to auto-merge similar persons");
-  return res.json();
+  const result = await res.json();
+  mutationBus.emit({ type: "person:changed", ids: [personId, ...result.merged_ids] });
+  return result;
 };
 
 export const searchPersonsByName = async (
@@ -279,7 +301,9 @@ export const attachMediaToPersonBulk = async (
     body: JSON.stringify({ media_ids: mediaIds }),
   });
   if (!res.ok) throw new Error("Failed to attach selected media");
-  return res.json();
+  const result = await res.json();
+  mutationBus.emit({ type: "person:changed", ids: [personId] });
+  return result;
 };
 
 export const detachMediaFromPersonBulk = async (
@@ -292,7 +316,10 @@ export const detachMediaFromPersonBulk = async (
     body: JSON.stringify({ media_ids: mediaIds }),
   });
   if (!res.ok) throw new Error("Failed to detach selected media");
-  return res.json();
+  const result = await res.json();
+  mutationBus.emit({ type: "person:changed", ids: [personId] });
+  mutationBus.emit({ type: "face:detached", faceIds: (result.detached_faces ?? []).map((face: { id: number }) => face.id), personId });
+  return result;
 };
 
 export const reassignMediaToPerson = async (
@@ -309,7 +336,9 @@ export const reassignMediaToPerson = async (
     }
   );
   if (!res.ok) throw new Error("Failed to assign media to person");
-  return res.json();
+  const result = await res.json();
+  mutationBus.emit({ type: "person:changed", ids: [sourcePersonId, targetPersonId] });
+  return result;
 };
 
 export const getSuggestedFaces = async (
@@ -385,7 +414,10 @@ export const detachMediaFromPerson = async (
     { method: "POST" }
   );
   if (!res.ok) throw new Error("Failed to detach media from person");
-  return res.json();
+  const result = await res.json();
+  mutationBus.emit({ type: "person:changed", ids: [personId] });
+  mutationBus.emit({ type: "face:detached", faceIds: result.detached_faces.map((face: { id: number }) => face.id), personId });
+  return result;
 };
 
 export const setProfileFace = async (faceId: number, personId: number) => {
@@ -399,7 +431,9 @@ export const autoSelectProfileFace = async (personId: number): Promise<Person> =
   if (!res.ok) {
     throw new Error("Failed to auto-select profile image");
   }
-  return res.json();
+  const result = await res.json();
+  mutationBus.emit({ type: "person:changed", ids: [personId] });
+  return result;
 };
 
 export const addMediaAppearanceToPerson = async (
@@ -414,5 +448,7 @@ export const addMediaAppearanceToPerson = async (
   if (!res.ok) {
     throw new Error("Failed to add media appearance to person");
   }
-  return res.json();
+  const result = await res.json();
+  mutationBus.emit({ type: "person:changed", ids: [personId] });
+  return result;
 };

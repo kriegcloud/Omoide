@@ -44,6 +44,10 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
   onSelectionClick,
   onSelectGroup,
 }) => {
+  const validMasterId = group.items.some(item => item.id === masterId) ? masterId : group.items[0]?.id;
+  React.useEffect(() => {
+    if (validMasterId !== undefined && validMasterId !== masterId) onSelectMaster(validMasterId);
+  }, [validMasterId, masterId, onSelectMaster]);
   const selectedCount = group.items.filter((media) => selectedIds.has(media.id)).length;
   const [isProcessing, setIsProcessing] = useState(false);
   const [confirmAction, setConfirmAction] =
@@ -57,10 +61,12 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
 
     try {
       const requiresMaster = confirmAction !== "MARK_NOT_DUPLICATE";
+      if (requiresMaster && validMasterId === undefined) throw new Error("This group has no remaining master. Refresh the list.");
       await resolveDuplicates(
         group.group_id,
         confirmAction,
-        requiresMaster ? masterId : undefined
+        requiresMaster ? validMasterId : undefined,
+        group.items.map(item => item.id),
       );
 
       onGroupResolved();
@@ -179,7 +185,7 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
             <DuplicateMediaCard
               media={media}
               groupId={group.group_id}
-              isSelectedAsMaster={media.id === masterId}
+              isSelectedAsMaster={media.id === validMasterId}
               onSelectMaster={() => onSelectMaster(media.id)}
               selecting={selecting}
               selected={selectedIds.has(media.id)}

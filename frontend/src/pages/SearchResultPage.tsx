@@ -1,5 +1,7 @@
+import { mutationBus } from "../stores/mutationBus";
+import { ListRevision, mergeUnique } from "../stores/listReconciliation";
 import { useUndoRefresh } from "../context/UndoContext";
-import { refreshCachedList } from "../stores/useListStore";
+import { refreshCachedList, useListInvalidation } from "../stores/useListStore";
 import { getMedia } from "../services/media";
 import {
   Alert,
@@ -100,38 +102,59 @@ export default function SearchResultsPage() {
     return `${API}/api/search/${category}?${params.toString()}`;
   }, [category, query]);
 
+  useListInvalidation(listKey);
   const listState = useListStore((state) => state.lists[listKey]);
   const listItems = listState?.items || [];
   const listHasMore = listState?.hasMore ?? defaultListState.hasMore;
   const listIsLoading = listState?.isLoading ?? defaultListState.isLoading;
-  const { fetchInitial, loadMore, removeItem } = useListStore();
+  const fetchInitial = useListStore(state => state.fetchInitial);
+  const loadMore = useListStore(state => state.loadMore);
+  const removeItem = useListStore(state => state.removeItem);
+  const listError = listState?.error ?? null;
 
   // ---- local state for the media/combined category -----------------------
   const [refreshedImageItems, setRefreshedImageItems] = useState<MediaPreview[] | null>(null);
   const [mediaState, setMediaState] = useState<MediaSearchState>(emptyMediaState);
   const [orderBy, setOrderBy] = useState<"relevance" | "date">("relevance");
   const [retryTick, setRetryTick] = useState(0);
-  const activeQueryRef = useRef<string>("");
+  const revisionRef = useRef(new ListRevision());
+  const refreshLocalRef = useRef<(prefix: string) => void>(() => {});
+  useEffect(() => mutationBus.subscribe(event => {
+    if (event.type === "list:invalidate") { refreshLocalRef.current(event.prefix); return; }
+    if (event.type === "media:deleted") revisionRef.current.remove(event.ids);
+    else if (event.type === "media:updated" || event.type === "media:moved") revisionRef.current.patch(event.items);
+    else return;
+    setMediaState(previous => ({ ...previous, media: revisionRef.current.reconcile(previous.media, 0, false) }));
+    setRefreshedImageItems(previous => revisionRef.current.reconcile(previous ?? preloadedState?.items?.filter(isMedia) ?? [], 0, false));
+  }), [preloadedState]);
+  const activeQueryRef = useRef(0);
+  const paginationPendingRef = useRef(false);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [retryWaiting, setRetryWaiting] = useState(false);
   const resultsGridRef = useRef<HTMLDivElement>(null);
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
 
   // Initial load for the combined (media) category
   useEffect(() => {
+    const generation = ++activeQueryRef.current;
+    const revision = revisionRef.current.revision;
+    paginationPendingRef.current = false;
+    if (retryTimerRef.current !== null) clearTimeout(retryTimerRef.current);
+    setRetryWaiting(false);
     setRefreshedImageItems(null);
     if (category !== "media" || isImageSearch) return;
     if (!query) {
       setMediaState(emptyMediaState);
       return;
     }
-    const requestKey = `${query}|${orderBy}`;
-    activeQueryRef.current = requestKey;
+
     setMediaState({ ...emptyMediaState, isLoading: true });
     searchCombined(query, ITEMS_PER_PAGE, undefined, orderBy)
       .then((result) => {
-        if (activeQueryRef.current !== requestKey) return;
+        if (activeQueryRef.current !== generation) return;
         setMediaState({
           persons: result.persons ?? [],
-          media: result.media ?? [],
+          media: revisionRef.current.reconcile(result.media ?? [], revision, true),
           nextCursor: result.next_cursor,
           isLoading: false,
           hasMore: result.next_cursor !== null,
@@ -139,25 +162,29 @@ export default function SearchResultsPage() {
         });
       })
       .catch(() => {
-        if (activeQueryRef.current !== requestKey) return;
+        if (activeQueryRef.current !== generation) return;
         setMediaState({
           ...emptyMediaState,
           error: "Search failed. Please try again.",
         });
       });
+    return () => { activeQueryRef.current += 1; };
   }, [category, query, location.key, isImageSearch, orderBy, retryTick]);
 
-  const loadMoreMedia = useCallback(() => {
-    if (!mediaState.hasMore || mediaState.isLoading || !mediaState.nextCursor) return;
+  const loadMoreMedia = useCallback((retry = false) => {
+    if (!mediaState.hasMore || mediaState.isLoading || !mediaState.nextCursor ||
+      paginationPendingRef.current || (mediaState.error && !retry)) return;
+    paginationPendingRef.current = true;
     const cursor = mediaState.nextCursor;
-    const requestKey = `${query}|${orderBy}`;
-    setMediaState((prev) => ({ ...prev, isLoading: true }));
+    const generation = activeQueryRef.current;
+    const revision = revisionRef.current.revision;
+    setMediaState((prev) => ({ ...prev, isLoading: true, error: null }));
     searchCombined(query, ITEMS_PER_PAGE, cursor, orderBy)
       .then((result) => {
-        if (activeQueryRef.current !== requestKey) return;
+        if (activeQueryRef.current !== generation) return;
         setMediaState((prev) => ({
           ...prev,
-          media: [...prev.media, ...(result.media ?? [])],
+          media: mergeUnique(prev.media, revisionRef.current.reconcile(result.media ?? [], revision, false)),
           nextCursor: result.next_cursor,
           isLoading: false,
           hasMore: result.next_cursor !== null,
@@ -165,10 +192,29 @@ export default function SearchResultsPage() {
         }));
       })
       .catch(() => {
-        if (activeQueryRef.current !== requestKey) return;
-        setMediaState((prev) => ({ ...prev, isLoading: false }));
+        if (activeQueryRef.current !== generation) return;
+        setMediaState((prev) => ({ ...prev, isLoading: false, error: "Could not load more results. Retry to continue." }));
+      }).finally(() => {
+        if (activeQueryRef.current === generation) paginationPendingRef.current = false;
       });
-  }, [mediaState.hasMore, mediaState.isLoading, mediaState.nextCursor, query, orderBy]);
+  }, [mediaState.hasMore, mediaState.isLoading, mediaState.nextCursor, mediaState.error, query, orderBy]);
+
+  const retrySearch = () => {
+    if (retryWaiting) return;
+    setRetryWaiting(true);
+    const generation = activeQueryRef.current;
+    retryTimerRef.current = setTimeout(() => {
+      if (activeQueryRef.current !== generation) return;
+      setRetryWaiting(false);
+      if (category !== "media") { void refreshCachedList(listKey); return; }
+      if (isImageSearch) { refreshLocalRef.current(""); return; }
+      if (mediaState.nextCursor) loadMoreMedia(true);
+      else setRetryTick(tick => tick + 1);
+    }, 750);
+  };
+  useEffect(() => () => {
+    if (retryTimerRef.current !== null) clearTimeout(retryTimerRef.current);
+  }, []);
 
   // ---- list-store fetch for tag / scene ----------------------------------
   useEffect(() => {
@@ -188,7 +234,7 @@ export default function SearchResultsPage() {
     if (!inView) return;
     if (category === "media") {
       loadMoreMedia();
-    } else if (listHasMore && !listIsLoading) {
+    } else if (listHasMore && !listIsLoading && !listError) {
       const fetcherMap = {
         tag: (cursor?: string) => searchTags(query, ITEMS_PER_PAGE, cursor),
         scene: (cursor?: string) => searchScenes(query, ITEMS_PER_PAGE, cursor),
@@ -196,7 +242,7 @@ export default function SearchResultsPage() {
       const fetcher = fetcherMap[category as "tag" | "scene"];
       if (fetcher) loadMore(listKey, fetcher);
     }
-  }, [inView, category, listHasMore, listIsLoading, listKey, query, loadMore, loadMoreMedia]);
+  }, [inView, category, listHasMore, listIsLoading, listError, listKey, query, loadMore, loadMoreMedia]);
 
   // ---- derive visible items ----------------------------------------------
   const isLoading = category === "media" ? mediaState.isLoading : listIsLoading;
@@ -239,17 +285,47 @@ export default function SearchResultsPage() {
     onSelectionChange: setSelected,
   });
 
-  useUndoRefresh(`search:${category}:${query}`, async () => {
+  const refreshSearch = async () => {
+    const generation = ++activeQueryRef.current;
+    const revision = revisionRef.current.revision;
+    paginationPendingRef.current = false;
     if (category !== "media") { await refreshCachedList(listKey); return; }
-    if (isImageSearch) {
-      const details = await Promise.all(rawMediaItems.map((media) => getMedia(String(media.id))));
-      setRefreshedImageItems(details.map((detail, index) => ({ ...rawMediaItems[index], ...detail.media, thumbnail_path: detail.media.thumbnail_path ?? rawMediaItems[index].thumbnail_path })));
-      return;
+    setMediaState(previous => ({ ...previous, isLoading: true, error: null }));
+    try {
+      if (isImageSearch) {
+        const previews = await Promise.all(rawMediaItems.map(async media => {
+          try {
+            const detail = await getMedia(String(media.id));
+            return { ...media, ...detail.media, thumbnail_path: detail.media.thumbnail_path ?? media.thumbnail_path };
+          } catch (error) {
+            // Count-only mutation responses require re-reading membership. One
+            // removed image must not prevent the surviving previews refreshing.
+            if (error && typeof error === "object" && "status" in error && error.status === 404) return null;
+            throw error;
+          }
+        }));
+        if (generation !== activeQueryRef.current) return;
+        setRefreshedImageItems(revisionRef.current.reconcile(previews.filter((media): media is NonNullable<typeof media> => media !== null), revision, true));
+        return;
+      }
+      const result = await searchCombined(query, ITEMS_PER_PAGE, undefined, orderBy);
+      if (generation !== activeQueryRef.current) return;
+      setMediaState({ persons: result.persons ?? [], media: revisionRef.current.reconcile(result.media ?? [], revision, true),
+        nextCursor: result.next_cursor, hasMore: result.next_cursor !== null, isLoading: false, error: null });
+    } catch (error) {
+      if (generation === activeQueryRef.current) setMediaState(previous => ({ ...previous,
+        error: error instanceof Error ? error.message : "Search refresh failed. Please try again." }));
+      throw error;
+    } finally {
+      if (generation === activeQueryRef.current) setMediaState(previous => ({ ...previous, isLoading: false }));
     }
-    const result = await searchCombined(query, ITEMS_PER_PAGE, undefined, orderBy);
-    setMediaState({ persons: result.persons ?? [], media: result.media ?? [],
-      nextCursor: result.next_cursor, hasMore: result.next_cursor !== null, isLoading: false, error: null });
-  });
+  };
+  useUndoRefresh(`search:${category}:${query}`, refreshSearch);
+  refreshLocalRef.current = prefix => {
+    if (category !== "media" || !(prefix === "" || `search:${category}:${query}`.startsWith(prefix))) return;
+    // Errors are rendered by refreshSearch; the mutation has already succeeded.
+    void refreshSearch().catch(() => {});
+  };
 
   const navigationContext = useMemo(
     () =>
@@ -351,7 +427,7 @@ export default function SearchResultsPage() {
         </Box>
       )}
 
-      {category === "media" && mediaState.error && (
+      {(category === "media" ? mediaState.error : listError) && (
         <Alert
           severity="error"
           sx={{ mb: 3 }}
@@ -359,13 +435,14 @@ export default function SearchResultsPage() {
             <Button
               color="inherit"
               size="small"
-              onClick={() => setRetryTick((tick) => tick + 1)}
+              disabled={retryWaiting}
+              onClick={retrySearch}
             >
               Retry
             </Button>
           }
         >
-          {mediaState.error}
+          {category === "media" ? mediaState.error : listError}
         </Alert>
       )}
 
@@ -429,7 +506,7 @@ export default function SearchResultsPage() {
       {hasMore && !isLoading && <Box ref={loaderRef} sx={{ height: "1px" }} />}
       {!isLoading &&
         visibleItems.length === 0 &&
-        !(category === "media" && mediaState.error) && (
+        !(category === "media" ? mediaState.error : listError) && (
           <Typography sx={{ mt: 4 }}>No results found.</Typography>
         )}
     </Container>

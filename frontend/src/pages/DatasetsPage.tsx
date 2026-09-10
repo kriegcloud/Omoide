@@ -52,7 +52,7 @@ export default function DatasetsPage() {
               <CardActionArea component={Link} to={`/dataset/${dataset.id}`}>
                 <Box sx={{ aspectRatio: "16 / 10", bgcolor: "action.hover", display: "grid", placeItems: "center", overflow: "hidden" }}>
                   {dataset.cover?.thumbnail_path ? (
-                    <Box component="img" src={`${API}/thumbnails/${encodeFilePath(dataset.cover.thumbnail_path)}`} alt="" sx={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    <Box component="img" loading="lazy" decoding="async" src={`${API}/thumbnails/${encodeFilePath(dataset.cover.thumbnail_path)}`} alt="" sx={{ width: "100%", height: "100%", objectFit: "cover" }} />
                   ) : <DatasetIcon color="disabled" sx={{ fontSize: 56 }} />}
                 </Box>
                 <CardContent>

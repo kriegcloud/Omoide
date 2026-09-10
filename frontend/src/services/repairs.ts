@@ -55,8 +55,9 @@ export const startBulkRepair = (
 export const listBackgroundPrompts = () =>
   fetch(`${API}/api/repairs/background-prompts`).then(json<string[]>);
 
-export const listRepairs = (options: { resultMediaId?: number; limit?: number } = {}) => {
+export const listRepairs = (options: { resultMediaId?: number; limit?: number; cursor?: string | null } = {}) => {
   const params = new URLSearchParams({ limit: String(options.limit ?? 50) });
+  if (options.cursor) params.set("cursor", options.cursor);
   if (options.resultMediaId) params.set("result_media_id", String(options.resultMediaId));
   return fetch(`${API}/api/repairs/?${params}`).then(
     json<{ items: ImageRepairJob[]; next_cursor: string | null }>,

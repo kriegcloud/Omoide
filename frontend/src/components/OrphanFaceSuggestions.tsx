@@ -6,6 +6,10 @@ import {
   Chip,
   CircularProgress,
   Container,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
   Paper,
   Slider,
   Snackbar,
@@ -15,15 +19,25 @@ import {
 } from "@mui/material";
 import { Link as RouterLink } from "react-router-dom";
 import { useInView } from "react-intersection-observer";
-import { useUndo, useUndoRefresh } from "../context/UndoContext";
+import { useUndo, useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
+import { runOptimistic } from "../stores/mutationBus";
 import { assignSuggestedFaces, getOrphanFaceSuggestions } from "../services/face";
-import { detachFace } from "../services/faceActions";
-import { defaultListState, refreshCachedList, useListStore, type ListState } from "../stores/useListStore";
-import type { OrphanFaceSuggestion, SuggestedFaceAssignment } from "../types";
+import { assignFace, detachFace, rejectFaceSuggestion } from "../services/faceActions";
+import { defaultListState, refreshCachedList, useListStore, useListInvalidation, type ListState } from "../stores/useListStore";
+import type { OrphanFaceSuggestion, SuggestedFaceAssignment, Person } from "../types";
 import ConfirmDialog from "./ConfirmDialog";
 import { FaceGrid } from "./FaceGrid";
+import PersonPicker from "./PersonPicker";
+import ListStatus from "./ListState";
 
 type SuggestionItem = OrphanFaceSuggestion & { id: number };
+const reviewLaterKey = "omoide:orphan-faces:review-later";
+function readReviewLater(): number[] {
+  try {
+    const value: unknown = JSON.parse(sessionStorage.getItem(reviewLaterKey) ?? "[]");
+    return Array.isArray(value) ? value.filter((id): id is number => typeof id === "number") : [];
+  } catch { return []; }
+}
 
 const skippedReasons = {
   unknown_face: "face no longer exists",
@@ -36,10 +50,20 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange }: {
   onMinScoreChange: (value: number) => void;
 }) {
   const listKey = `orphan-face-suggestions:${minScore.toFixed(2)}`;
-  const { items, hasMore, isLoading, error }: ListState<SuggestionItem> = useListStore(
+  const { items: cachedItems, hasMore, isLoading, error }: ListState<SuggestionItem> = useListStore(
     (state) => state.lists[listKey] || defaultListState,
   );
-  const { clearList, fetchInitial, loadMore, removeItems } = useListStore();
+  const clearList = useListStore((state) => state.clearList);
+  const fetchInitial = useListStore((state) => state.fetchInitial);
+  const loadMore = useListStore((state) => state.loadMore);
+  useListInvalidation(listKey);
+  const [reviewLaterIds, setReviewLaterIds] = useState<number[]>(readReviewLater);
+  const [dismissedPairs, setDismissedPairs] = useState<string[]>([]);
+  const [optimisticFaceIds, setOptimisticFaceIds] = useState<number[]>([]);
+  const [alternativeFor, setAlternativeFor] = useState<SuggestionItem | null>(null);
+  const items = useMemo(() => cachedItems.filter((item) =>
+    !reviewLaterIds.includes(item.id) && !optimisticFaceIds.includes(item.id) && !dismissedPairs.includes(`${item.id}:${item.person_id}`)
+  ), [cachedItems, reviewLaterIds, optimisticFaceIds, dismissedPairs]);
   const { push, refreshVisible } = useUndo();
   const [sliderScore, setSliderScore] = useState(minScore);
   const [selectedFaceIds, setSelectedFaceIds] = useState<number[]>([]);
@@ -60,6 +84,7 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange }: {
     setSliderScore(minScore);
     setSelectedFaceIds([]);
     setPendingAssignments(null);
+    setAlternativeFor(null);
     setSnackbar(null);
     clearList(listKey);
     void fetchInitial(listKey, () => fetchPage());
@@ -72,16 +97,18 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange }: {
     await refreshCachedList(listKey);
   });
 
+  useMutationRefresh(["face:assigned", "face:detached", "face:deleted", "person:changed", "media:deleted"], () => refreshCachedList(listKey));
+
   const { ref: loaderRef, inView } = useInView({
     threshold: 0.5,
     skip: isLoading || !hasMore || !!error || isProcessing || pendingAssignments !== null,
     rootMargin: "0px 0px 200px 0px",
   });
   useEffect(() => {
-    if (inView && !error && !isProcessing && pendingAssignments === null) {
+    if (inView && hasMore && !isLoading && !error && !isProcessing && pendingAssignments === null) {
       void loadMore(listKey, fetchPage);
     }
-  }, [inView, error, isProcessing, pendingAssignments, loadMore, listKey, fetchPage]);
+  }, [inView, hasMore, isLoading, error, isProcessing, pendingAssignments, loadMore, listKey, fetchPage]);
 
   const faces = useMemo(() => items.map((item) => item.face), [items]);
   const suggestionsById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
@@ -94,7 +121,12 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange }: {
     processing.current = true;
     setIsProcessing(true);
     try {
-      const result = await assignSuggestedFaces(assignments, "suggestion");
+      const faceIds = assignments.map((item) => item.face_id);
+      const result = await runOptimistic({
+        apply: () => { setOptimisticFaceIds(faceIds); },
+        request: () => assignSuggestedFaces(assignments, "suggestion"),
+        rollback: () => { setOptimisticFaceIds([]); },
+      });
       const skippedIds = new Set(result.skipped.map((item) => item.face_id));
       const acceptedIds = assignments.map((item) => item.face_id).filter((id) => !skippedIds.has(id));
       if (acceptedIds.length) {
@@ -105,7 +137,6 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange }: {
             await refreshVisible();
           },
         });
-        removeItems(listKey, acceptedIds);
       }
       setSelectedFaceIds([]);
       const message = `Accepted ${result.assigned} suggestion(s).${result.skipped.length
@@ -125,9 +156,66 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange }: {
         severity: "error",
       });
     } finally {
+      setOptimisticFaceIds([]);
       processing.current = false;
       setIsProcessing(false);
       setPendingAssignments(null);
+    }
+  };
+
+  const reject = async (suggestion: SuggestionItem) => {
+    if (processing.current) return;
+    processing.current = true;
+    setIsProcessing(true);
+    const pair = `${suggestion.id}:${suggestion.person_id}`;
+    try {
+      await runOptimistic({
+        apply: () => { setDismissedPairs((previous) => [...previous, pair]); },
+        request: () => rejectFaceSuggestion(suggestion.id, suggestion.person_id),
+        rollback: () => { setDismissedPairs((previous) => previous.filter((value) => value !== pair)); },
+      });
+      setSelectedFaceIds((previous) => previous.filter((id) => id !== suggestion.id));
+    } catch (reason) {
+      setSnackbar({ message: reason instanceof Error ? reason.message : "Failed to reject suggestion.", severity: "error" });
+    } finally {
+      processing.current = false;
+      setIsProcessing(false);
+    }
+  };
+
+  const reviewLater = (faceId: number) => {
+    setReviewLaterIds((previous) => {
+      const next = [...new Set([...previous, faceId])];
+      try { sessionStorage.setItem(reviewLaterKey, JSON.stringify(next)); } catch { /* Keep the mounted session usable when storage is unavailable. */ }
+      return next;
+    });
+    setSelectedFaceIds((previous) => previous.filter((id) => id !== faceId));
+  };
+
+  const chooseAnother = async (person: Person) => {
+    if (!alternativeFor || processing.current) return;
+    const faceId = alternativeFor.id;
+    processing.current = true;
+    setIsProcessing(true);
+    try {
+      await runOptimistic({
+        apply: () => { setOptimisticFaceIds([faceId]); },
+        request: () => assignFace([faceId], person.id),
+        rollback: () => { setOptimisticFaceIds([]); },
+      });
+      setAlternativeFor(null);
+      setSelectedFaceIds((previous) => previous.filter((id) => id !== faceId));
+      push({
+        label: `Assigned face to ${person.name || `Person ${person.id}`}`,
+        undo: async () => { await detachFace([faceId]); await refreshVisible(); },
+      });
+      await refreshVisible();
+    } catch (reason) {
+      setSnackbar({ message: reason instanceof Error ? reason.message : "Failed to assign face.", severity: "error" });
+    } finally {
+      setOptimisticFaceIds([]);
+      processing.current = false;
+      setIsProcessing(false);
     }
   };
 
@@ -192,11 +280,13 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange }: {
           {isProcessing && <CircularProgress size={20} aria-label="Accepting suggestions" />}
         </Stack>
       </Paper>
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }} action={<Button color="inherit" onClick={retry} disabled={isProcessing}>Retry</Button>}>
-          Failed to load suggestions: {error}
-        </Alert>
-      )}
+      <ListStatus
+        loading={isLoading && cachedItems.length === 0}
+        error={error ? `Failed to load suggestions: ${error}` : null}
+        empty={!items.length && !isLoading}
+        emptyMessage={`No suggestions at or above ${minScore.toFixed(2)}. Try lowering the minimum score.`}
+        onRetry={retry}
+      />
       <FaceGrid
         faces={faces}
         selectedFaceIds={selectedFaceIds}
@@ -226,15 +316,24 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange }: {
               <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.25 }}>
                 {suggestion.pose_bin}
               </Typography>
+              <Stack data-tile-control data-no-marquee spacing={0.5} sx={{ mt: 0.75 }}>
+                <Button size="small" disabled={actionsDisabled} onClick={() => reject(suggestion)}>Not this person</Button>
+                <Button size="small" disabled={actionsDisabled} onClick={() => setAlternativeFor(suggestion)}>Choose another…</Button>
+                <Button size="small" disabled={actionsDisabled} onClick={() => reviewLater(suggestion.id)}>Review later</Button>
+              </Stack>
             </Box>
           );
         }}
       />
       {isLoading && <Box textAlign="center" py={4}><CircularProgress aria-label="Loading suggestions" /></Box>}
-      {!items.length && !isLoading && !error && (
-        <Typography align="center" sx={{ py: 4 }}>No suggestions at or above {minScore.toFixed(2)}. Try lowering the minimum score.</Typography>
-      )}
       {hasMore && <Box ref={loaderRef} sx={{ height: 50 }} />}
+      <Dialog open={alternativeFor !== null} onClose={isProcessing ? undefined : () => setAlternativeFor(null)} fullWidth>
+        <DialogTitle>Choose another person</DialogTitle>
+        <DialogContent>
+          {alternativeFor && <PersonPicker autoFocus disabled={isProcessing} excludeIds={[alternativeFor.person_id]} onSelect={chooseAnother} />}
+        </DialogContent>
+        <DialogActions><Button disabled={isProcessing} onClick={() => setAlternativeFor(null)}>Cancel</Button></DialogActions>
+      </Dialog>
       <ConfirmDialog
         open={pendingAssignments !== null}
         title="Accept suggested matches"

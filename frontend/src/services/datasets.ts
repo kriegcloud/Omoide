@@ -49,7 +49,10 @@ export const createDataset = (input: DatasetInput) => fetch(`${API}/api/datasets
 export const updateDataset = (id: number, input: Partial<TrainingDataset>) => fetch(`${API}/api/datasets/${id}`, {
   method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
 }).then(json<TrainingDataset>);
-export const deleteDataset = (id: number) => fetch(`${API}/api/datasets/${id}`, { method: "DELETE" });
+export const deleteDataset = async (id: number): Promise<void> => {
+  const response = await fetch(`${API}/api/datasets/${id}`, { method: "DELETE" });
+  if (!response.ok) throw new Error(`Failed to delete dataset (${response.status})`);
+};
 export const addDatasetItems = (id: number, mediaIds: number[]) => fetch(`${API}/api/datasets/${id}/items`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ media_ids: mediaIds }),
 }).then(json<{ added_ids: number[]; skipped_ids: number[] }>);

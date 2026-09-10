@@ -1,9 +1,11 @@
 import config from "../config";
 import { useHotkey } from "../hotkeys/useHotkey";
 import { SelectionHotkeyDialogs } from "../hotkeys/SelectionHotkeyDialogs";
-import { useUndo, useUndoRefresh } from "../context/UndoContext";
+import { useUndo, useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
+import { runOptimistic } from "../stores/mutationBus";
+import ListState from "../components/ListState";
 import { refreshCachedList } from "../stores/useListStore";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   Chip,
   Container,
@@ -25,7 +27,7 @@ import {
 } from "@mui/material";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useInView } from "react-intersection-observer";
-import { useListStore, defaultListState } from "../stores/useListStore";
+import { useListStore, defaultListState, useListInvalidation } from "../stores/useListStore";
 import { getOrphanFaces, getOrphanFaceCount } from "../services/face";
 import {
   assignFace,
@@ -84,17 +86,22 @@ export default function OrphanFacesPage() {
 function AllOrphanFaces() {
   const navigate = useNavigate();
   const listKey = "orphan-faces";
+  useListInvalidation(listKey);
   const { push, refreshVisible } = useUndo();
   useUndoRefresh(`cache:${listKey}`, () => refreshCachedList(listKey));
 
   // --- State Management ---
   const {
-    items: orphans,
+    items: storedOrphans,
     hasMore,
     isLoading,
     error,
   } = useListStore((state) => state.lists[listKey] || defaultListState);
-  const { fetchInitial, loadMore, removeItems, clearList } = useListStore();
+  const fetchInitial = useListStore((state) => state.fetchInitial);
+  const loadMore = useListStore((state) => state.loadMore);
+  const clearList = useListStore((state) => state.clearList);
+  const [optimisticFaceIds, setOptimisticFaceIds] = useState<number[]>([]);
+  const orphans = storedOrphans.filter((face) => !optimisticFaceIds.includes(face.id));
 
   // All UI state is now managed directly by the page
   const [isProcessing, setIsProcessing] = useState(false);
@@ -123,10 +130,9 @@ function AllOrphanFaces() {
   };
 
   // --- Infinite Scroll ---
-  // The 'skip' option is a crucial fix: it disables the observer while data is loading.
   const { ref: loaderRef, inView } = useInView({
     threshold: 0.5,
-    skip: isLoading || !hasMore || isProcessing,
+    skip: isLoading || !hasMore || isProcessing || !!error,
     rootMargin: "0px 0px 200px 0px",
   });
 
@@ -136,39 +142,46 @@ function AllOrphanFaces() {
   }, [clearList, fetchInitial, listKey]);
 
   useEffect(() => {
-    if (inView && !isProcessing) {
+    if (inView && hasMore && !isLoading && !error && !isProcessing) {
       loadMore(listKey, (cursor) => getOrphanFaces(cursor));
     }
-  }, [inView, loadMore, listKey, isProcessing]);
+  }, [inView, hasMore, isLoading, error, loadMore, listKey, isProcessing]);
 
-  useEffect(() => {
+  const refreshCount = useCallback(async () => {
     const request = ++countRequest.current;
-    if (!isProcessing) {
-      getOrphanFaceCount()
-        .then((count) => {
-          if (countRequest.current !== request) return;
-          setOrphanCount(count);
-          setCountError(null);
-        })
-        .catch((reason: unknown) => {
-          if (countRequest.current !== request) return;
-          setOrphanCount(null);
-          setCountError(reason instanceof Error ? reason.message : "Failed to load the total face count");
-        });
+    try {
+      const count = await getOrphanFaceCount();
+      if (countRequest.current !== request) return;
+      setOrphanCount(count);
+      setCountError(null);
+    } catch (reason) {
+      if (countRequest.current !== request) return;
+      setOrphanCount(null);
+      setCountError(reason instanceof Error ? reason.message : "Failed to load the total face count");
     }
+  }, []);
+  useEffect(() => {
+    if (!isProcessing) void refreshCount();
     return () => { countRequest.current += 1; };
-  }, [orphans.length, isProcessing]);
+  }, [storedOrphans.length, isProcessing, refreshCount]);
+  useUndoRefresh("orphan-count", refreshCount);
+  useMutationRefresh(["face:deleted", "face:assigned", "face:detached", "person:created", "media:deleted", "list:invalidate"], async () => {
+    await Promise.all([refreshCount(), refreshCachedList(listKey)]);
+  });
+
+  const optimisticallyRemoveFaces = <T,>(faceIds: number[], request: () => Promise<T>) => runOptimistic({
+    apply: () => { setOptimisticFaceIds((previous) => [...new Set([...previous, ...faceIds])]); },
+    request,
+    rollback: () => { setOptimisticFaceIds((previous) => previous.filter((id) => !faceIds.includes(id))); },
+  });
 
   // --- Action Handlers ---
   const handleDeleteAll = async () => {
     setIsProcessing(true);
     try {
       const { deleted } = await deleteAllOrphanFaces();
-      clearList(listKey);
       setSelectedFaceIds([]);
-      setOrphanCount(0);
       showMessage(`Deleted ${deleted.toLocaleString()} unassigned face${deleted === 1 ? "" : "s"}.`);
-      await fetchInitial(listKey, () => getOrphanFaces(null));
     } catch (reason) {
       showMessage(reason instanceof Error ? reason.message : "Failed to delete all unassigned faces.", "error");
     } finally {
@@ -181,8 +194,7 @@ function AllOrphanFaces() {
     const faceIds = [...selectedFaceIds];
     setIsProcessing(true);
     try {
-      await deleteFace(faceIds);
-      removeItems(listKey, faceIds);
+      await optimisticallyRemoveFaces(faceIds, () => deleteFace(faceIds));
       setSelectedFaceIds([]);
       showMessage(
         `Deleted ${faceIds.length} face${faceIds.length === 1 ? "" : "s"}.`
@@ -191,6 +203,7 @@ function AllOrphanFaces() {
       console.error("Failed to delete faces:", err);
       showMessage("Failed to delete faces.", "error");
     } finally {
+      setOptimisticFaceIds((previous) => previous.filter((id) => !faceIds.includes(id)));
       setIsProcessing(false);
       setConfirmDeleteOpen(false);
     }
@@ -201,11 +214,10 @@ function AllOrphanFaces() {
     const faceIds = [...selectedFaceIds];
     setIsProcessing(true);
     try {
-      const newPerson = await createPersonFromFaces(faceIds, newPersonName);
+      const newPerson = await optimisticallyRemoveFaces(faceIds, () => createPersonFromFaces(faceIds, newPersonName));
       if (!newPerson?.id) {
         throw new Error("Failed to get ID for newly created person.");
       }
-      removeItems(listKey, faceIds);
       setSelectedFaceIds([]);
       setCreateDialogOpen(false);
       navigate(`/person/${newPerson.id}`, { state: { forceRefresh: true } });
@@ -213,6 +225,7 @@ function AllOrphanFaces() {
       console.error("Failed to create and navigate to new person:", err);
       showMessage("Failed to create new person.", "error");
     } finally {
+      setOptimisticFaceIds((previous) => previous.filter((id) => !faceIds.includes(id)));
       setIsProcessing(false);
     }
   };
@@ -226,7 +239,7 @@ function AllOrphanFaces() {
     const faceIds = [...selectedFaceIds];
     setIsProcessing(true);
     try {
-      await assignFace(faceIds, person.id);
+      await optimisticallyRemoveFaces(faceIds, () => assignFace(faceIds, person.id));
       setSnackbar((previous) => ({ ...previous, open: false }));
       push({
         label: `Assigned ${faceIds.length} face${faceIds.length === 1 ? "" : "s"} to ${person.name || `Person ${person.id}`}`,
@@ -235,13 +248,13 @@ function AllOrphanFaces() {
           await refreshVisible();
         },
       });
-      removeItems(listKey, faceIds);
       setSelectedFaceIds([]);
       setAssignDialogOpen(false);
     } catch (err) {
       console.error("Failed to assign faces:", err);
       showMessage("Failed to assign faces.", "error");
     } finally {
+      setOptimisticFaceIds((previous) => previous.filter((id) => !faceIds.includes(id)));
       setIsProcessing(false);
     }
   };
@@ -262,18 +275,6 @@ function AllOrphanFaces() {
   useHotkey({ key: "a" }, openAssignDialog, { scope: "page", enabled: selectedFaceIds.length > 0 && !isProcessing && !config.PRESENTATION_MODE, description: "Assign selected faces…" });
   useHotkey({ key: "Escape" }, () => setSelectedFaceIds([]), { scope: "page", enabled: selectedFaceIds.length > 0, description: "Clear face selection" });
 
-  if (isLoading && orphans.length === 0) {
-    return (
-      <Box
-        display="flex"
-        justifyContent="center"
-        alignItems="center"
-        height="calc(100vh - 64px)"
-      >
-        <CircularProgress />
-      </Box>
-    );
-  }
 
   return (
     <Container id="unassigned-faces" maxWidth="xl" sx={{ pt: 4, pb: 7 }}>
@@ -342,27 +343,15 @@ function AllOrphanFaces() {
         </Paper>
       )}
 
-      {error && (
-        <Alert
-          severity="error"
-          sx={{ mb: 2 }}
-          action={
-            <Button color="inherit" size="small" onClick={handleRetry}>
-              Retry
-            </Button>
-          }
-        >
-          Failed to load unassigned faces: {error}
-        </Alert>
-      )}
-
-      {orphans.length === 0 && !isLoading ? (
-        !error && (
-          <Typography align="center" sx={{ py: 4 }}>
-            No unassigned faces found.
-          </Typography>
-        )
-      ) : (
+      <ListState
+        loading={isLoading && orphans.length === 0}
+        error={error ? `Failed to load unassigned faces: ${error}` : null}
+        empty={orphans.length === 0 && !isLoading}
+        emptyMessage="No unassigned faces found."
+        onRetry={handleRetry}
+        action={<Button onClick={() => navigate("/people")}>Browse people</Button>}
+      />
+      {orphans.length > 0 && (
         <FaceGrid
           faces={orphans}
           selectedFaceIds={selectedFaceIds}
@@ -380,10 +369,7 @@ function AllOrphanFaces() {
 
       <SelectionHotkeyDialogs includeDelete enabled={!isProcessing}
         mediaIds={[...new Set(orphans.filter(face => selectedFaceIds.includes(face.id)).map(face => face.media_id))]}
-        onProcessed={ids => {
-          removeItems(listKey, orphans.filter(face => ids.includes(face.media_id)).map(face => face.id));
-          setSelectedFaceIds([]);
-        }} />
+        onProcessed={() => setSelectedFaceIds([])} />
 
       {/* --- Dialogs --- */}
       {/* Assign Dialog */}

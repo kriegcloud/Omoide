@@ -1,3 +1,4 @@
+import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
 import { DuplicatePage, Task, DuplicateStats } from "../types";
 
@@ -52,7 +53,8 @@ export type ResolveAction =
 export const resolveDuplicates = async (
   groupId: number,
   action: ResolveAction,
-  masterMediaId?: number
+  masterMediaId?: number,
+  memberIds: number[] = [],
 ) => {
   const payload = {
     group_id: groupId,
@@ -69,9 +71,16 @@ export const resolveDuplicates = async (
   });
 
   if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.detail || "Failed to resolve duplicate group.");
+    const errorData = await response.json().catch(() => ({}));
+    // A 409 can follow committed per-member deletions. Re-read survivors everywhere.
+    if (response.status === 409) mutationBus.emit({ type: "list:invalidate", prefix: "" });
+    throw Object.assign(new Error(errorData.detail || "Failed to resolve duplicate group."), { status: response.status });
   }
 
-  return await response.json();
+  const result = await response.json();
+  const mediaIds = action === "MARK_NOT_DUPLICATE" ? [] : memberIds.filter(id => id !== masterMediaId);
+  if (mediaIds.length) mutationBus.emit({ type: "media:deleted", ids: mediaIds });
+  mutationBus.emit({ type: "duplicates:resolved", groupId, mediaIds });
+  if (action !== "MARK_NOT_DUPLICATE" && !memberIds.length) mutationBus.emit({ type: "list:invalidate", prefix: "" });
+  return result;
 };

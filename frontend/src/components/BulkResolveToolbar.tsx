@@ -64,7 +64,7 @@ interface BulkResolveToolbarProps {
     action: BulkResolveAction;
     mediaIds?: number[];
     selectAll?: boolean;
-  }) => Promise<{ removed: number }>;
+  }) => Promise<{ removed: number; processed_ids?: number[] }>;
   onResolved: (removedIds: number[], removed: number, selectAll: boolean) => void;
   onAssigned?: (mediaIds: number[], skippedCount: number) => void;
   onFeedback: (message: string, severity: FeedbackSeverity) => void;
@@ -110,7 +110,7 @@ const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
     const ids = pending.selectAll ? [] : Array.from(selectedIds);
     setIsActionLoading(true);
     try {
-      const { removed } = await resolve(
+      const { removed, processed_ids } = await resolve(
         pending.selectAll
           ? { action: pending.action, selectAll: true }
           : { action: pending.action, mediaIds: ids }
@@ -120,7 +120,7 @@ const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
       } else {
         onFeedback("No items matched", "warning");
       }
-      onResolved(ids, removed, pending.selectAll);
+      onResolved(processed_ids ?? [], removed, pending.selectAll || !Array.isArray(processed_ids));
       setPending(null);
     } catch (e) {
       onFeedback(e instanceof Error ? e.message : "Action failed", "error");

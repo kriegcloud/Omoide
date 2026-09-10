@@ -1,3 +1,4 @@
+import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
 import { BlurPage, Task } from "../types";
 import type { MediaResolveResult } from "../types";
@@ -46,7 +47,10 @@ export const resolveBlurry = async (
     const err = await response.json().catch(() => ({}));
     throw new Error(err.detail || "Failed to resolve blurry media");
   }
-  return response.json();
+  const result = await response.json();
+  if (Array.isArray(result.processed_ids)) mutationBus.emit({ type: "media:deleted", ids: result.processed_ids });
+  else mutationBus.emit({ type: "list:invalidate", prefix: "" });
+  return result;
 };
 
 export const startBlurScoring = async (): Promise<Task> => {

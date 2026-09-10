@@ -6,9 +6,11 @@ import React, {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 
 import { useLocation } from "react-router-dom";
+import { createSelectionSnapshotStore } from "../stores/selectionSnapshot";
 
 interface SelectionContextValue {
   listKey: string | null;
@@ -43,10 +45,13 @@ const defaultValue: SelectionContextValue = {
 };
 
 export const SelectionContext = createContext<SelectionContextValue>(defaultValue);
+const SelectionItemContext = createContext(createSelectionSnapshotStore(defaultValue));
 
 export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
+  const itemStore = useRef<ReturnType<typeof createSelectionSnapshotStore> | null>(null);
+  if (!itemStore.current) itemStore.current = createSelectionSnapshotStore(defaultValue);
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
@@ -128,14 +133,30 @@ export const SelectionProvider: React.FC<{ children: React.ReactNode }> = ({
     [listKey, listInfo, setListKey, setListInfo, syncRoute, isSelecting, selectedIds, beginSelecting, toggleSelecting, toggle, setSelected, clear]
   );
 
+  const store = itemStore.current;
+  useLayoutEffect(() => store.update(value), [store, value]);
+
   return (
     <SelectionContext.Provider value={value}>
-      {children}
+      <SelectionItemContext.Provider value={store}>{children}</SelectionItemContext.Provider>
     </SelectionContext.Provider>
   );
 };
 
 export const useSelection = () => useContext(SelectionContext);
+
+/** Subscribe to this tile's selected state and the shared select-mode flag. */
+export function useSelectionItem(id: number | null) {
+  const store = useContext(SelectionItemContext);
+  const getSnapshot = useCallback(() => store.getItemSnapshot(id), [store, id]);
+  const flags = useSyncExternalStore(store.subscribe, getSnapshot, getSnapshot);
+  return {
+    isSelecting: Boolean(flags & 1),
+    isSelected: Boolean(flags & 2),
+    toggle: store.toggle,
+    beginSelecting: store.beginSelecting,
+  };
+}
 
 /** Lives below the router; the selection provider deliberately lives above it. */
 export function SelectionRouteSync() {

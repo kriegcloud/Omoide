@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useInView } from "react-intersection-observer";
 import {
   MapContainer,
@@ -28,7 +28,7 @@ import {
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import CancelIcon from "@mui/icons-material/Cancel";
 import L from "../utils/leaflet";
-import { useListStore, defaultListState } from "../stores/useListStore";
+import { useListStore, defaultListState, useListInvalidation } from "../stores/useListStore";
 import { MediaImage } from "../components/MediaImage";
 import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
@@ -63,13 +63,15 @@ function FitBounds({ bounds }: { bounds: any | null }) {
 export default function MapEditorPage() {
   // Core State
   const listKey = "media-missing-geolocation";
+  useListInvalidation(listKey);
 
   const {
     items: orphans,
     hasMore,
     isLoading,
   } = useListStore((state) => state.lists[listKey] || defaultListState);
-  const { fetchInitial, loadMore, removeItem } = useListStore();
+  const fetchInitial = useListStore(state => state.fetchInitial);
+  const loadMore = useListStore(state => state.loadMore);
   const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
 
   const [selectedMedia, setSelectedMedia] = useState<MediaPreview | null>(null);
@@ -101,8 +103,13 @@ export default function MapEditorPage() {
     }
   }, [inView, hasMore, isLoading, loadMore, listKey]);
 
+  const searchGeneration = useRef(0);
   // Debounced search for locations using Nominatim API
   useEffect(() => {
+    const generation = ++searchGeneration.current;
+    const controller = new AbortController();
+    setSearchResults([]);
+    setSearchLoading(false);
     if (searchInput.length < 3) {
       setSearchResults([]);
       return;
@@ -112,14 +119,24 @@ export default function MapEditorPage() {
       fetch(
         `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
           searchInput
-        )}`
+        )}`, { signal: controller.signal }
       )
-        .then((res) => res.json())
-        .then((data) => setSearchResults(data))
-        .catch(console.error)
-        .finally(() => setSearchLoading(false));
+        .then((res) => {
+          if (!res.ok) throw new Error(`Location search failed (${res.status})`);
+          return res.json();
+        })
+        .then((data) => { if (generation === searchGeneration.current) setSearchResults(data); })
+        .catch(() => {
+          if (generation === searchGeneration.current && !controller.signal.aborted)
+            setSnackbar({ open: true, message: "Location search failed. Try again.", severity: "error" });
+        })
+        .finally(() => { if (generation === searchGeneration.current) setSearchLoading(false); });
     }, 500);
-    return () => clearTimeout(handler);
+    return () => {
+      clearTimeout(handler);
+      controller.abort();
+      searchGeneration.current += 1;
+    };
   }, [searchInput]);
 
   const handleSelectMedia = (media: MediaPreview) => {
@@ -140,9 +157,6 @@ export default function MapEditorPage() {
         newPosition.lat,
         newPosition.lng
       );
-
-      // 9. Use the store's action to optimistically update the list
-      removeItem(listKey, selectedMedia.id);
 
       setSnackbar({
         open: true,

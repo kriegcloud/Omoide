@@ -18,7 +18,10 @@ export default function TagsPage() {
   const { items, hasMore, isLoading } = useListStore(
     (state) => state.lists[listKey] || defaultListState
   );
-  const { fetchInitial, loadMore, removeItem, removeItems } = useListStore();
+  const fetchInitial = useListStore(state => state.fetchInitial);
+  const loadMore = useListStore(state => state.loadMore);
+  const removeItem = useListStore(state => state.removeItem);
+  const removeItems = useListStore(state => state.removeItems);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);

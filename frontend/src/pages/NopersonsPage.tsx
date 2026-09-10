@@ -48,6 +48,7 @@ const NopersonsPage: React.FC = () => {
     "process_media",
     "cluster_persons",
     "run_processor_for_media",
+    "clean_missing_files",
   ]);
 
   const fetcher = useCallback(
@@ -102,14 +103,12 @@ const NopersonsPage: React.FC = () => {
   );
 
   const handleResolved = useCallback(
-    (removedIds: number[], removed: number, selectAll: boolean) => {
-      if (selectAll) {
-        refetch();
-      } else {
-        removeItems(removedIds, removed);
-      }
+    (_removedIds: number[], _removed: number, selectAll: boolean) => {
+      // Successful service events reconcile processed ids across every list.
+      if (selectAll) void refetch();
+      clearSelection();
     },
-    [refetch, removeItems]
+    [refetch, clearSelection]
   );
 
   const handleAssigned = useCallback(
@@ -215,6 +214,8 @@ const NopersonsPage: React.FC = () => {
       <ReviewMediaGrid
         gridRef={gridRef}
         marqueeRect={marqueeRect}
+        error={error}
+        onRetry={refetch}
         itemCount={items.length}
         isLoading={isLoading}
         hasMore={hasMore}

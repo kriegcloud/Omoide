@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useInView } from "react-intersection-observer";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import {
   Alert,
   Box,
@@ -18,7 +18,9 @@ import {
   Fab,
   Typography,
 } from "@mui/material";
-import Masonry from "react-masonry-css";
+import { FixedSizeGrid, type GridChildComponentProps } from "react-window";
+import { useWindowedGrid } from "../hooks/useWindowedGrid";
+import type { SelectionClickEvent } from "../hooks/useMarqueeSelection";
 import SortIcon from "@mui/icons-material/Sort";
 import GridViewIcon from "@mui/icons-material/GridView";
 import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
@@ -26,7 +28,7 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import FolderIcon from "@mui/icons-material/Folder";
 import SearchOffIcon from "@mui/icons-material/SearchOff";
 import CameraAltIcon from "@mui/icons-material/CameraAlt";
-import { useListStore, defaultListState } from "../stores/useListStore";
+import { useListStore, defaultListState, useListInvalidation } from "../stores/useListStore";
 import MediaCard from "../components/MediaCard";
 import FolderCard from "../components/FolderCard";
 import { MediaSkeleton } from "../components/MediaSkeleton";
@@ -42,18 +44,23 @@ import { getCameras } from "../services/features";
 import { useTaskCompletionVersion } from "../TaskEventsContext";
 import { useHomeWidgets } from "../hooks/useHomeWidgets";
 import { HomeWidgetId } from "../homeWidgets";
-import { CameraCount, MediaFolderListing } from "../types";
+import { CameraCount, MediaFolderListing, MediaPreview } from "../types";
 import { useSelection } from "../context/SelectionContext";
 import { useGridSelection } from "../hooks/useMarqueeSelection";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 
-const breakpointColumnsObj = {
-  default: 5,
-  1600: 4,
-  1200: 3,
-  900: 3,
-  600: 2,
-};
+interface GridData {
+  items: MediaPreview[];
+  listKey: string;
+  onSelectionClick: (id: number, event: SelectionClickEvent) => boolean;
+}
+function MediaCell({ rowIndex, columnIndex, style, data }: GridChildComponentProps<GridData & { columns: number }>) {
+  const media = data.items[rowIndex * data.columns + columnIndex];
+  if (!media) return null;
+  return <div style={{ ...style, padding: 8, boxSizing: "border-box" }}>
+    <MediaCard media={media} mediaListKey={data.listKey} onSelectionClick={data.onSelectionClick} />
+  </div>;
+}
 
 export default function IndexPage() {
   const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
@@ -87,6 +94,17 @@ export default function IndexPage() {
   const [folderError, setFolderError] = useState<string | null>(null);
   const mediaGridRef = useRef<HTMLDivElement>(null);
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
+
+  const location = useLocation();
+  const selectionIntent = useRef<string | null>(null);
+  useEffect(() => {
+    // SelectionProvider synchronizes routes in a layout effect; consuming this
+    // intent in the passive phase preserves the album's Add media action.
+    if (location.state?.beginSelection && selectionIntent.current !== location.key) {
+      selectionIntent.current = location.key;
+      beginSelecting();
+    }
+  }, [location.key, location.state, beginSelecting]);
 
   const { widgets } = useHomeWidgets();
   const recentMediaEnabled = widgets.some(
@@ -131,16 +149,21 @@ export default function IndexPage() {
     return `media-${viewMode}-${sortOrder}-${folderKey}-${tagString}-${cameraKey}`;
   }, [sortOrder, tags, viewMode, currentFolder, camera]);
 
+  useListInvalidation(mediaListKey);
   const listState = useListStore((state) => state.lists[mediaListKey]);
-  const items = listState?.items ?? [];
+  const items: MediaPreview[] = listState?.items ?? [];
+  const orderedIds = useMemo(() => items.map(item => item.id), [items]);
   const hasMore = listState?.hasMore ?? defaultListState.hasMore;
   const isLoading = listState?.isLoading ?? defaultListState.isLoading;
   const listError = listState?.error ?? defaultListState.error;
-  const { fetchInitial, loadMore, clearList, clearListsByPrefix } =
-    useListStore();
+  const fetchInitial = useListStore(state => state.fetchInitial);
+  const loadMore = useListStore(state => state.loadMore);
+  const clearList = useListStore(state => state.clearList);
+  const clearListsByPrefix = useListStore(state => state.clearListsByPrefix);
   const { marqueeRect, onItemClick } = useGridSelection<number>({
     listKey: mediaListKey,
     loadedCount: items.length,
+    orderedIds,
     hasMore,
     containerRef: mediaGridRef,
     itemSelector: "[data-media-card]",
@@ -157,6 +180,8 @@ export default function IndexPage() {
     "scan",
     "process_media",
     "batch_edit_media",
+    "run_processor_for_media",
+    "clean_missing_files",
   ]);
   const [seenRefreshKey, setSeenRefreshKey] = useState(refreshKey);
   const hasNewItems = refreshKey !== seenRefreshKey;
@@ -182,47 +207,47 @@ export default function IndexPage() {
     camera,
   ]);
 
-  useEffect(() => {
-    if (recentMediaEnabled && inView && hasMore && !isLoading && !listError) {
-      loadMore(mediaListKey, (cursor) =>
-        getMediaList(cursor, sortOrder, tags, folderParam, recursive, camera)
-      ).catch(console.error);
+  const loadNextPage = useCallback(() => {
+    if (recentMediaEnabled && hasMore && !isLoading && !listError) {
+      void loadMore(mediaListKey, cursor => getMediaList(cursor, sortOrder, tags, folderParam, recursive, camera));
     }
-  }, [
-    recentMediaEnabled,
-    inView,
-    hasMore,
-    isLoading,
-    listError,
-    loadMore,
-    mediaListKey,
-    sortOrder,
-    tags,
-    folderParam,
-    recursive,
-    camera,
-  ]);
+  }, [recentMediaEnabled, hasMore, isLoading, listError, loadMore, mediaListKey, sortOrder, tags, folderParam, recursive, camera]);
+  // The sentinel bootstraps an empty list; populated lists use the windowed
+  // scrollport's visible range so a short fixed viewport cannot fetch forever.
+  useEffect(() => {
+    if (items.length === 0 && inView) loadNextPage();
+  }, [items.length, inView, loadNextPage]);
+  const windowed = useWindowedGrid({ ids: orderedIds, containerRef: mediaGridRef,
+    loadMore: loadNextPage, hasMore, loading: isLoading, error: listError, listKey: mediaListKey });
+  const gridData = useMemo(() => ({ items, listKey: mediaListKey, onSelectionClick: onItemClick, columns: windowed.columns }),
+    [items, mediaListKey, onItemClick, windowed.columns]);
 
+  const folderGeneration = useRef(0);
   const loadFolders = useCallback(async () => {
+    const generation = ++folderGeneration.current;
     if (!recentMediaEnabled || viewMode !== "folders") {
       return;
     }
     setIsFolderLoading(true);
+    setFolderListing(null);
     setFolderError(null);
     try {
       const data = await getMediaFolders(currentFolder ?? null);
+      if (generation !== folderGeneration.current) return;
       setFolderListing(data);
     } catch (error) {
+      if (generation !== folderGeneration.current) return;
       const message =
         error instanceof Error ? error.message : "Failed to load folders";
       setFolderError(message);
     } finally {
-      setIsFolderLoading(false);
+      if (generation === folderGeneration.current) setIsFolderLoading(false);
     }
   }, [recentMediaEnabled, viewMode, currentFolder]);
 
   useEffect(() => {
     void loadFolders();
+    return () => { folderGeneration.current += 1; };
   }, [loadFolders]);
 
   const refetchList = useCallback(() => {
@@ -650,22 +675,23 @@ export default function IndexPage() {
 
       {/* Media Grid */}
       {items.length > 0 && (
-        <Box ref={mediaGridRef} sx={{ position: "relative" }}>
-          <Masonry
-            breakpointCols={breakpointColumnsObj}
-            className="my-masonry-grid"
-            columnClassName="my-masonry-grid_column"
+        <Box ref={windowed.hostRef} sx={{ position: "relative" }}>
+          <FixedSizeGrid
+            ref={windowed.gridRef}
+            outerRef={mediaGridRef}
+            width={windowed.width}
+            height={windowed.height}
+            columnCount={windowed.columns}
+            columnWidth={windowed.cellSize}
+            rowCount={windowed.rows}
+            rowHeight={windowed.cellSize}
+            overscanRowCount={2}
+            itemData={gridData}
+            itemKey={({ rowIndex, columnIndex, data }) => data.items[rowIndex * data.columns + columnIndex]?.id ?? `empty-${rowIndex}-${columnIndex}`}
+            onItemsRendered={windowed.onItemsRendered}
           >
-            {items.map((mediaItem) => (
-              <div key={mediaItem.id}>
-                <MediaCard
-                  media={mediaItem}
-                  mediaListKey={mediaListKey}
-                  onSelectionClick={onItemClick}
-                />
-              </div>
-            ))}
-          </Masonry>
+            {MediaCell}
+          </FixedSizeGrid>
           <MarqueeSelectionBox
             container={mediaGridRef.current}
             rect={marqueeRect}
@@ -679,7 +705,7 @@ export default function IndexPage() {
           <CircularProgress />
         </Box>
       )}
-      {hasMore && !listError && <Box ref={loaderRef} sx={{ height: "10px" }} />}
+      {items.length === 0 && hasMore && !listError && <Box ref={loaderRef} sx={{ height: "10px" }} />}
     </>
   );
 

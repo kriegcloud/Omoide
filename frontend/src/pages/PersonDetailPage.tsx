@@ -20,6 +20,8 @@ export default function PersonDetailPage() {
   const {
     person,
     loading,
+    loadError,
+    retryDetail,
     saving,
     mergeOpen,
     setMergeOpen,
@@ -72,6 +74,16 @@ export default function PersonDetailPage() {
     handleFacesSortChange,
     fetchFacesForMedia,
   } = usePersonDetailPage();
+
+  if (!loading && (loadError || !person)) {
+    return (
+      <Container sx={{ py: 4 }}>
+        <Alert severity="error" action={<Button color="inherit" onClick={() => void retryDetail()}>Retry</Button>}>
+          {loadError || "Person not found"}
+        </Alert>
+      </Container>
+    );
+  }
 
   if (loading || !person) {
     return (
