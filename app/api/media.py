@@ -21,6 +21,9 @@ from sqlalchemy.orm import aliased, selectinload
 from sqlmodel import Session, col, select
 
 from app.config import settings
+from app.api._media_filters import exclude_missing, folder_filter
+from app.api._resolve import resolve_media_action
+from app.schemas.media import MediaBulkDeleteRequest, MediaBulkDeleteResponse
 from app.database import get_session, safe_commit, safe_execute
 from app.logger import logger
 from app.models import (
@@ -374,7 +377,7 @@ def get_missing_geo(
     limit: int = Query(100, ge=1, le=200),
 ):
     stmt = (
-        select(Media)
+        exclude_missing(select(Media))
         .join(ExifData)
         .where(ExifData.lat.is_(None))
         # Add a secondary unique sort key for stable ordering
@@ -447,10 +450,10 @@ def list_media(
     limit: int = Query(100, ge=1, le=200),
     session: Session = Depends(get_session),
 ):
-    q = select(Media).where(col(Media.processing_error).is_(None))
+    q = exclude_missing(select(Media)).where(col(Media.processing_error).is_(None))
     # select by tags
     if tags and len(tags) > 0:
-        q = q.join(Media.tags).where(Tag.name.in_(tags))
+        q = q.where(Media.tags.any(Tag.name.in_(tags)))
 
     if camera_make or camera_model:
         q = q.join(ExifData, ExifData.media_id == Media.id)
@@ -459,28 +462,7 @@ def list_media(
         if camera_model:
             q = q.where(ExifData.model == camera_model)
 
-    normalized_folder = ""
-    if folder is not None:
-        normalized_folder = _normalize_relative_path(folder)
-        normalized_path_expr = _relative_media_path_expr()
-        if normalized_folder:
-            prefix = f"{normalized_folder}/"
-            q = q.where(
-                _folder_prefix_clause(
-                    normalized_path_expr,
-                    normalized_folder,
-                )
-            )
-            if not recursive:
-                q = q.where(
-                    func.instr(
-                        func.substr(normalized_path_expr, len(prefix) + 1),
-                        "/",
-                    )
-                    == 0
-                )
-        elif not recursive:
-            q = q.where(func.instr(normalized_path_expr, "/") == 0)
+    q = q.where(folder_filter(folder, recursive=recursive))
 
     if sort == "newest":
         sort_col = Media.created_at
@@ -551,7 +533,7 @@ def list_media_folders(
 
     normalized_path_expr = _relative_media_path_expr()
 
-    where_clauses = []
+    where_clauses = [exclude_missing(select(Media.id)).whereclause]
     if normalized_parent:
         where_clauses.append(
             _folder_prefix_clause(normalized_path_expr, normalized_parent)
@@ -738,6 +720,14 @@ def create_folder(
         part for part in [body.parent_path.strip("/\\"), target.name] if part
     )
     return MediaFolderCreateResponse(path=relative_path, name=target.name)
+
+
+@router.post("/bulk-delete", response_model=MediaBulkDeleteResponse)
+def bulk_delete_media(body: MediaBulkDeleteRequest, session: Session = Depends(get_session)):
+    return resolve_media_action(
+        session, action=body.action, media_ids=body.media_ids,
+        select_all=False, base_filter=True, filter_ids=False, allow_empty=True,
+    )
 
 
 @router.post("/bulk-move", response_model=MediaBulkMoveResponse)
@@ -986,7 +976,7 @@ def list_locations(
 
     # Add a reasonable limit to prevent sending overwhelming amounts of data
     # for very dense areas, even within the viewport.
-    stmt = stmt.limit(5000)
+    stmt = exclude_missing(stmt).limit(5000)
 
     rows = session.exec(stmt).all()
     results = []
@@ -1018,7 +1008,7 @@ def list_images(
         ),
     ),
 ):
-    stmt = select(Media).where(
+    stmt = exclude_missing(select(Media)).where(
         Media.duration.is_(None), col(Media.processing_error).is_(None)
     )  # images have no duration
 
@@ -1072,7 +1062,7 @@ def list_videos(
         ),
     ),
 ):
-    stmt = select(Media).where(
+    stmt = exclude_missing(select(Media)).where(
         Media.duration != None, col(Media.processing_error).is_(None)
     )  # videos have a duration
     stmt = stmt.order_by(Media.inserted_at.desc(), Media.id.desc())
@@ -1118,7 +1108,7 @@ def list_favorites(
         ),
     ),
 ):
-    stmt = select(Media).where(
+    stmt = exclude_missing(select(Media)).where(
         Media.is_favorite == True, col(Media.processing_error).is_(None)
     )
 
@@ -1279,7 +1269,7 @@ def get_neighbors(
         raise HTTPException(404, "Media not found")
 
     original_sort_value = getattr(original, sort_col_name)
-    q = select(Media)
+    q = exclude_missing(select(Media))
 
     if filter_people:
         media_links_union = union_all(
@@ -1486,6 +1476,7 @@ def get_similar_media(media_id: int, k: int = 8, session=Depends(get_session)):
                         WHERE media_id = :id
                    )
                 AND media_id != :id
+               AND media_id IN (SELECT id FROM media WHERE missing_since IS NULL)
                AND k = :k
                AND distance < :maxd
              ORDER BY distance
@@ -1499,7 +1490,7 @@ def get_similar_media(media_id: int, k: int = 8, session=Depends(get_session)):
 
     media_ids = [row.media_id for row in rows]
     media_objs = session.exec(
-        select(Media).where(Media.id.in_(media_ids))
+        exclude_missing(select(Media)).where(Media.id.in_(media_ids))
     ).all()
     id_to_obj = {m.id: m for m in media_objs}
     ordered = [id_to_obj[mid] for mid in media_ids if mid in id_to_obj]

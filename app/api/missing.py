@@ -28,8 +28,14 @@ def _base_conditions(include_confirmed: bool, path_prefix: str | None):
     if not include_confirmed:
         conditions.append(Media.missing_confirmed.is_(False))
     if path_prefix:
-        like_pattern = f"{path_prefix.rstrip('/\\')}%"
-        conditions.append(Media.path.like(like_pattern))
+        prefix = path_prefix.rstrip("/\\")
+        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        conditions.append(
+            or_(
+                Media.path.like(f"{escaped}/%", escape="\\"),
+                Media.path.like(f"{escaped}\\\\%", escape="\\"),
+            )
+        )
     return conditions
 
 

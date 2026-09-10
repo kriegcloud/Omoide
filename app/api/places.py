@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import and_, or_
 from sqlmodel import Session, func, select
 
+from app.api._media_filters import exclude_missing
 from app.database import get_session
 from app.logger import logger
 from app.models import ExifData, Media
@@ -31,16 +32,13 @@ class PlaceCountry(BaseModel):
 def list_places(session: Session = Depends(get_session)):
     """Reverse-geocoded places grouped by country, largest first."""
     rows = session.exec(
-        select(
-            ExifData.country,
-            ExifData.city,
-            func.count(ExifData.media_id),
+        exclude_missing(
+            select(ExifData.country, ExifData.city, func.count(ExifData.media_id))
         )
         .join(Media, Media.id == ExifData.media_id)
         .where(
             ExifData.city.is_not(None),
             Media.processing_error.is_(None),
-            Media.missing_since.is_(None),
         )
         .group_by(ExifData.country, ExifData.city)
         .order_by(func.count(ExifData.media_id).desc())
@@ -52,7 +50,7 @@ def list_places(session: Session = Depends(get_session)):
         key = (country, city)
         if key not in covers:
             covers[key] = session.exec(
-                select(Media.thumbnail_path)
+                exclude_missing(select(Media.thumbnail_path))
                 .join(ExifData, ExifData.media_id == Media.id)
                 .where(
                     ExifData.city == city,
@@ -102,12 +100,11 @@ def list_place_media(
     session: Session = Depends(get_session),
 ):
     q = (
-        select(Media)
+        exclude_missing(select(Media))
         .join(ExifData, ExifData.media_id == Media.id)
         .where(
             ExifData.city == city,
             Media.processing_error.is_(None),
-            Media.missing_since.is_(None),
         )
         .order_by(Media.created_at.desc(), Media.id.desc())
     )

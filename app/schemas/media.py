@@ -28,6 +28,7 @@ class MediaRead(SQLModel):
     tags: list[TagSimple]
     extracted_scenes: bool
     thumbnail_path: str | None = None
+    missing_since: datetime | None = None
     is_favorite: bool = False
     edit_design_state: dict | None = None
 
@@ -46,7 +47,25 @@ class MediaPreview(SQLModel):
     created_at: datetime
     thumbnail_path: str | None
     size: int | None
+    missing_since: datetime | None = None
     is_favorite: bool = False
+
+
+class MediaBulkDeleteRequest(BaseModel):
+    media_ids: list[int] = PydanticField(min_length=1)
+    action: Literal["DELETE_FILES", "DELETE_RECORDS", "BLACKLIST_RECORDS"]
+
+
+class MediaDeleteError(BaseModel):
+    id: int
+    reason: str
+
+
+class MediaBulkDeleteResponse(BaseModel):
+    removed: int
+    processed_ids: list[int]
+    skipped_ids: list[int]
+    errors: list[MediaDeleteError]
 
 
 class RotateEditOp(BaseModel):

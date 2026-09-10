@@ -31,11 +31,13 @@ export const resolveBroken = async (
 export const retryBroken = async (payload: {
   media_ids?: number[];
   select_all?: boolean;
+  after_id?: number;
 }): Promise<{
   retried: number;
   cleared: number;
   still_broken: number;
   remaining?: number;
+  next_cursor?: number | null;
 }> => {
   const res = await fetch(`${API}/api/broken/retry`, {
     method: "POST",

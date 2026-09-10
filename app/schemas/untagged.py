@@ -29,4 +29,5 @@ class UntaggedResolveRequest(BaseModel):
     media_ids: list[int] = []
     action: Literal["DELETE_FILES", "DELETE_RECORDS", "BLACKLIST_RECORDS"]
     select_all: bool = False
+    folder: str | None = None
     media_type: str | None = None

@@ -5,8 +5,9 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
+from app.api._media_filters import exclude_missing
 from app.api.albums import AlbumRead, _album_read
 from app.config import settings
 from app.database import get_session, safe_commit
@@ -29,17 +30,18 @@ class EventRead(BaseModel):
 def _event_read(session: Session, event: Event) -> EventRead:
     cover_thumbnail = None
     if event.cover_media_id:
-        cover = session.get(Media, event.cover_media_id)
+        cover = session.exec(
+            exclude_missing(select(Media)).where(Media.id == event.cover_media_id)
+        ).first()
         if cover:
             cover_thumbnail = cover.thumbnail_path
     if cover_thumbnail is None:
         cover_thumbnail = session.exec(
-            select(Media.thumbnail_path)
+            exclude_missing(select(Media.thumbnail_path))
             .join(EventMediaLink, EventMediaLink.media_id == Media.id)
             .where(
                 EventMediaLink.event_id == event.id,
                 Media.thumbnail_path.is_not(None),
-                Media.missing_since.is_(None),
             )
             .order_by(Media.created_at.desc())
             .limit(1)
@@ -49,7 +51,13 @@ def _event_read(session: Session, event: Event) -> EventRead:
         title=event.title,
         start_at=event.start_at,
         end_at=event.end_at,
-        media_count=event.media_count,
+        media_count=session.exec(
+            exclude_missing(
+                select(func.count(EventMediaLink.media_id))
+                .join(Media, Media.id == EventMediaLink.media_id)
+            )
+            .where(EventMediaLink.event_id == event.id)
+        ).one(),
         cover_thumbnail=cover_thumbnail,
     )
 
@@ -236,12 +244,11 @@ def list_event_media(
     if not session.get(Event, event_id):
         raise HTTPException(404, "Event not found")
     q = (
-        select(Media)
+        exclude_missing(select(Media))
         .join(EventMediaLink, EventMediaLink.media_id == Media.id)
         .where(
             EventMediaLink.event_id == event_id,
             Media.processing_error.is_(None),
-            Media.missing_since.is_(None),
         )
         .order_by(Media.created_at.desc(), Media.id.desc())
     )

@@ -4,9 +4,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models import Media
+from app.schemas.media import MediaBulkDeleteResponse
 
 
 class BrokenMediaItem(BaseModel):
@@ -45,13 +46,14 @@ class BrokenResolveRequest(BaseModel):
     action: Literal["DELETE_FILES", "DELETE_RECORDS", "BLACKLIST_RECORDS"]
 
 
-class BrokenResolveResponse(BaseModel):
-    removed: int
+class BrokenResolveResponse(MediaBulkDeleteResponse):
+    pass
 
 
 class BrokenRetryRequest(BaseModel):
     media_ids: list[int] = []
     select_all: bool = False
+    after_id: int | None = Field(default=None, ge=0)
 
 
 class BrokenRetryResponse(BaseModel):
@@ -59,3 +61,4 @@ class BrokenRetryResponse(BaseModel):
     cleared: int
     still_broken: int
     remaining: int = 0
+    next_cursor: int | None = None

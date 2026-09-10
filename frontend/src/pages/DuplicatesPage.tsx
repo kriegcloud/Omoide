@@ -31,6 +31,8 @@ import { formatBytes } from "../formatUtils";
 import { useSelection } from "../context/SelectionContext";
 import { useGridSelection } from "../hooks/useMarqueeSelection";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
+import { useSearchParams } from "react-router-dom";
+import FolderFilterSelect from "../components/FolderFilterSelect";
 
 const ESTIMATED_GROUP_HEIGHT = 480;
 const LOADER_HEIGHT = 64;
@@ -91,6 +93,8 @@ function GroupRow({ index, style, data }: ListChildComponentProps<GroupRowData>)
 const groupRowKey = (index: number, data: GroupRowData) => data.groups[index]?.group_id ?? "loader";
 
 const DuplicatesPage: React.FC = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const folder = searchParams.get("folder") || null;
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
   const gridRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
@@ -105,8 +109,8 @@ const DuplicatesPage: React.FC = () => {
   const [minCount, setMinCount] = useState<number>(2);
 
   const listKey = useMemo(
-    () => `duplicate-groups-${sortBy}-${mediaType}-${minCount}`,
-    [sortBy, mediaType, minCount]
+    () => `duplicate-groups-${sortBy}-${mediaType}-${minCount}-${encodeURIComponent(folder ?? "")}`,
+    [sortBy, mediaType, minCount, folder]
   );
 
   const {
@@ -141,24 +145,25 @@ const DuplicatesPage: React.FC = () => {
   const [stats, setStats] = useState<DuplicateStats | null>(null);
   const [isLoadingStats, setIsLoadingStats] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
+  const [statsVersion, setStatsVersion] = useState(0);
 
   const mt = mediaType || undefined;
 
   useEffect(() => {
     clearList(listKey);
-    fetchInitial(listKey, () => getDuplicates(null, sortBy, mt, 10, minCount));
+    fetchInitial(listKey, () => getDuplicates(null, sortBy, mt, 10, minCount, folder));
     setVisibleStopIndex(-1);
     rowHeights.current.clear();
     listRef.current?.scrollTo(0);
-  }, [fetchInitial, listKey, clearList, refreshKey, sortBy, mt, minCount]);
+  }, [fetchInitial, listKey, clearList, refreshKey, sortBy, mt, minCount, folder]);
 
   // A visible loader row requests the next cursor page; the effect runs again
   // when a short page arrives and still does not fill the viewport.
   useEffect(() => {
     if (hasMore && !isLoading && !listError && (groups.length === 0 || visibleStopIndex >= groups.length)) {
-      loadMore(listKey, (cursor) => getDuplicates(cursor, sortBy, mt, 10, minCount));
+      loadMore(listKey, (cursor) => getDuplicates(cursor, sortBy, mt, 10, minCount, folder));
     }
-  }, [visibleStopIndex, groups.length, hasMore, isLoading, listError, loadMore, listKey, sortBy, mt, minCount]);
+  }, [visibleStopIndex, groups.length, hasMore, isLoading, listError, loadMore, listKey, sortBy, mt, minCount, folder]);
 
   useLayoutEffect(() => {
     const element = viewportRef.current;
@@ -209,11 +214,13 @@ const DuplicatesPage: React.FC = () => {
 
   useEffect(() => {
     let isActive = true;
+    setStats(null);
+    setStatsError(null);
 
     const loadStats = async () => {
       setIsLoadingStats(true);
       try {
-        const result = await getDuplicateStats();
+        const result = await getDuplicateStats(folder);
         if (isActive) {
           setStats(result);
           setStatsError(null);
@@ -238,7 +245,7 @@ const DuplicatesPage: React.FC = () => {
     return () => {
       isActive = false;
     };
-  }, [refreshKey]);
+  }, [refreshKey, folder, statsVersion]);
 
   // This handler will be passed down to remove a whole group from the UI once it's resolved
   const handleGroupResolved = (groupId: number) => {
@@ -247,27 +254,12 @@ const DuplicatesPage: React.FC = () => {
     for (const media of group?.items ?? []) next.delete(media.id);
     setSelected(next);
     removeItem(listKey, groupId);
-    setIsLoadingStats(true);
-    getDuplicateStats()
-      .then((result) => {
-        setStats(result);
-        setStatsError(null);
-      })
-      .catch((error) => {
-        const message =
-          error instanceof Error
-            ? error.message
-            : "Failed to load duplicate statistics";
-        setStatsError(message);
-      })
-      .finally(() => {
-        setIsLoadingStats(false);
-      });
+    setStatsVersion((previous) => previous + 1);
   };
 
   const handleRetryLoad = () => {
     clearList(listKey);
-    fetchInitial(listKey, () => getDuplicates(null, sortBy, mt, 10, minCount));
+    fetchInitial(listKey, () => getDuplicates(null, sortBy, mt, 10, minCount, folder));
   };
 
   const formatNumber = (value: number) => value.toLocaleString();
@@ -317,6 +309,15 @@ const DuplicatesPage: React.FC = () => {
               <Typography variant="caption" color="text.secondary">Refreshing statistics...</Typography>
             )}
           </Box>
+          <FolderFilterSelect
+            value={folder}
+            onChange={(nextFolder) => {
+              const next = new URLSearchParams(searchParams);
+              if (nextFolder) next.set("folder", nextFolder);
+              else next.delete("folder");
+              setSearchParams(next);
+            }}
+          />
           <FormControl size="small" sx={{ minWidth: 140 }}>
             <InputLabel>Media Type</InputLabel>
             <Select

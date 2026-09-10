@@ -1,3 +1,4 @@
+import posixpath
 import uuid
 from datetime import date, datetime
 from enum import Enum, StrEnum
@@ -101,19 +102,21 @@ class TimelineEvent(SQLModel, table=True):
 
 
 class MediaTagLink(SQLModel, table=True):
+    __table_args__ = (sa.Index("ix_mediataglink_tag_id_media_id", "tag_id", "media_id"),)
+
     media_id: int = Field(
-        default=None, foreign_key="media.id", primary_key=True
+        default=None, foreign_key="media.id", primary_key=True, index=True
     )
-    tag_id: int = Field(default=None, foreign_key="tag.id", primary_key=True)
+    tag_id: int = Field(default=None, foreign_key="tag.id", primary_key=True, index=True)
     auto_score: float | None = Field(default=None)
 
 
 class PersonMediaLink(SQLModel, table=True):
     person_id: int = Field(
-        default=None, foreign_key="person.id", primary_key=True
+        default=None, foreign_key="person.id", primary_key=True, index=True
     )
     media_id: int = Field(
-        default=None, foreign_key="media.id", primary_key=True
+        default=None, foreign_key="media.id", primary_key=True, index=True
     )
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -162,10 +165,12 @@ class Blacklist(SQLModel, table=True):
 
 
 class PersonTagLink(SQLModel, table=True):
+    __table_args__ = (sa.Index("ix_persontaglink_tag_id_person_id", "tag_id", "person_id"),)
+
     person_id: int = Field(
         default=None, foreign_key="person.id", primary_key=True
     )
-    tag_id: int = Field(default=None, foreign_key="tag.id", primary_key=True)
+    tag_id: int = Field(default=None, foreign_key="tag.id", primary_key=True, index=True)
 
 
 class Tag(SQLModel, table=True):
@@ -199,12 +204,17 @@ class FaceAssignmentSource(str, Enum):
 
 
 class Face(SQLModel, table=True):
+    __table_args__ = (
+        sa.Index("ix_face_person_id_media_id", "person_id", "media_id"),
+        sa.Index("ix_face_person_id_det_score", "person_id", "det_score"),
+    )
+
     id: int = Field(default=None, primary_key=True)
     media_id: int = Field(foreign_key="media.id", index=True)
     person_id: int | None = Field(
         foreign_key="person.id", default=None, index=True
     )
-    assigned_at: datetime | None = Field(default=None, nullable=True)
+    assigned_at: datetime | None = Field(default=None, nullable=True, index=True)
     assignment_source: str | None = Field(default=None, nullable=True)
     thumbnail_path: str | None = Field(default=None)
     bbox: list[int] = Field(sa_column=Column(JSON))
@@ -235,12 +245,20 @@ class Face(SQLModel, table=True):
 
 
 class Media(SQLModel, table=True):
+    __table_args__ = (
+        sa.Index("ix_media_is_favorite_created_at", "is_favorite", "created_at"),
+        sa.Index("ix_media_missing_confirmed_missing_since", "missing_confirmed", "missing_since"),
+        sa.Index("ix_media_missing_since_created_at", "missing_since", "created_at"),
+    )
+
     id: int = Field(default=None, primary_key=True)
     path: str = Field(unique=True)
+    folder: str | None = Field(default=None, index=True)
+    pixel_count: int | None = Field(default=None, index=True)
     filename: str = Field(index=True)
     thumbnail_path: str | None = Field(default=None, nullable=True)
     size: int
-    duration: float | None = None
+    duration: float | None = Field(default=None, index=True)
     width: int | None = None
     height: int | None = None
     views: int = Field(default=0, index=True)
@@ -255,7 +273,7 @@ class Media(SQLModel, table=True):
     missing_since: datetime | None = Field(default=None, index=True)
     missing_confirmed: bool = Field(default=False, index=True)
 
-    processing_error: str | None = Field(default=None, nullable=True)
+    processing_error: str | None = Field(default=None, nullable=True, index=True)
 
     is_favorite: bool = Field(default=False)
     phash: str | None = Field(index=True)
@@ -286,6 +304,18 @@ class Media(SQLModel, table=True):
         if self.id == other.id:
             return True
         return False
+
+
+@sa.event.listens_for(Media, "before_insert")
+@sa.event.listens_for(Media, "before_update")
+def _sync_media_query_columns(mapper, connection, media: Media) -> None:
+    """Keep stored query keys current for scan, move, and image-edit writes."""
+    media.folder = posixpath.dirname(media.path.replace("\\", "/"))
+    media.pixel_count = (
+        media.width * media.height
+        if media.width is not None and media.height is not None
+        else None
+    )
 
 
 class AnnotationAttempt(SQLModel, table=True):
@@ -501,6 +531,7 @@ class TrainingDataset(SQLModel, table=True):
 
 class DatasetItem(SQLModel, table=True):
     __table_args__ = (
+        sa.Index("ix_datasetitem_dataset_id_position_id", "dataset_id", "position", "id"),
         sa.UniqueConstraint(
             "dataset_id", "media_id", name="uq_datasetitem_dataset_media"
         ),
@@ -695,6 +726,8 @@ class Person(SQLModel, table=True):
 
 
 class ProcessingTask(SQLModel, table=True):
+    __table_args__ = (sa.Index("ix_processingtask_task_type_status", "task_type", "status"),)
+
     id: str = Field(
         default_factory=lambda: str(uuid.uuid4()), primary_key=True
     )
@@ -794,8 +827,10 @@ class DuplicateIgnore(SQLModel, table=True):
 
 
 class DuplicateMedia(SQLModel, table=True):
-    group_id: int = Field(foreign_key="duplicategroup.id", primary_key=True)
-    media_id: int = Field(foreign_key="media.id", primary_key=True)
+    __table_args__ = (sa.Index("ix_duplicatemedia_media_id_group_id", "media_id", "group_id"),)
+
+    group_id: int = Field(foreign_key="duplicategroup.id", primary_key=True, index=True)
+    media_id: int = Field(foreign_key="media.id", primary_key=True, index=True)
 
     group: DuplicateGroup = Relationship(back_populates="media_links")
     media: Media = Relationship(back_populates="duplicate_entries")
@@ -805,7 +840,7 @@ class PersonRelationship(SQLModel, table=True):
     __tablename__ = "person_relationship"
 
     person_a_id: int = Field(foreign_key="person.id", primary_key=True)
-    person_b_id: int = Field(foreign_key="person.id", primary_key=True)
+    person_b_id: int = Field(foreign_key="person.id", primary_key=True, index=True)
     coappearance_count: int = Field(default=0, index=True)
     last_media_id: int | None = Field(default=None, foreign_key="media.id")
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -826,7 +861,7 @@ class Album(SQLModel, table=True):
 
 class AlbumMediaLink(SQLModel, table=True):
     album_id: int = Field(foreign_key="album.id", primary_key=True)
-    media_id: int = Field(foreign_key="media.id", primary_key=True)
+    media_id: int = Field(foreign_key="media.id", primary_key=True, index=True)
     created_at: datetime = Field(default_factory=datetime.now)
 
 
@@ -852,4 +887,4 @@ class Event(SQLModel, table=True):
 
 class EventMediaLink(SQLModel, table=True):
     event_id: int = Field(foreign_key="event.id", primary_key=True)
-    media_id: int = Field(foreign_key="media.id", primary_key=True)
+    media_id: int = Field(foreign_key="media.id", primary_key=True, index=True)

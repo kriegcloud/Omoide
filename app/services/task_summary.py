@@ -88,6 +88,10 @@ def summarize_task(task: ProcessingTask) -> str:
         return _plural(task.processed, "face") + " clustered"
 
     if task_type == "clean_missing_files":
+        awaiting_review = _count(result.get("awaiting_review")) or 0
+        if awaiting_review > 0:
+            flagged = _count(result.get("flagged")) or 0
+            return f"Flagged {flagged} missing · {awaiting_review} awaiting review in Missing Files"
         removed = _count(result.get("removed"))
         if removed is not None:
             return "No missing records" if removed == 0 else _plural(removed, "record") + " removed"

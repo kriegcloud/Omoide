@@ -9,6 +9,7 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, delete, select
 
+from app.api._media_filters import exclude_missing, folder_filter
 from app.database import get_session
 from app.logger import logger
 from app.models import (
@@ -19,6 +20,7 @@ from app.models import (
     Media,
 )
 from app.schemas.duplicates import (
+    DuplicateMediaPreview,
     DuplicateFolderStat,
     DuplicatePage,
     DuplicateStats,
@@ -50,6 +52,7 @@ def get_duplicates(
     min_count: int = Query(
         2, ge=2, description="Minimum number of items in a duplicate group"
     ),
+    folder: str | None = None,
 ):
     """
     Returns a paginated list of duplicate groups. Supports sorting by item count or
@@ -60,6 +63,8 @@ def get_duplicates(
             DuplicateMedia.group_id,
             func.count(DuplicateMedia.media_id).label("item_count"),
         )
+        .join(Media, Media.id == DuplicateMedia.media_id)
+        .where(Media.missing_since.is_(None))
         .group_by(DuplicateMedia.group_id)
         .subquery()
     )
@@ -71,6 +76,7 @@ def get_duplicates(
                 func.coalesce(func.sum(Media.size), 0).label("total_size"),
             )
             .join(Media, Media.id == DuplicateMedia.media_id)
+            .where(Media.missing_since.is_(None))
             .group_by(DuplicateMedia.group_id)
             .subquery()
         )
@@ -115,17 +121,15 @@ def get_duplicates(
         )
         sort_col = counts_subquery.c.item_count
 
-    if media_type is not None:
+    if media_type is not None or folder is not None:
         type_filter = (
             select(DuplicateMedia.group_id)
             .join(Media, Media.id == DuplicateMedia.media_id)
-            .where(
-                Media.duration.is_(None)
-                if media_type == "image"
-                else Media.duration.isnot(None)
-            )
+            .where(Media.missing_since.is_(None), folder_filter(folder))
             .distinct()
         )
+        if media_type is not None:
+            type_filter = type_filter.where(Media.duration.is_(None) if media_type == "image" else Media.duration.isnot(None))
         query = query.where(DuplicateGroup.id.in_(type_filter))
 
     cursor_key = None
@@ -169,11 +173,12 @@ def get_duplicates(
             last_sort_key = int(item_count or 0)
 
         media_objects = sorted(
-            [link.media for link in group_db.media_links], key=lambda m: m.id
+            [link.media for link in group_db.media_links if link.media is not None and link.media.missing_since is None],
+            key=lambda m: (-(m.size or 0), -((m.width or 0) * (m.height or 0)), m.id)
         )
         group_schema = DuplicateGroupSchema(
             group_id=group_db.id,
-            items=[MediaPreview.model_validate(m) for m in media_objects],
+            items=[DuplicateMediaPreview(**MediaPreview.model_validate(m).model_dump(), best=index == 0) for index, m in enumerate(media_objects)],
         )
         response_items.append(group_schema)
         last_group_id = group_db.id
@@ -188,6 +193,7 @@ def get_duplicates(
 @router.get("/stats", response_model=DuplicateStats)
 def get_duplicate_stats(
     session: Session = Depends(get_session),
+    folder: str | None = None,
 ) -> DuplicateStats:
     data_stmt = select(
         DuplicateMedia.group_id,
@@ -195,6 +201,13 @@ def get_duplicate_stats(
         Media.size,
         Media.duration,
     ).join(Media, Media.id == DuplicateMedia.media_id)
+
+    data_stmt = exclude_missing(data_stmt)
+    if folder is not None:
+        qualifying = exclude_missing(
+            select(DuplicateMedia.group_id).join(Media, Media.id == DuplicateMedia.media_id)
+        ).where(folder_filter(folder))
+        data_stmt = data_stmt.where(DuplicateMedia.group_id.in_(qualifying))
 
     rows = session.exec(data_stmt).all()
     if not rows:
@@ -313,19 +326,24 @@ def get_duplicate_stats(
 def resolve_duplicate_group(
     request: ResolveDuplicatesRequest, session: Session = Depends(get_session)
 ):
-    # 1. Find all media IDs in the group
-    stmt = select(DuplicateMedia).where(
-        DuplicateMedia.group_id == request.group_id
+    # Actions cover the same visible members shown in the review group.
+    # Missing members retain their catalog rows and links for later recovery.
+    stmt = (
+        select(DuplicateMedia.media_id, Media.missing_since)
+        .join(Media, Media.id == DuplicateMedia.media_id)
+        .where(DuplicateMedia.group_id == request.group_id)
     )
     all_duplicates_in_group = session.exec(stmt).all()
-    all_media_ids_in_group = {dm.media_id for dm in all_duplicates_in_group}
+    all_media_ids_in_group = {media_id for media_id, _ in all_duplicates_in_group}
+    visible_media_ids = {media_id for media_id, missing_since in all_duplicates_in_group if missing_since is None}
+    hidden_media_ids = all_media_ids_in_group - visible_media_ids
 
     if not all_media_ids_in_group:
         raise HTTPException(
             status_code=404, detail="Duplicate group not found."
         )
 
-    if len(all_media_ids_in_group) <= 1:
+    if len(visible_media_ids) <= 1:
         raise HTTPException(
             status_code=400,
             detail="Duplicate group must contain at least two items.",
@@ -333,7 +351,7 @@ def resolve_duplicate_group(
 
     skipped_read_only = 0
     if request.action == "MARK_NOT_DUPLICATE":
-        sorted_ids = sorted(all_media_ids_in_group)
+        sorted_ids = sorted(visible_media_ids)
         existing_pairs = {
             (row[0], row[1])
             for row in session.exec(
@@ -357,15 +375,15 @@ def resolve_duplicate_group(
             raise HTTPException(
                 status_code=400, detail="master_media_id is required."
             )
-        if request.master_media_id not in all_media_ids_in_group:
+        if request.master_media_id not in visible_media_ids:
             raise HTTPException(
                 status_code=404,
                 detail="Master media ID not found in the specified group.",
             )
 
-        ids_to_process = all_media_ids_in_group - {request.master_media_id}
+        ids_to_process = visible_media_ids - {request.master_media_id}
 
-        media_to_process_stmt = select(Media).where(
+        media_to_process_stmt = exclude_missing(select(Media)).where(
             Media.id.in_(ids_to_process)
         )
         media_to_process = session.exec(media_to_process_stmt).all()
@@ -403,7 +421,17 @@ def resolve_duplicate_group(
     # Successful file deletions already remove their media links through
     # delete_record(). If a read-only item was skipped, keep the remaining
     # links and group so the unresolved duplicates remain visible for review.
-    if not skipped_read_only:
+    if not skipped_read_only and hidden_media_ids:
+        if request.action == "MARK_NOT_DUPLICATE":
+            session.exec(
+                delete(DuplicateMedia).where(
+                    DuplicateMedia.group_id == request.group_id,
+                    DuplicateMedia.media_id.in_(visible_media_ids),
+                )
+            )
+        # DELETE actions already removed the successful member links. Keep
+        # the master and hidden members together until those files recover.
+    elif not skipped_read_only:
         session.exec(
             delete(DuplicateMedia).where(
                 DuplicateMedia.group_id == request.group_id

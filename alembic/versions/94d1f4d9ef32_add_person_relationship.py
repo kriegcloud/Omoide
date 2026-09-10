@@ -45,7 +45,9 @@ def upgrade() -> None:
             "person_relationship",
             ["coappearance_count"],
         )
-    except OperationalError:
+    except OperationalError as error:
+        if "already exists" not in str(error.orig).lower():
+            raise
         print("Skipping creating of person_relationship as it already exists")
 
 

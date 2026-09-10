@@ -5,6 +5,7 @@ from sqlalchemy import and_, func
 from sqlmodel import Session, select
 
 from app.api._resolve import resolve_media_action
+from app.api._media_filters import exclude_missing, folder_filter
 from app.database import get_session
 from app.models import Face, Media
 from app.schemas.nopersons import NoPersonsMediaItem, NoPersonsPage, NoPersonsResolveRequest
@@ -37,13 +38,15 @@ def get_no_persons_media(
     limit: int = Query(50, ge=1, le=200),
     media_type: str | None = Query(None, description="'image', 'video', or omit for all"),
     scope: str = Query("processed", description="'processed' (faces_extracted=true only) or 'all'"),
+    folder: str | None = None,
 ):
     """Paginated list of media where face detection ran but found no faces."""
     base_filter = _base_filter(media_type, scope)
+    base_filter = and_(base_filter, folder_filter(folder))
 
-    total = session.exec(select(func.count(Media.id)).where(base_filter)).first() or 0
+    total = session.exec(exclude_missing(select(func.count(Media.id))).where(base_filter)).first() or 0
 
-    query = select(Media).where(base_filter).order_by(Media.id.desc())
+    query = exclude_missing(select(Media)).where(base_filter).order_by(Media.id.desc())
 
     if cursor:
         try:
@@ -82,11 +85,10 @@ def resolve_no_persons(
     request: NoPersonsResolveRequest,
     session: Session = Depends(get_session),
 ):
-    removed = resolve_media_action(
+    return resolve_media_action(
         session,
         action=request.action,
         media_ids=request.media_ids,
         select_all=request.select_all,
-        base_filter=_base_filter(request.media_type, request.scope),
+        base_filter=and_(_base_filter(request.media_type, request.scope), folder_filter(request.folder), Media.missing_since.is_(None)),
     )
-    return {"removed": removed}

@@ -22,6 +22,7 @@ from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, delete, distinct, select, text, update
 
+from app.api._media_filters import exclude_missing
 from app.config import require_mutation_allowed, settings
 from app.database import get_session, safe_commit, safe_execute
 from app.logger import logger
@@ -280,6 +281,10 @@ def get_person_timeline(
         .where(Media.id.in_(media_ids_subquery))
         .where(Media.created_at.is_not(None))
     )
+
+    media_query = exclude_missing(media_query)
+
+    # Subquery for one-time TimelineEvent items
     events_query = (
         select(
             TimelineEvent.id.label("item_id"),
@@ -897,7 +902,7 @@ def get_appearances(
         return MediaCursorPage(items=[], next_cursor=None)
 
     q = (
-        select(Media)
+        exclude_missing(select(Media))
         .where(Media.id.in_(matching_media_ids))
         .order_by(Media.created_at.desc())
     )

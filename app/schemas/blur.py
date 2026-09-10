@@ -30,5 +30,6 @@ class BlurResolveRequest(BaseModel):
     media_ids: list[int] = []
     action: Literal["DELETE_FILES", "DELETE_RECORDS", "BLACKLIST_RECORDS"]
     select_all: bool = False
+    folder: str | None = None
     threshold: float = 100.0
     media_type: str | None = None

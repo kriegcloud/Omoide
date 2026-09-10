@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import case, func
 from sqlmodel import Session, select
 
+from app.api._media_filters import exclude_missing
 from app.database import get_session
 from app.models import Face, Media
 from app.schemas.media import MediaPreview
@@ -15,7 +16,6 @@ router = APIRouter()
 
 _BROWSABLE = lambda: (
     Media.processing_error.is_(None),
-    Media.missing_since.is_(None),
     Media.thumbnail_path.is_not(None),
 )
 
@@ -40,7 +40,7 @@ def get_memories(
     month_day = date or now.strftime("%m-%d")
 
     rows = session.exec(
-        select(Media)
+        exclude_missing(select(Media))
         .where(
             *_BROWSABLE(),
             func.strftime("%m-%d", Media.created_at) == month_day,
@@ -89,7 +89,7 @@ def get_highlights(
     year_start = datetime(year, 1, 1)
     year_end = datetime(year + 1, 1, 1)
     rows = session.exec(
-        select(Media)
+        exclude_missing(select(Media))
         .where(
             *_BROWSABLE(),
             Media.created_at >= year_start,
@@ -110,9 +110,11 @@ class HighlightYear(BaseModel):
 def get_highlight_years(session: Session = Depends(get_session)):
     """Years that have browsable media, newest first."""
     rows = session.exec(
-        select(
-            func.strftime("%Y", Media.created_at).label("year"),
-            func.count(Media.id),
+        exclude_missing(
+            select(
+                func.strftime("%Y", Media.created_at).label("year"),
+                func.count(Media.id),
+            )
         )
         .where(*_BROWSABLE())
         .group_by("year")

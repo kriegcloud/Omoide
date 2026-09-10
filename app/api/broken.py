@@ -5,6 +5,7 @@ from sqlalchemy import func, text
 from sqlmodel import Session, col, delete, select
 
 from app.api._resolve import resolve_media_action
+from app.api._media_filters import exclude_missing
 from app.config import settings
 from app.database import get_session
 from app.models import Media, Scene
@@ -24,7 +25,9 @@ _RETRY_BATCH_LIMIT = 25
 
 
 def _broken_filter():
-    return col(Media.processing_error).isnot(None)
+    return exclude_missing(
+        select(Media.id).where(col(Media.processing_error).isnot(None))
+    ).whereclause
 
 
 def _delete_scenes(session: Session, media_id: int) -> None:
@@ -76,7 +79,7 @@ def resolve_broken(
     request: BrokenResolveRequest,
     session: Session = Depends(get_session),
 ):
-    removed = resolve_media_action(
+    result = resolve_media_action(
         session,
         action=request.action,
         media_ids=request.media_ids,
@@ -85,7 +88,7 @@ def resolve_broken(
         filter_ids=True,
         not_found_detail="No matching broken media found.",
     )
-    return BrokenResolveResponse(removed=removed)
+    return BrokenResolveResponse(**result)
 
 
 @router.post("/retry", response_model=BrokenRetryResponse)
@@ -95,8 +98,8 @@ def retry_broken(
 ):
     """Retry thumbnail generation for broken media. Clears the error for items that succeed.
 
-    Processes at most a fixed batch per call; `remaining` reports how many
-    matching items were not attempted so clients can call again.
+    Processes at most a fixed batch per call. Pass the returned `next_cursor`
+    as `after_id` to continue past attempted items, including persistent failures.
     """
     if settings.general.presentation_mode:
         raise HTTPException(
@@ -105,6 +108,8 @@ def retry_broken(
         )
 
     base_filter = _broken_filter()
+    if request.after_id is not None:
+        base_filter = base_filter & (Media.id > request.after_id)
     if request.select_all:
         count_query = select(func.count(Media.id)).where(base_filter)
         query = select(Media).where(base_filter)
@@ -122,6 +127,8 @@ def retry_broken(
     ).all()
 
     if not media_list:
+        if request.after_id is not None:
+            return BrokenRetryResponse(retried=0, cleared=0, still_broken=0)
         raise HTTPException(status_code=404, detail="No matching broken media found.")
 
     cleared = 0
@@ -150,4 +157,5 @@ def retry_broken(
         cleared=cleared,
         still_broken=still_broken,
         remaining=max(int(total) - len(media_list), 0),
+        next_cursor=media_list[-1].id if total > len(media_list) else None,
     )

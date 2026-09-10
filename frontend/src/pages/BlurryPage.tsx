@@ -26,6 +26,8 @@ import BulkResolveToolbar, {
   BulkResolveAction,
   FeedbackSeverity,
 } from "../components/BulkResolveToolbar";
+import { useSearchParams } from "react-router-dom";
+import FolderFilterSelect from "../components/FolderFilterSelect";
 import ReviewMediaGrid from "../components/ReviewMediaGrid";
 import SelectableMediaTile from "../components/SelectableMediaTile";
 import { formatBytes } from "../formatUtils";
@@ -39,6 +41,8 @@ const scoreColor = (score: number) => {
 const DEFAULT_THRESHOLD = 100;
 
 const BlurryPage: React.FC = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const folder = searchParams.get("folder") || null;
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
   const [pendingThreshold, setPendingThreshold] = useState(DEFAULT_THRESHOLD);
   const [mediaType, setMediaType] = useState<"" | "image" | "video">("");
@@ -59,9 +63,10 @@ const BlurryPage: React.FC = () => {
         threshold,
         cursor: cursor ?? undefined,
         limit: 50,
+        folder,
         mediaType: mediaType || undefined,
       }),
-    [threshold, mediaType]
+    [threshold, mediaType, folder]
   );
 
   const {
@@ -97,9 +102,9 @@ const BlurryPage: React.FC = () => {
   const resolveSelection = useCallback(
     ({ action, mediaIds, selectAll }: { action: BulkResolveAction; mediaIds?: number[]; selectAll?: boolean }) =>
       selectAll
-        ? resolveBlurry({ action, select_all: true, threshold, media_type: mediaType || undefined })
-        : resolveBlurry({ action, media_ids: mediaIds, threshold, media_type: mediaType || undefined }),
-    [threshold, mediaType]
+        ? resolveBlurry({ action, folder, select_all: true, threshold, media_type: mediaType || undefined })
+        : resolveBlurry({ action, folder, media_ids: mediaIds, threshold, media_type: mediaType || undefined }),
+    [threshold, mediaType, folder]
   );
 
   const handleResolved = useCallback(
@@ -194,6 +199,18 @@ const BlurryPage: React.FC = () => {
           </Button>
         </Stack>
       </Paper>
+
+      <Box sx={{ mb: 2 }}>
+        <FolderFilterSelect
+          value={folder}
+          onChange={(nextFolder) => {
+            const next = new URLSearchParams(searchParams);
+            if (nextFolder) next.set("folder", nextFolder);
+            else next.delete("folder");
+            setSearchParams(next);
+          }}
+        />
+      </Box>
 
       {/* Stats + bulk actions */}
       <BulkResolveToolbar

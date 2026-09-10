@@ -40,7 +40,9 @@ def upgrade() -> None:
             sa.PrimaryKeyConstraint("media_id_a", "media_id_b"),
         )
     # ### end Alembic commands ###
-    except OperationalError:
+    except OperationalError as error:
+        if "already exists" not in str(error.orig).lower():
+            raise
         print("Table duplicateignore already exists!")
 
 

@@ -144,17 +144,18 @@ const BrokenMediaPage: React.FC = () => {
       const payload = selectAll
         ? { select_all: true }
         : { media_ids: Array.from(selectedIds) };
-      // The server retries at most a small batch per call and reports how many
-      // matching items are left; keep going while batches still recover items.
+      // Continue past every attempted batch, including files that remain broken.
       let retried = 0;
       let cleared = 0;
       let stillBroken = 0;
+      let afterId: number | undefined;
       for (;;) {
-        const result = await retryBroken(payload);
+        const result = await retryBroken({ ...payload, after_id: afterId });
         retried += result.retried;
         cleared += result.cleared;
         stillBroken += result.still_broken;
-        if (!result.remaining || result.cleared === 0) break;
+        if (!result.remaining || result.next_cursor == null) break;
+        afterId = result.next_cursor;
       }
       setSnackbar({
         open: true,

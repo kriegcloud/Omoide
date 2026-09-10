@@ -5,6 +5,7 @@ from sqlalchemy import and_, func, or_
 from sqlmodel import Session, select
 
 from app.api._resolve import resolve_media_action
+from app.api._media_filters import exclude_missing, folder_filter
 from app.database import get_session
 from app.models import Media
 from app.schemas.lowresolution import LowResMediaItem, LowResPage, LowResResolveRequest
@@ -15,7 +16,7 @@ _DEFAULT_MAX_PIXELS = 1_000_000  # 1 MP
 
 
 def _base_filter(max_pixels: int, media_type: str | None):
-    pixel_count = Media.width * Media.height
+    pixel_count = Media.pixel_count
     base_filter = and_(
         Media.width.isnot(None),
         Media.height.isnot(None),
@@ -36,14 +37,16 @@ def get_low_res_media(
     cursor: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     media_type: str | None = Query(None, description="'image', 'video', or omit for all"),
+    folder: str | None = None,
 ):
     """Paginated list of media whose pixel count (width × height) is below max_pixels, ordered lowest-first."""
-    pixel_count = Media.width * Media.height
+    pixel_count = Media.pixel_count
     base_filter = _base_filter(max_pixels, media_type)
+    base_filter = and_(base_filter, folder_filter(folder))
 
-    total = session.exec(select(func.count(Media.id)).where(base_filter)).first() or 0
+    total = session.exec(exclude_missing(select(func.count(Media.id))).where(base_filter)).first() or 0
 
-    query = select(Media).where(base_filter).order_by(pixel_count.asc(), Media.id.asc())
+    query = exclude_missing(select(Media)).where(base_filter).order_by(pixel_count.asc(), Media.id.asc())
 
     if cursor:
         try:
@@ -70,7 +73,7 @@ def get_low_res_media(
             thumbnail_path=m.thumbnail_path,
             width=m.width,
             height=m.height,
-            pixel_count=m.width * m.height,
+            pixel_count=m.pixel_count,
             duration=m.duration,
             inserted_at=m.inserted_at,
         )
@@ -80,7 +83,7 @@ def get_low_res_media(
     next_cursor = None
     if len(rows) == limit:
         last = rows[-1]
-        next_cursor = f"{last.width * last.height}_{last.id}"
+        next_cursor = f"{last.pixel_count}_{last.id}"
 
     return LowResPage(items=items, next_cursor=next_cursor, total=total)
 
@@ -90,11 +93,10 @@ def resolve_low_res(
     request: LowResResolveRequest,
     session: Session = Depends(get_session),
 ):
-    removed = resolve_media_action(
+    return resolve_media_action(
         session,
         action=request.action,
         media_ids=request.media_ids,
         select_all=request.select_all,
-        base_filter=_base_filter(request.max_pixels, request.media_type),
+        base_filter=and_(_base_filter(request.max_pixels, request.media_type), folder_filter(request.folder), Media.missing_since.is_(None)),
     )
-    return {"removed": removed}
