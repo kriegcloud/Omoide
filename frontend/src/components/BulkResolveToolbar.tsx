@@ -2,13 +2,14 @@ import { SelectionHotkeyDialogs } from "../hotkeys/SelectionHotkeyDialogs";
 import { useHotkeys, useHotkey } from "../hotkeys/useHotkey";
 import { selectionBindings } from "../hotkeys/keymap";
 import config from "../config";
-import React, { useState } from "react";
+import React, { useLayoutEffect, useState } from "react";
 import {
   Button,
   Divider,
   Menu,
   MenuItem,
   Paper,
+  type PaperProps,
   Stack,
   Tooltip,
   Typography,
@@ -24,6 +25,32 @@ import PersonAddIcon from "@mui/icons-material/PersonAdd";
 import AssignMediaToPersonDialog from "./AssignMediaToPersonDialog";
 import ConfirmDialog from "./ConfirmDialog";
 import { formatBytes } from "../formatUtils";
+
+/** Pins page actions below the actual header, including responsive/search layouts. */
+export function StickySelectionToolbar({ sx = [], ...props }: PaperProps) {
+  const [headerHeight, setHeaderHeight] = useState(0);
+  useLayoutEffect(() => {
+    const header = document.querySelector<HTMLElement>(".MuiAppBar-root");
+    if (!header) return;
+    const measure = () => setHeaderHeight(header.getBoundingClientRect().height);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, []);
+
+  return <Paper {...props} sx={[
+    {
+      position: "sticky",
+      top: headerHeight,
+      zIndex: (theme) => theme.zIndex.appBar - 1,
+      bgcolor: "background.paper",
+      backdropFilter: "none",
+      boxShadow: 1,
+    },
+    ...(Array.isArray(sx) ? sx : [sx]),
+  ]} />;
+}
 
 export type BulkResolveAction = "DELETE_FILES" | "DELETE_RECORDS" | "BLACKLIST_RECORDS";
 
@@ -137,7 +164,7 @@ const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
   return (
     <>
       <SelectionHotkeyDialogs mediaIds={[...selectedIds]} enabled={!isActionLoading} />
-      <Paper variant="outlined" sx={{ mb: 3, position: "sticky", top: 64, zIndex: 10 }}>
+      <StickySelectionToolbar variant="outlined" sx={{ mb: 3 }}>
         <Stack
           direction={{ xs: "column", md: "row" }}
           spacing={2}
@@ -154,7 +181,7 @@ const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
               selected: {selectedCount}
             </Typography>
           </Stack>
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
             <Button
               size="small"
               startIcon={<SelectAllIcon />}
@@ -253,7 +280,7 @@ const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
             </Menu>
           </Stack>
         </Stack>
-      </Paper>
+      </StickySelectionToolbar>
 
       <AssignMediaToPersonDialog
         open={assignIds !== null}

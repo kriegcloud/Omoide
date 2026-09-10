@@ -112,6 +112,7 @@ test("global Escape cancels an active media marquee before clearing its selectio
     "react-router-dom": { useLocation: () => ({ pathname: "/blur" }) },
     "../context/SelectionContext": selectionModule,
     "../hotkeys/useHotkey": { useHotkeyRegistry: () => register },
+    "../hotkeys/keymap": load("hotkeys/keymap.ts", {}, {}),
   }, { window, document, ResizeObserver: class { observe() {} disconnect() {} }, getComputedStyle: () => ({ overflowY: "visible", overflow: "visible" }) }).useGridSelection;
   const containerRef = { current: container };
   const render = () => state.render(() => useGridSelection({

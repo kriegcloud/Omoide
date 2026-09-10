@@ -81,7 +81,7 @@ function load(relative, runtime, overrides = {}) {
   };
   function loadHookHelpers() {
     // Frame's helper import is resolved to the actual hook module, if needed.
-    if (relative === 'hooks/useMarqueeSelection.ts') return {};
+    if (relative === 'hooks/useMarqueeSelection.ts' || relative === 'hotkeys/keymap.ts') return {};
     return load('hooks/useMarqueeSelection.ts', runtime);
   }
   const output = ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
@@ -91,6 +91,7 @@ function load(relative, runtime, overrides = {}) {
   const module = { exports: {} };
   const localRequire = (id) => {
     if (id in modules) return modules[id];
+    if (id === '../hotkeys/keymap') return load('hotkeys/keymap.ts', runtime);
     if (id.startsWith('@mui/icons-material/')) return { __esModule: true, default: id };
     return require(id);
   };
@@ -486,4 +487,146 @@ test('virtualized Select all includes loaded ids beyond mounted cells', (t) => {
   g.registrations.map(read => read()).find(entry => entry.bindings[0].key === 'a').handler(
     gesture({ key: 'a', ctrlKey: true, target: g.container }));
   assert.deepEqual([...g.changes.at(-1)], [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+});
+
+for (const modifier of ['ctrlKey', 'metaKey']) {
+  test(`${modifier}+A toggles partial → all loaded → none → all and keeps select mode`, (t) => {
+    const g = grid(t, { selected: [2], selecting: false });
+    g.options.onEnterSelection = () => { g.options.selecting = true; };
+    g.options.onExitSelection = () => { g.options.selecting = false; };
+    g.render();
+    const press = () => {
+      const entry = g.registrations.map(read => read()).find(entry => entry.bindings[0].key === 'a');
+      const event = gesture({ key: 'a', [modifier]: true, target: g.container });
+      entry.handler(event);
+      assert.equal(event.defaultPrevented, true);
+      g.render();
+    };
+    press();
+    assert.deepEqual([...g.options.selectedIds], [1, 2, 3, 4, 5, 6]);
+    press();
+    assert.deepEqual([...g.options.selectedIds], []);
+    assert.equal(g.options.selecting, true);
+    press();
+    assert.deepEqual([...g.options.selectedIds], [1, 2, 3, 4, 5, 6]);
+  });
+}
+
+test('virtualized select-all checks every loaded id, including unmounted ids, before clearing', (t) => {
+  const g = grid(t, { selected: [1, 2, 3, 4, 5, 6] });
+  g.options.orderedIds = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+  g.render();
+  const press = () => g.registrations.map(read => read()).find(entry => entry.bindings[0].key === 'a')
+    .handler(gesture({ key: 'a', ctrlKey: true, target: g.container }));
+  press();
+  assert.deepEqual([...g.options.selectedIds], g.options.orderedIds);
+  g.container.children = g.container.children.slice(3);
+  press();
+  assert.deepEqual([...g.options.selectedIds], []);
+  press();
+  assert.deepEqual([...g.options.selectedIds], g.options.orderedIds);
+});
+
+test('select-all clears when every loaded id and additional ids are already selected', (t) => {
+  const g = grid(t, { selected: [1, 2, 3, 4, 5, 6, 99] });
+  g.registrations.map(read => read()).find(entry => entry.bindings[0].key === 'a')
+    .handler(gesture({ key: 'a', ctrlKey: true, target: g.container }));
+  assert.deepEqual([...g.options.selectedIds], []);
+});
+
+test('two plain drags accumulate and shrinking retains the selection from drag start', (t) => {
+  const g = grid(t, { selected: [6] });
+  g.drag(80, 180);
+  assert.deepEqual([...g.options.selectedIds].sort(), [1, 6]);
+  g.win.emit('pointerup', { pointerId: 1 });
+  g.render();
+  // Start the next drag in the gap between tiles 1 and 2.
+  g.container.emit('pointerdown', gesture({ button: 0, pointerType: 'mouse', pointerId: 2, target: g.container,
+    clientX: 95, clientY: 95 }));
+  g.win.emit('pointermove', gesture({ pointerId: 2, clientX: 280, clientY: 180 }));
+  assert.deepEqual([...g.options.selectedIds].sort(), [1, 2, 3, 6]);
+  g.render();
+  g.win.emit('pointermove', gesture({ pointerId: 2, clientX: 180, clientY: 180 }));
+  assert.deepEqual([...g.options.selectedIds].sort(), [1, 2, 6], 'shrinking removes only the current drag additions');
+});
+
+test('Alt-drag subtracts from its starting selection and shrinking restores removed ids', (t) => {
+  const g = grid(t, { selected: [1, 2, 3, 6] });
+  g.container.emit('pointerdown', gesture({ button: 0, pointerType: 'mouse', pointerId: 1, target: g.container,
+    clientX: 95, clientY: 95, altKey: true }));
+  g.win.emit('pointermove', gesture({ pointerId: 1, clientX: 280, clientY: 180, altKey: true }));
+  assert.deepEqual([...g.options.selectedIds], [1, 6]);
+  g.render();
+  g.win.emit('pointermove', gesture({ pointerId: 1, clientX: 180, clientY: 180, altKey: true }));
+  assert.deepEqual([...g.options.selectedIds], [1, 3, 6]);
+});
+
+for (const modifier of ['ctrlKey', 'metaKey']) {
+  test(`${modifier}-drag still adds to the starting selection`, (t) => {
+    const g = grid(t, { selected: [6] });
+    g.container.emit('pointerdown', gesture({ button: 0, pointerType: 'mouse', pointerId: 1, target: g.container,
+      clientX: 10, clientY: 110, [modifier]: true }));
+    g.win.emit('pointermove', gesture({ pointerId: 1, clientX: 80, clientY: 180, [modifier]: true }));
+    assert.deepEqual([...g.options.selectedIds].sort(), [1, 6]);
+  });
+}
+
+test('both registered select-all shortcuts describe the toggle in keyboard help', (t) => {
+  const g = grid(t);
+  const { bindings } = g.registrations.map(read => read()).find(entry => entry.bindings[0].key === 'a');
+  assert.equal(bindings.length, 2);
+  assert.ok(bindings.every(binding => binding.description === 'Select all loaded / clear'));
+});
+
+test('sticky page toolbar follows the measured app bar height and disconnects on unmount', (t) => {
+  const env = dom(t);
+  const header = new ElementStub();
+  header.rect.height = 65; // Desktop toolbar plus its border.
+  global.document.querySelector = () => header;
+  const helper = require('./detailRuntime.cjs');
+  const runtime = helper.hooks();
+  const { StickySelectionToolbar } = helper.load('components/BulkResolveToolbar.tsx', runtime);
+  const render = () => runtime.render(() => StickySelectionToolbar({ sx: { p: 1, mb: 2 }, children: 'actions' }));
+  let paper = render();
+  assert.equal(paper.type, 'Paper');
+  const style = paper.props.sx[0];
+  assert.equal(style.position, 'sticky');
+  assert.equal(style.top, 65);
+  assert.equal(style.bgcolor, 'background.paper');
+  assert.equal(style.zIndex({ zIndex: { appBar: 1100, modal: 1300 } }), 1099);
+  assert.equal(style.boxShadow, 1);
+  assert.equal(style.height, undefined, 'preserve the existing toolbar height');
+  assert.deepEqual(paper.props.sx[1], { p: 1, mb: 2 });
+  for (const height of [57, 49, 73]) {
+    header.rect.height = height;
+    env.observers[0].callback();
+    paper = render();
+    assert.equal(paper.props.sx[0].top, height, 'follow mobile/orientation/header content changes');
+  }
+  runtime.unmount();
+  assert.equal(env.observers[0].disconnected, true);
+});
+
+test('orphan select-all and delete-all stay in the sticky action bar after clearing', () => {
+  const helper = require('./detailRuntime.cjs');
+  const runtime = helper.hooks();
+  const store = helper.listStore();
+  store.state.lists['orphan-faces'] = { items: [{ id: 1 }, { id: 2 }], hasMore: false, isLoading: false };
+  const Page = helper.load('pages/OrphanFaces.tsx', runtime, {
+    'react-router-dom': { useSearchParams: () => [new URLSearchParams(), helper.noop], useNavigate: () => helper.noop },
+    '../stores/useListStore': store.module,
+    '../services/face': { getOrphanFaceCount: async () => 2 },
+  }).default;
+  const All = runtime.render(() => Page()).props.children[1].type;
+  const renderBar = () => helper.component(runtime.render(() => All()), 'StickySelectionToolbar');
+  const selectButton = bar => find(bar, node => node.type === 'Button' && ['Select All', 'Select None'].includes(node.props.children));
+  let bar = renderBar();
+  assert.ok(bar);
+  assert.ok(find(bar, node => node.type === 'Button' && Array.isArray(node.props.children) && node.props.children[0] === 'Delete all ('));
+  selectButton(bar).props.onClick();
+  bar = renderBar();
+  assert.equal(selectButton(bar).props.children, 'Select None');
+  assert.ok(find(bar, node => node.type === 'Button' && node.props.children === 'Assign...'));
+  selectButton(bar).props.onClick();
+  assert.equal(selectButton(renderBar()).props.children, 'Select All');
 });
