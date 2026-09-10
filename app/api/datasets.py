@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 import re
@@ -560,6 +560,13 @@ def update_item(dataset_id: int, item_id: int, payload: DatasetItemUpdate, sessi
     changes = payload.model_dump(exclude_unset=True, mode="json")
     if changes.get("excluded") is False and "excluded_reason" not in changes:
         changes["excluded_reason"] = None
+    if "reviewed_at" in changes:
+        # mode="json" serialises datetimes to strings, which the DateTime column
+        # rejects. Store the parsed value as naive UTC like every other timestamp.
+        reviewed_at = payload.reviewed_at
+        if reviewed_at is not None and reviewed_at.tzinfo is not None:
+            reviewed_at = reviewed_at.astimezone(timezone.utc).replace(tzinfo=None)
+        changes["reviewed_at"] = reviewed_at
     for key, value in changes.items():
         setattr(item, key, value)
     session.add(item)
