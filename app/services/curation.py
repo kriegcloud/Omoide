@@ -599,10 +599,22 @@ def reinclude_dataset_items(
     return len(items)
 
 
-def dataset_gaps(session: Session, dataset: TrainingDataset) -> list[dict]:
-    analysis = compute_dataset_analysis(session, dataset)
+def dataset_gaps(
+    session: Session,
+    dataset: TrainingDataset,
+    *,
+    analysis: dict | None = None,
+) -> list[dict]:
+    if analysis is None:
+        # The standalone gaps endpoint needs composition metrics, not the
+        # duplicate comparison and clustering already done by /analysis.
+        items = session.exec(select(DatasetItem).where(DatasetItem.dataset_id == dataset.id)).all()
+        metrics = compute_item_metrics(session, dataset, items)
+        gaps = _composition_gaps(dataset, _composition_histograms(metrics), len(metrics))
+    else:
+        gaps = analysis["gaps"]
     if dataset.person_id is None:
-        return [{**gap, "candidates": []} for gap in analysis["gaps"]]
+        return [{**gap, "candidates": []} for gap in gaps]
     existing = set(
         session.exec(
             select(DatasetItem.media_id).where(DatasetItem.dataset_id == dataset.id)
@@ -630,7 +642,7 @@ def dataset_gaps(session: Session, dataset: TrainingDataset) -> list[dict]:
         candidates.append((media, metric))
 
     result: list[dict] = []
-    for gap in analysis["gaps"]:
+    for gap in gaps:
         dimension, band = gap["dimension"], gap["band"]
         matching = []
         for media, metric in candidates:

@@ -675,12 +675,23 @@ def list_items(
     query = select(DatasetItem).where(DatasetItem.dataset_id == dataset_id)
     if not include_excluded:
         query = query.where(DatasetItem.excluded.is_(False))
-    rows = list(session.exec(query).all())
-    analysis = compute_dataset_analysis(session, dataset)
-    metrics = {entry["item_id"]: entry for entry in analysis["items"]}
+    offset = int(cursor or 0)
     if sort == "position":
-        rows.sort(key=lambda item: (item.position, item.id))
+        rows = list(session.exec(
+            query.order_by(DatasetItem.position, DatasetItem.id)
+            .offset(offset).limit(limit + 1)
+        ).all())
+        metrics = {
+            entry["item_id"]: {
+                key: value for key, value in entry.items()
+                if not key.startswith("_") and key not in {"phash", "resolution", "created_at", "face_area"}
+            }
+            for entry in compute_item_metrics(session, dataset, rows[:limit])
+        }
     else:
+        rows = list(session.exec(query).all())
+        analysis = compute_dataset_analysis(session, dataset)
+        metrics = {entry["item_id"]: entry for entry in analysis["items"]}
         metric_name = "brightness_mean" if sort == "brightness" else sort
         rows.sort(
             key=lambda item: (
@@ -690,8 +701,7 @@ def list_items(
             ),
             reverse=True,
         )
-    offset = int(cursor or 0)
-    rows = rows[offset : offset + limit + 1]
+        rows = rows[offset : offset + limit + 1]
     page = rows[:limit]
     return DatasetItemCursorPage(
         items=[_item_read(session, dataset, item, metrics.get(item.id)) for item in page],
@@ -700,8 +710,16 @@ def list_items(
 
 
 @router.get("/{dataset_id}/analysis")
-def get_analysis(dataset_id: int, session: Session = Depends(get_session)) -> dict:
-    return compute_dataset_analysis(session, _dataset_or_404(session, dataset_id))
+def get_analysis(
+    dataset_id: int,
+    session: Session = Depends(get_session),
+    include_gap_candidates: bool = False,
+) -> dict:
+    dataset = _dataset_or_404(session, dataset_id)
+    analysis = compute_dataset_analysis(session, dataset)
+    if include_gap_candidates:
+        analysis["gaps"] = dataset_gaps(session, dataset, analysis=analysis)
+    return analysis
 
 
 @router.post("/{dataset_id}/dedupe", response_model=DatasetDedupeResult)
@@ -1150,24 +1168,27 @@ def list_captions(
             annotations_by_media.setdefault(annotation.media_id, []).append(annotation)
     person = session.get(Person, dataset.person_id) if dataset.person_id else None
 
-    resolved: list[tuple[DatasetItem, Media, str, str, str | None]] = []
+    resolved: list[tuple[DatasetItem, Media, str, str, str | None, MediaAnnotation | None]] = []
     for item in items:
         media = media_by_id.get(item.media_id)
         if media is None:
             continue
-        body, source, _ = caption_body_and_source(
+        body, source, annotation = caption_body_and_source(
             dataset, item, annotations_by_media.get(item.media_id, [])
         )
-        resolved.append((item, media, body, source, render_caption(dataset, body, person)))
+        # Overrides still expose the underlying revision for the candidate-review
+        # queue. For annotation captions, metadata must describe the chosen text.
+        if source == "override":
+            annotation = next(iter(annotations_by_media.get(item.media_id, [])), None)
+        resolved.append((item, media, body, source, render_caption(dataset, body, person), annotation))
 
     rows: list[DatasetCaptionRead] = []
-    bodies = [body for _, _, body, _, _ in resolved if body]
-    for item, media, body, source, effective_caption in resolved:
+    bodies = [body for _, _, body, _, _, _ in resolved if body]
+    for item, media, body, source, effective_caption, annotation in resolved:
         other_captions = list(bodies)
         if body:
             other_captions.remove(body)
         findings = lint_caption(body, dataset, other_captions) if body else []
-        latest = next(iter(annotations_by_media.get(item.media_id, [])), None)
         row = DatasetCaptionRead(
             item_id=int(item.id),
             media_id=item.media_id,
@@ -1177,8 +1198,8 @@ def list_captions(
             caption=body,
             effective_caption=effective_caption,
             source=source,
-            annotation_id=latest.id if latest else None,
-            review_status=latest.review_status if latest else None,
+            annotation_id=annotation.id if annotation else None,
+            review_status=annotation.review_status if annotation else None,
             caption_reviewed_at=item.caption_reviewed_at,
             findings=[finding.__dict__ for finding in findings],
         )

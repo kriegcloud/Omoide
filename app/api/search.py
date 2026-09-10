@@ -13,7 +13,7 @@ from PIL import Image
 from sqlalchemy import and_, desc, func, or_, text, tuple_
 from sqlmodel import Session, select
 
-from app.config import get_clip_bundle, settings
+from app.config import get_clip_bundle, retain_clip_for_search, settings
 from app.api._media_filters import exclude_missing
 from app.database import get_session
 from app.logger import logger
@@ -30,8 +30,8 @@ from app.utils import vector_to_blob
 
 router = APIRouter()
 
-# Maximum number of ANN results fetched for the global KNN path.
-# Determines how many pages of results are reachable (e.g. 300 / limit=20 = 15 pages).
+# Candidate window for each relevance page; date ordering uses one bounded
+# candidate set. Relevance cursors and exact tie recovery can advance beyond it.
 _MAX_KNN_RESULTS = 300
 
 # Derive raw sqlite-vec candidate predicates from the shared browsing rule.
@@ -55,6 +55,7 @@ class _PersonNameCache:
     name_to_id: dict[str, int]      # lowercase name → person id
     pattern: re.Pattern | None      # single compiled alternation regex
     loaded_at: float
+    database_identity: object
 
 
 _person_cache: _PersonNameCache | None = None
@@ -84,6 +85,7 @@ def _build_person_cache(session: Session) -> _PersonNameCache:
         name_to_id=name_to_id,
         pattern=pattern,
         loaded_at=time.monotonic(),
+        database_identity=session.get_bind(),
     )
 
 
@@ -91,6 +93,7 @@ def _get_person_cache(session: Session) -> _PersonNameCache:
     global _person_cache
     if (
         _person_cache is None
+        or _person_cache.database_identity is not session.get_bind()
         or (time.monotonic() - _person_cache.loaded_at) > _PERSON_CACHE_TTL
     ):
         _person_cache = _build_person_cache(session)
@@ -161,7 +164,7 @@ def encode_uploaded_image(image_bytes: bytes) -> np.ndarray:
 
 
 _TEXT_EMBEDDING_CACHE_SIZE = 256
-_text_embedding_cache: OrderedDict[str, tuple[float, ...]] = OrderedDict()
+_text_embedding_cache: OrderedDict[tuple[str, str], tuple[float, ...]] = OrderedDict()
 _text_embedding_bundle_ref: weakref.ReferenceType | None = None
 _text_embedding_lock = threading.RLock()
 
@@ -178,15 +181,16 @@ def encode_text_query(query: str) -> list[float]:
     """Reuse query vectors for the current bundle without retaining its model."""
     global _text_embedding_bundle_ref
     clip_model, _, tokenizer = get_clip_bundle()
+    retain_clip_for_search(clip_model)
     # Keep case and internal whitespace: multilingual tokenizers can use both.
-    normalized = query.strip()
+    normalized = (settings.ai.clip_model.model_name, query.strip())
     with _text_embedding_lock:
         if _text_embedding_bundle_ref is None or _text_embedding_bundle_ref() is not clip_model:
             _text_embedding_cache.clear()
             _text_embedding_bundle_ref = weakref.ref(clip_model, _clear_released_text_bundle)
         cached = _text_embedding_cache.get(normalized)
         if cached is None:
-            cached = tuple(_encode_text_query_uncached(normalized, clip_model, tokenizer))
+            cached = tuple(_encode_text_query_uncached(normalized[1], clip_model, tokenizer))
             _text_embedding_cache[normalized] = cached
             if len(_text_embedding_cache) > _TEXT_EMBEDDING_CACHE_SIZE:
                 _text_embedding_cache.popitem(last=False)
@@ -226,14 +230,60 @@ def _person_media_filter_sql(person_ids: list[int]) -> str:
     if len(person_ids) == 1:
         pid = person_ids[0]
         return (
-            f"(SELECT media_id FROM face WHERE person_id = {pid}"
-            f" UNION SELECT media_id FROM personmedialink WHERE person_id = {pid})"
+            f"SELECT media_id FROM face WHERE person_id = {pid}"
+            f" UNION SELECT media_id FROM personmedialink WHERE person_id = {pid}"
         )
     parts = [
         f"SELECT media_id FROM face WHERE person_id = {pid}"
         for pid in person_ids
     ]
     return "\n            INTERSECT\n            ".join(parts)
+
+
+def _has_search_vectors(session: Session, table: str, key: str, visible: str) -> bool:
+    """Avoid loading CLIP when this result type has no searchable embeddings."""
+    return session.exec(text(
+        f"SELECT 1 FROM {table} WHERE {key} IN ({visible}) LIMIT 1"
+    )).first() is not None
+
+
+def _knn_page(session, table, key, columns, visible, vector, max_dist,
+              cursor_distance, cursor_id, count):
+    """Page KNN results by exact (distance, id), including arbitrarily large ties.
+
+    vec0 orders distance ties arbitrarily and limits them before Python sees
+    them. Recover the cursor and page-boundary tie groups with bounded exact
+    queries; fetching more KNN neighbors alone cannot make those ties stable.
+    The identifiers here are internal constants, never request parameters.
+    """
+    def ties(distance, after_id, limit):
+        return list(session.exec(text(f"""
+            SELECT {columns}, vec_distance_L2(embedding, :vec) AS distance
+            FROM {table}
+            WHERE {key} IN ({visible}) AND {key} > :after_id
+              AND vec_distance_L2(embedding, :vec) = :distance
+            ORDER BY {key} LIMIT :limit
+        """).bindparams(vec=vector, after_id=after_id, distance=distance, limit=limit)).all())
+
+    rows = ties(cursor_distance, cursor_id, count) if cursor_id else []
+    if len(rows) == count:
+        return rows
+    candidates = list(session.exec(text(f"""
+        SELECT {columns}, distance FROM {table}
+        WHERE embedding MATCH :vec AND k = :k
+          AND distance < :max_dist AND distance > :min_dist
+          AND {key} IN ({visible})
+        ORDER BY distance
+    """).bindparams(vec=vector, k=max(_MAX_KNN_RESULTS, count),
+                     max_dist=max_dist, min_dist=cursor_distance)).all())
+    candidates.sort(key=lambda row: (row[-1], row[0]))
+    needed = count - len(rows)
+    if candidates:
+        boundary = candidates[min(needed, len(candidates)) - 1][-1]
+        before = [row for row in candidates if row[-1] < boundary]
+        rows.extend(before)
+        rows.extend(ties(boundary, 0, count - len(rows)))
+    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +388,6 @@ def search_combined(
 
     cache = _get_person_cache(session)
     person_ids, search_text = _match_persons(query, cache)
-    logger.warning("PERSON IDS: %s", person_ids)
 
     # Fetch full person objects — only on the first page to avoid redundant data
     persons: list[PersonRead] = []
@@ -356,30 +405,30 @@ def search_combined(
     max_dist = 2.0 - settings.ai.min_search_dist
 
     # No semantic text left — return the persons' most recent media without vector search
-    logger.warning("SEARCH TEXT: %s", search_text)
     if not search_text and person_ids:
-        ids_str = ",".join(str(i) for i in person_ids)
-        sql = text(f"""
-            SELECT id FROM media
-            WHERE id IN (
-                SELECT media_id FROM face WHERE person_id IN ({ids_str})
-                UNION
-                SELECT media_id FROM personmedialink WHERE person_id IN ({ids_str})
-            )
-            AND id IN ({_VISIBLE_MEDIA_SQL})
-            ORDER BY inserted_at DESC
-            LIMIT :lim
-        """).bindparams(lim=limit)
-        media_ids = [r[0] for r in session.exec(sql).all()]
-        media_objs = session.exec(exclude_missing(select(Media)).where(Media.id.in_(media_ids))).all()
-        id_map = {m.id: m for m in media_objs}
+        media_filter = _person_media_filter_sql(person_ids)
+        q = exclude_missing(select(Media)).where(Media.id.in_(text(media_filter)))
+        if cursor:
+            try:
+                iso_str, id_str = cursor.rsplit("_", 1)
+                cursor_dt, cursor_id = datetime.fromisoformat(iso_str), int(id_str)
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=400, detail="Invalid cursor format")
+            q = q.where(or_(Media.inserted_at < cursor_dt,
+                           and_(Media.inserted_at == cursor_dt, Media.id < cursor_id)))
+        rows = list(session.exec(q.order_by(desc(Media.inserted_at), desc(Media.id)).limit(limit + 1)).all())
+        page = rows[:limit]
+        last = page[-1] if page else None
         return CombinedMediaSearchResult(
             persons=persons,
-            media=[MediaPreview.model_validate(id_map[mid]) for mid in media_ids if mid in id_map],
-            next_cursor=None,
+            media=[MediaPreview.model_validate(m) for m in page],
+            next_cursor=f"{last.inserted_at.isoformat()}_{last.id}" if last and len(rows) > limit else None,
         )
 
     if not search_text:
+        return CombinedMediaSearchResult(persons=persons)
+
+    if not _has_search_vectors(session, "media_embeddings", "media_id", _VISIBLE_MEDIA_SQL):
         return CombinedMediaSearchResult(persons=persons)
 
     vec = encode_text_query(search_text)
@@ -394,7 +443,7 @@ def search_combined(
     # the same cosine distance value.
     # ------------------------------------------------------------------
     if order_by == "relevance":
-        min_dist = 0.0
+        min_dist = -1.0
         cursor_media_id = 0
         if cursor:
             try:
@@ -409,7 +458,6 @@ def search_combined(
             # Multi-person → INTERSECT on the face table so only media where
             # every named person's face was detected together is searched.
             media_filter = _person_media_filter_sql(person_ids)
-            logger.warning(media_filter)
             sql = text(f"""
                 SELECT media_id, distance FROM (
                     SELECT me.media_id,
@@ -430,31 +478,10 @@ def search_combined(
             )
             rows = list(session.exec(sql).all())
         else:
-            # Global KNN index — fast approximate nearest-neighbour path.
-            # k = _MAX_KNN_RESULTS so pagination works up to _MAX_KNN_RESULTS / limit pages.
-            # distance > :min_dist is pushed into the vec0 index; we apply the media_id
-            # tiebreak in Python since compound distance conditions aren't supported by vec0.
-            sql = text(f"""
-                SELECT media_id, distance
-                FROM media_embeddings
-                WHERE embedding MATCH :vec_blob
-                  AND k = :k
-                  AND distance < :max_dist
-                  AND distance > :min_dist
-                  AND media_id IN ({_VISIBLE_MEDIA_SQL})
-                ORDER BY distance
-            """).bindparams(
-                vec_blob=vec_blob, max_dist=max_dist,
-                min_dist=min_dist, k=_MAX_KNN_RESULTS,
+            rows = _knn_page(
+                session, "media_embeddings", "media_id", "media_id", _VISIBLE_MEDIA_SQL,
+                vec_blob, max_dist, min_dist, cursor_media_id, limit + 1,
             )
-            rows = list(session.exec(sql).all())
-            # Python tiebreak: exclude items at exactly the cursor distance that we
-            # already returned on the previous page (media_id <= cursor_media_id).
-            if cursor_media_id:
-                rows = [
-                    r for r in rows
-                    if r[1] > min_dist or (abs(r[1] - min_dist) < 1e-9 and r[0] > cursor_media_id)
-                ]
 
         page_rows = rows[:limit]
         has_more = len(rows) > limit
@@ -490,7 +517,6 @@ def search_combined(
 
     if person_ids:
         media_filter = _person_media_filter_sql(person_ids)
-        logger.warning(media_filter)
         vec_sql = text(f"""
             SELECT me.media_id
             FROM media_embeddings me
@@ -564,7 +590,7 @@ def search_scenes(
 
     # Cursor format: "<distance>_<scene_id>" — composite key prevents duplicates
     # when multiple scenes share the same cosine distance value.
-    min_dist = 0.0
+    min_dist = -1.0
     cursor_scene_id = 0
     if cursor:
         try:
@@ -573,6 +599,9 @@ def search_scenes(
             cursor_scene_id = int(id_str)
         except (ValueError, TypeError):
             raise HTTPException(status_code=400, detail="Invalid cursor format")
+
+    if not _has_search_vectors(session, "scene_embeddings", "scene_id", _VISIBLE_SCENES_SQL):
+        return CursorPage(items=[], next_cursor=None)
 
     vec = encode_text_query(search_text)
     vec_blob = vector_to_blob(vec)
@@ -590,41 +619,20 @@ def search_scenes(
                 SELECT se.scene_id, se.media_id,
                        vec_distance_cosine(se.embedding, :vec_blob) AS distance
                 FROM scene_embeddings se
-                WHERE se.media_id IN (
-                    {_VISIBLE_MEDIA_SQL}
-                    AND media.id IN ({media_filter})
-                )
+                WHERE se.scene_id IN ({_VISIBLE_SCENES_SQL})
+                  AND se.media_id IN ({media_filter})
             ) ranked
             WHERE distance < :max_dist
               AND (distance > :min_dist OR (distance = :min_dist AND scene_id > :cursor_id))
-            ORDER BY distance, scene_id
-            LIMIT :k
-        """).bindparams(
-            vec_blob=vec_blob, max_dist=max_dist,
-            min_dist=min_dist, cursor_id=cursor_scene_id, k=limit + 1,
-        )
+            ORDER BY distance, scene_id LIMIT :k
+        """).bindparams(vec_blob=vec_blob, max_dist=max_dist, min_dist=min_dist,
+                        cursor_id=cursor_scene_id, k=limit + 1)
         rows = list(session.exec(sql).all())
     else:
-        sql = text(f"""
-            SELECT scene_id, media_id, distance
-            FROM scene_embeddings
-            WHERE embedding MATCH :vec_blob
-              AND k = :k
-              AND distance < :max_dist
-              AND distance > :min_dist
-              AND scene_id IN ({_VISIBLE_SCENES_SQL})
-            ORDER BY distance
-        """).bindparams(
-            vec_blob=vec_blob, max_dist=max_dist,
-            min_dist=min_dist, k=_MAX_KNN_RESULTS,
+        rows = _knn_page(
+            session, "scene_embeddings", "scene_id", "scene_id, media_id", _VISIBLE_SCENES_SQL,
+            vec_blob, max_dist, min_dist, cursor_scene_id, limit + 1,
         )
-        rows = list(session.exec(sql).all())
-        # Python tiebreak for the KNN path (vec0 doesn't support compound distance filters).
-        if cursor_scene_id:
-            rows = [
-                r for r in rows
-                if r[2] > min_dist or (abs(r[2] - min_dist) < 1e-9 and r[0] > cursor_scene_id)
-            ]
 
     if not rows:
         return CursorPage(items=[], next_cursor=None)

@@ -128,6 +128,9 @@ class PosePrototypeTests(unittest.TestCase):
                     )
                 )
                 stack.enter_context(
+                    patch("app.tasks.person_clustering.refresh_persons")
+                )
+                stack.enter_context(
                     patch("app.tasks.person_clustering.safe_commit")
                 )
                 stack.enter_context(

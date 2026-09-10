@@ -1,6 +1,6 @@
 import posixpath
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from enum import Enum, StrEnum
 from typing import Any, Literal, Optional
 
@@ -201,6 +201,14 @@ class FaceAssignmentSource(str, Enum):
     MERGE = "merge"
     DETACH = "detach"
     RESET = "reset"
+
+
+class FaceSuggestionRejection(SQLModel, table=True):
+    __tablename__ = "face_suggestion_rejection"
+
+    face_id: int = Field(foreign_key="face.id", ondelete="CASCADE", primary_key=True)
+    person_id: int = Field(foreign_key="person.id", ondelete="CASCADE", primary_key=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), nullable=False)
 
 
 class Face(SQLModel, table=True):

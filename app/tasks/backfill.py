@@ -314,7 +314,9 @@ def run_backfill_face_quality(task_id: str) -> None:
         logger.error("FaceProcessor not found; cannot backfill face quality.")
         return
     face_proc.load_model()
-    detector = face_proc.model.det_model
+    detector = getattr(face_proc.model, "det_model", None)
+    if detector is None:
+        detector = face_proc.demographics_model.det_model
 
     with Session(db.engine) as session:
         task = session.get(ProcessingTask, task_id)

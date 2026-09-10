@@ -136,7 +136,7 @@ class FaceProcessor(MediaProcessor):
             logger.exception(
                 "Padded-retry detection failed on media %s: %s", media_path, e
             )
-            return []
+            raise
         offset_bbox = np.array([pad_x, pad_y, pad_x, pad_y], dtype=np.float32)
         offset_kps = np.array([pad_x, pad_y], dtype=np.float32)
         for f in retried:
@@ -401,12 +401,11 @@ class FaceProcessor(MediaProcessor):
                 return False
 
             # Guard against invalid/empty frames
-            if scene is None:
-                logger.warning("Skipping empty scene frame for media: %s", media.path)
-                continue
             if not isinstance(scene, np.ndarray) or scene.size == 0:
-                logger.warning("Skipping invalid scene array for media: %s", media.path)
-                continue
+                media.processing_error = "Face extraction failed: invalid or empty scene frame."
+                session.add(media)
+                safe_commit(session)
+                return False
 
             h_orig, w_orig = scene.shape[:2]
 
@@ -430,13 +429,20 @@ class FaceProcessor(MediaProcessor):
                 logger.exception(
                     "InsightFace failed on media %s scene: %s", media.path, e
                 )
-                continue
+                media.processing_error = f"Face inference failed: {type(e).__name__}: {e}"[:500]
+                session.add(media)
+                safe_commit(session)
+                return False
 
             det_h, det_w = scene_det.shape[:2]
             if self._needs_padded_retry(faces, det_h, det_w):
-                retried_faces = self._detect_with_padding_fallback(
-                    scene_det, media.path
-                )
+                try:
+                    retried_faces = self._detect_with_padding_fallback(scene_det, media.path)
+                except Exception as exc:
+                    media.processing_error = f"Face inference retry failed: {type(exc).__name__}: {exc}"[:500]
+                    session.add(media)
+                    safe_commit(session)
+                    return False
                 if retried_faces:
                     merged_faces = self._merge_faces(faces, retried_faces)
                     if len(merged_faces) > len(faces):
@@ -452,6 +458,19 @@ class FaceProcessor(MediaProcessor):
             face_entries = self._parse_faces(
                 faces, scene_det, media, timestamp=scene_timestamp
             )
+            # Face boxes use the original media's detector space (long side at
+            # most 1280), as expected by face_crops and existing initial runs.
+            # Stored video thumbnails are smaller; translate their results back
+            # before deduplication and persistence, including landmark points.
+            if media.duration is not None and media.width and media.height:
+                scale = min(1.0, MAX_DET_DIM / max(media.width, media.height))
+                sx = int(media.width * scale) / det_w
+                sy = int(media.height * scale) / det_h
+                for face_obj, _ in face_entries:
+                    face_obj.bbox = [round(value * factor) for value, factor in
+                                     zip(face_obj.bbox, (sx, sy, sx, sy))]
+                    if face_obj.kps:
+                        face_obj.kps = [[x * sx, y * sy] for x, y in face_obj.kps]
             if existing_bboxes and face_entries:
                 filtered_face_entries: list[tuple[Face, np.ndarray]] = []
                 for face_obj, embedding_vec in face_entries:

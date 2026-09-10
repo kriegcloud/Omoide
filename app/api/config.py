@@ -1,4 +1,5 @@
 import logging
+from copy import deepcopy
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,6 +12,7 @@ from app.config import (
     read_bootstrap,
     reload_settings,
     save_settings,
+    validate_clip_settings_change,
     settings,
     write_bootstrap,
 )
@@ -84,20 +86,21 @@ class SaveSettingsRequest(BaseModel):
     acknowledge_media_dir_removals: bool = False
 
 
+def _reload_and_reconfigure():
+    try:
+        reload_settings()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    # Local import avoids the application/router bootstrap cycle.
+    from app.main import configure_auto_scan_job
+
+    configure_auto_scan_job()
+
+
 @router.post("/reload", status_code=204)
 async def reload_settings_endpoint():
-    """Reloads the settings from the config.yaml file."""
-    reload_settings()
-    try:
-        # Import locally to avoid circular import during app startup.
-        from app.main import configure_auto_scan_job  # noqa:WPS433
-
-        configure_auto_scan_job()
-    except Exception as exc:  # pragma: no cover - scheduler reconfiguration
-        logger.warning(
-            "Failed to reconfigure auto-scan scheduler after reload: %s",
-            exc,
-        )
+    """Reload settings and apply the active profile's scheduling policy."""
+    _reload_and_reconfigure()
 
 
 @router.get("/", response_model=AppSettings)
@@ -117,6 +120,11 @@ async def save_settings_endpoint(
     else:
         settings_model = payload
         acknowledge_removals = False
+
+    try:
+        validate_clip_settings_change(settings_model)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     removed_dirs = _removed_media_dirs(settings, settings_model)
     if removed_dirs:
@@ -353,6 +361,7 @@ def switch_profile(req: SwitchProfileRequest):
         pass
 
     bs = read_bootstrap() or {}
+    previous_bs = deepcopy(bs)
     profiles = bs.get("profiles", [])
     # ensure profile exists in list
     if not any(p.get("path") == str(dest) for p in profiles):
@@ -360,7 +369,12 @@ def switch_profile(req: SwitchProfileRequest):
     bs["profiles"] = profiles
     bs["active_profile"] = str(dest)
     write_bootstrap(bs)
-    reload_settings()
+    try:
+        _reload_and_reconfigure()
+    except HTTPException:
+        # Validation refused activation before runtime settings changed.
+        write_bootstrap(previous_bs)
+        raise
 
 
 class CreateProfileRequest(BaseModel):
@@ -430,6 +444,7 @@ def create_profile(req: CreateProfileRequest):
     # Create a fresh config in the new profile upon switch via reload
 
     bs = read_bootstrap() or {}
+    previous_bs = deepcopy(bs)
     profiles = bs.get("profiles", [])
     name = provided_name or (dest.name or "Profile")
     if not any(p.get("path") == str(dest) for p in profiles):
@@ -437,7 +452,12 @@ def create_profile(req: CreateProfileRequest):
     bs["profiles"] = profiles
     bs["active_profile"] = str(dest)
     write_bootstrap(bs)
-    reload_settings()
+    try:
+        _reload_and_reconfigure()
+    except HTTPException:
+        # Validation refused activation before runtime settings changed.
+        write_bootstrap(previous_bs)
+        raise
 
 
 class RemoveProfileRequest(BaseModel):

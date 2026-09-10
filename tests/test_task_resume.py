@@ -152,7 +152,7 @@ class TaskResumeTests(unittest.TestCase):
         self.thread.return_value.start.assert_called_once()
         with patch("app.tasks.resume.run_single_processor") as processor:
             kwargs["args"][0](new["id"])
-            processor.assert_called_once_with(new["id"], "embedding_extractor", force=False)
+            processor.assert_called_once_with(new["id"], "embedding_extractor", force=True)
 
     def test_resume_accepts_cancelled_and_failed(self):
         for status, task_type in (("cancelled", "scan"), ("failed", "compute_blur_scores")):
@@ -309,7 +309,7 @@ class TaskResumeTests(unittest.TestCase):
 class TaskResumeMigrationTests(unittest.TestCase):
     def test_migration_preserves_legacy_rows_accepts_interrupted_and_downgrades(self):
         script = ScriptDirectory.from_config(Config("alembic.ini"))
-        self.assertEqual(script.get_heads(), ["3d4e5f607182"])
+        self.assertEqual(script.get_heads(), ["4e5f60718293"])
         revision = script.get_revision("1b2c3d4e5f60")
         self.assertEqual(revision.down_revision, "0a1b2c3d4e5f")
         engine = create_engine("sqlite://")

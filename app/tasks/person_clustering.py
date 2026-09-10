@@ -42,6 +42,7 @@ from app.services.face_provenance import face_assignment_values
 from app.utils import (
     _distance_to_similarity,
     recalculate_person_appearance_counts,
+    refresh_persons,
     remove_person,
     vector_from_stored,
     vector_to_blob,
@@ -1106,7 +1107,7 @@ def _match_unassigned_to_existing(
         # The caller derives this worker's matched count from the remaining
         # ids; a manual assignment that won the race is not an auto match.
         unassigned_after_match.extend(fid for fid in proposed if fid not in assignments)
-        recalculate_person_appearance_counts(session, set(assignments.values()))
+        refresh_persons(session, set(assignments.values()))
         safe_commit(session)
         logger.info("Matched %d faces to existing persons.", len(assignments))
     if cancelled:

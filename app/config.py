@@ -1049,6 +1049,7 @@ def _sanitize_for_save(settings_model: AppSettings) -> dict:
 
 def save_settings(settings_model: AppSettings):
     """Saves the provided settings model to the config.yaml file."""
+    validate_clip_settings_change(settings_model)
     config_file = get_user_data_path() / "config.yaml"
     with open(config_file, "w") as f:
         yaml.dump(
@@ -1085,6 +1086,15 @@ _clip_model = None
 _clip_preprocess = None
 _clip_tokenizer = None
 _clip_refs = 0
+_clip_search_warm = False
+
+
+def retain_clip_for_search(model):
+    """Keep the shared tower warm once interactive search has used it."""
+    global _clip_search_warm
+    with _clip_lock:
+        if model is _clip_model:
+            _clip_search_warm = True
 
 
 def get_clip_bundle():
@@ -1124,7 +1134,7 @@ def release_clip():
     with _clip_lock:
         if _clip_refs > 0:
             _clip_refs -= 1
-        if _clip_refs == 0 and _clip_model is not None:
+        if _clip_refs == 0 and not _clip_search_warm and _clip_model is not None:
             logger.info("Releasing OpenCLIP bundle from memory")
             try:
                 _clip_model = None
@@ -1139,8 +1149,9 @@ def _reset_clip_after_settings_change():
 
     If references are held, defer reset until they are released.
     """
-    global _clip_model, _clip_preprocess, _clip_tokenizer
+    global _clip_model, _clip_preprocess, _clip_tokenizer, _clip_search_warm
     with _clip_lock:
+        _clip_search_warm = False
         if _clip_refs == 0:
             _clip_model = None
             _clip_preprocess = None
@@ -1150,6 +1161,22 @@ def _reset_clip_after_settings_change():
                 "Deferring CLIP reload until current users release it (refs=%s)",
                 _clip_refs,
             )
+
+
+def validate_clip_settings_change(incoming, *, profile_switch=False):
+    """Refuse incompatible vectors before saving or mutating runtime settings."""
+    if "settings" not in globals():
+        # Initial configuration seeding runs before the database module exists.
+        return
+    from app.database import validate_clip_vector_space
+
+    # Save payloads cannot select their database: data_dir is ignored on save.
+    same_profile = not profile_switch or incoming.general.database_url == settings.general.database_url
+    validate_clip_vector_space(
+        incoming.ai.clip_model,
+        previous_model=settings.ai.clip_model if same_profile else None,
+        database_url=None if same_profile else incoming.general.database_url,
+    )
 
 
 def reload_settings():
@@ -1164,6 +1191,7 @@ def reload_settings():
         new_settings.general.data_dir = get_user_data_path()
     except Exception:
         pass
+    validate_clip_settings_change(new_settings, profile_switch=True)
     # Ensure required directories exist for the (possibly new) data_dir
     try:
         new_settings.general.database_dir.mkdir(parents=True, exist_ok=True)

@@ -100,43 +100,37 @@ class EmbeddingExtractor(MediaProcessor):
                     ).bindparams(sid=scene.id)
                 ).first()
                 if not row:
-                    # Scene has no stored embedding yet (e.g. manually created scene).
-                    # Compute from thumbnail if available.
-                    if scene.thumbnail_path and hasattr(self, "_clip_model"):
-                        try:
-                            thumb = settings.general.thumb_dir / scene.thumbnail_path
-                            img = Image.open(thumb).convert("RGB")
-                            result = self._get_embeddings_batch([img])
-                            embedding = result[0] if result else None
-                            if embedding is not None:
-                                embeddings.append(embedding)
-                                blob = vector_to_blob(embedding)
-                                if blob:
-                                    session.exec(
-                                        text(
-                                            "INSERT OR REPLACE INTO scene_embeddings"
-                                            "(scene_id, media_id, embedding)"
-                                            " VALUES (:sid, :mid, :emb)"
-                                        ).bindparams(sid=scene.id, mid=media.id, emb=blob)
-                                    )
-                        except Exception:
-                            logger.warning(
-                                "EmbeddingExtractor: failed to compute embedding for scene %s",
-                                scene.id,
-                            )
-                    else:
-                        logger.debug(
-                            "EmbeddingExtractor: no stored embedding for scene %s; skipping",
-                            scene.id,
-                        )
+                    try:
+                        if not scene.thumbnail_path or not hasattr(self, "_clip_model"):
+                            raise ValueError("scene has no stored embedding or usable thumbnail encoder")
+                        thumb = settings.general.thumb_dir / scene.thumbnail_path
+                        with Image.open(thumb) as source:
+                            img = source.convert("RGB")
+                        result = self._get_embeddings_batch([img])
+                        embedding = result[0] if result else None
+                        if embedding is None:
+                            raise ValueError("scene encoder returned no embedding")
+                        blob = vector_to_blob(embedding)
+                        if blob is None:
+                            raise ValueError("scene encoder returned an invalid embedding")
+                        session.exec(text(
+                            "INSERT OR REPLACE INTO scene_embeddings"
+                            "(scene_id, media_id, embedding) VALUES (:sid, :mid, :emb)"
+                        ).bindparams(sid=scene.id, mid=media.id, emb=blob))
+                        embeddings.append(embedding)
+                    except Exception as exc:
+                        media.processing_error = (
+                            f"Embedding extraction failed for scene {scene.id}: {type(exc).__name__}: {exc}"
+                        )[:500]
+                        session.add(media)
+                        safe_commit(session)
+                        return False
                     continue
                 vec = vector_from_stored(row[0])
                 if vec is None or vec.size == 0:
-                    logger.debug(
-                        "EmbeddingExtractor: invalid stored embedding for scene %s; skipping",
-                        scene.id,
-                    )
-                    continue
+                    media.processing_error = f"Embedding extraction failed: invalid stored vector for scene {scene.id}."
+                    session.add(media)
+                    return False
                 embeddings.append(vec.astype(np.float32, copy=False))
         else:
             # Collect all raw images and their associated Scene objects (if any)
@@ -144,7 +138,7 @@ class EmbeddingExtractor(MediaProcessor):
             raw_images: list = []
             scene_objects: list[Scene | None] = []
             for scene in scenes:
-                if isinstance(scene, ImageFile):
+                if isinstance(scene, Image.Image):
                     raw_images.append(scene)
                     scene_objects.append(None)
                 elif isinstance(scene, tuple):
@@ -201,7 +195,9 @@ class EmbeddingExtractor(MediaProcessor):
             logger.warning(
                 "EmbeddingExtractor: no embeddings produced for %s", media.path
             )
-            return True
+            media.processing_error = "Embedding extraction produced no embeddings."
+            session.add(media)
+            return False
 
         if media.duration is None:  # is photo/picture
             vec_embedding = embeddings[0]
@@ -213,8 +209,6 @@ class EmbeddingExtractor(MediaProcessor):
                 avg /= norm
             vec_embedding = avg
 
-        media.embeddings_created = True
-        session.add(media)
         blob = vector_to_blob(vec_embedding)
         if blob is None:
             logger.error(
@@ -228,6 +222,8 @@ class EmbeddingExtractor(MediaProcessor):
             """
         ).bindparams(id=media.id, emb=blob)
         session.exec(sql)
+        media.embeddings_created = True
+        session.add(media)
         safe_commit(session)
         return True
 

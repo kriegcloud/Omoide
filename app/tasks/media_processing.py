@@ -3,15 +3,12 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List
 
-import numpy as np
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 from sqlalchemy import func, or_
 from sqlmodel import Session, col, select
 
 import app.database as db
-from app.api.media import delete_record
 from app.concurrency import heavy_writer
 from app.config import settings
 from app.image_limits import apply_pillow_limits
@@ -22,6 +19,7 @@ from app.processor_registry import load_processors, processors
 from app.services.face_matching import match_faces_to_persons, matching_thresholds
 from app.utils import split_video
 from .state import clear_task_progress, set_task_progress
+from .common import _start_task, _finish_task
 
 __all__ = [
     "run_media_processing",
@@ -43,7 +41,7 @@ def _is_task_cancelled(task_id: str) -> bool:
     try:
         with Session(db.engine) as s:
             task = s.get(ProcessingTask, task_id)
-            return task is not None and task.status == Status.CANCELLED
+            return task is not None and task.status in ("cancelled", "interrupted", "failed")
     except Exception:
         return False
 
@@ -85,7 +83,7 @@ def _count_media_to_process(session: Session) -> int:
     )
 
 
-def _fetch_media_batch_to_process(session: Session, limit: int) -> list[Media]:
+def _fetch_media_batch_to_process(session: Session, limit: int, after_id: int = 0, retry_ids: set[int] | None = None) -> list[Media]:
     conditions = _media_processing_conditions()
     if not conditions:
         return []
@@ -96,7 +94,8 @@ def _fetch_media_batch_to_process(session: Session, limit: int) -> list[Media]:
             col(Media.missing_since).is_(None),
             col(Media.processing_error).is_(None),
         )
-        .order_by(Media.duration.asc())
+        .where(or_(Media.id > after_id, col(Media.id).in_(retry_ids or [])))
+        .order_by(Media.id.asc())
         .limit(limit)
     ).all()
 
@@ -116,35 +115,20 @@ def _get_or_extract_scenes(
         else:
             scenes = split_video(media, media_path_obj)
     except FileNotFoundError:
-        logger.warning("File not found: %s. Deleting record.", media.path)
-        delete_record(media.id, session)
-        return []
-    except UnidentifiedImageError:
-        if media.extracted_scenes:
-            logger.warning(
-                "Transient PIL error re-opening previously-processed image %s; skipping without marking broken.",
-                media_path_obj,
-            )
-            return []
-        logger.warning("Skipping broken image file: %s.", media_path_obj)
-        media.extracted_scenes = True
-        media.processing_error = "Unrecognized image format: PIL could not identify this file."
+        logger.warning("File not found: %s. Marking missing.", media.path)
+        media.missing_since = datetime.now(timezone.utc)
         session.add(media)
         return []
     except Exception as exc:
-        if media.extracted_scenes:
-            logger.warning(
-                "Transient error re-opening previously-processed image %s; skipping without marking broken. %s: %s",
-                media_path_obj,
-                type(exc).__name__,
-                exc,
-            )
-            return []
-        logger.exception("Failed to extract frames for %s.", media.path)
-        media.extracted_scenes = True
+        logger.warning("Failed to extract frames for %s: %s", media.path, exc)
         media.processing_error = (
-            f"Failed to extract frames: {type(exc).__name__}: {str(exc)}"
+            f"Failed to extract frames: {type(exc).__name__}: {exc}"
         )[:500]
+        session.add(media)
+        return []
+
+    if not scenes:
+        media.processing_error = "Scene extraction produced no frames."
         session.add(media)
         return []
 
@@ -158,72 +142,94 @@ def _get_or_extract_scenes(
     return scenes
 
 
+def _processor_failure(media: Media, session: Session, name: str, detail: str) -> bool:
+    # Only the failed processor loses its completion marker; previous successes
+    # remain usable. The review/retry flow clears processing_error explicitly.
+    flag = {"faces": "faces_extracted", "embedding_extractor": "embeddings_created",
+            "auto_tagger": "ran_auto_tagging"}.get(name)
+    if flag:
+        setattr(media, flag, False)
+    media.processing_error = f"Processor '{name}' failed: {detail}"[:500]
+    session.add(media)
+    return False
+
+
+def _process_one(proc, media: Media, scenes: list, session: Session, task_id: str | None = None) -> bool:
+    if task_id:
+        set_task_progress(task_id, current_item=os.fspath(media.path), current_step=proc.name)
+    if not scenes and not getattr(proc, "handles_empty_scenes", False):
+        return _processor_failure(media, session, proc.name, media.processing_error or "no scenes available")
+    try:
+        if media.processing_error and media.processing_error.startswith(f"Processor '{proc.name}' failed:"):
+            media.processing_error = None
+        if not proc.process(media, session, scenes=scenes):
+            return _processor_failure(media, session, proc.name, media.processing_error or "processor returned failure")
+        condition = getattr(proc, "get_pending_condition", lambda: None)()
+        if condition is not None:
+            session.flush()
+            pending = session.exec(select(Media.id).where(Media.id == media.id, condition)).first()
+            if pending is not None:
+                return _processor_failure(media, session, proc.name, "no progress: completion condition is still pending")
+        return True
+    except Exception as exc:
+        logger.exception("Processor '%s' raised on media %s", proc.name, media.path)
+        return _processor_failure(media, session, proc.name, f"{type(exc).__name__}: {exc}")
+
+
 def _apply_processors(
     media: Media, scenes: list, session: Session, task_id: str | None = None
 ) -> bool:
     if not scenes:
-        logger.warning(
-            "Skipping processors for %s due to no scenes.", media.filename
-        )
-        media.faces_extracted = True
-        media.ran_auto_tagging = True
-        media.embeddings_created = True
-        if media.laplacian_score is None:
-            media.laplacian_score = -1.0
+        media.processing_error = media.processing_error or "Scene extraction produced no frames."
         session.add(media)
-        return True
-
-    success = True
-    current_item = os.fspath(media.path) if media.path else None
+        return False
     for proc in processors:
         if not proc.active:
             continue
-        try:
-            if task_id and current_item:
-                set_task_progress(
-                    task_id,
-                    current_item=current_item,
-                    current_step=proc.name,
-                )
-            if not proc.process(media, session, scenes=scenes):
-                logger.error(
-                    "Processor '%s' failed for media %s.",
-                    proc.name,
-                    media.path,
-                )
-                logger.error(
-                    "Marking media %s as processed after '%s' failure to prevent re-queue; please investigate logs above.",
-                    media.id,
-                    proc.name,
-                )
-                media.faces_extracted = True
-                media.ran_auto_tagging = True
-                media.embeddings_created = True
-                if media.laplacian_score is None:
-                    media.laplacian_score = -1.0
-                session.add(media)
-                success = False
-                break
-        except Exception:
-            logger.exception(
-                "Processor '%s' raised an exception on media %s",
-                proc.name,
-                media.path,
-            )
-            logger.error(
-                "Marking media %s as processed after exception in '%s' to prevent re-queue; please investigate stack above.",
-                media.id,
-                proc.name,
-            )
-            media.faces_extracted = True
-            media.ran_auto_tagging = True
-            media.embeddings_created = True
-            if media.laplacian_score is None:
-                media.laplacian_score = -1.0
-            session.add(media)
-            success = False
-            break
-    return success
+        if task_id:
+            set_task_progress(task_id, current_item=os.fspath(media.path), current_step=proc.name)
+        if not _process_one(proc, media, scenes, session):
+            return False
+    return True
+
+
+def _checkpoint_faces(session: Session, task: ProcessingTask, media: Media) -> int:
+    params = task.params or {}
+    if params.get("matching_media_id") is not None:
+        _save_pending_faces(session, task, set(_created_face_ids(
+            session, params["matching_media_id"], params.get("matching_after_face_id", 0))))
+    before_id = _latest_face_id(session)
+    task.params = {**(task.params or {}), "matching_media_id": media.id,
+                   "matching_after_face_id": before_id}
+    session.add(task)
+    safe_commit(session)
+    return before_id
+
+
+def _save_pending_faces(session: Session, task: ProcessingTask, face_ids: set[int]) -> None:
+    params = dict(task.params or {})
+    if params.get("matching_media_id") is not None:
+        face_ids = face_ids | set(_created_face_ids(
+            session, params["matching_media_id"], params.get("matching_after_face_id", 0)))
+    params["pending_face_ids"] = sorted(set(params.get("pending_face_ids", [])) | face_ids)
+    params.pop("matching_media_id", None)
+    params.pop("matching_after_face_id", None)
+    task.params = params
+    session.add(task)
+
+
+def _finish_processing_task(session: Session, task: ProcessingTask, failures: int = 0) -> None:
+    _finish_task(session, task, "failed" if failures else "completed")
+    clear_task_progress(task.id)
+
+
+def _prepare_failed_retries(session: Session, task: ProcessingTask) -> set[int]:
+    failed_ids = set((task.params or {}).get("failed_media_ids", []))
+    for media in session.exec(select(Media).where(col(Media.id).in_(failed_ids))).all():
+        media.processing_error = None
+        session.add(media)
+    safe_commit(session)
+    return failed_ids
 
 
 def _latest_face_id(session: Session) -> int:
@@ -240,22 +246,25 @@ def _created_face_ids(session: Session, media_id: int, after_id: int) -> list[in
 
 
 def _record_face_matches(
-    session: Session, task: ProcessingTask, face_ids: set[int]
+    session: Session, task: ProcessingTask, face_ids: set[int], *, stopped: bool = False
 ) -> None:
+    params = task.params or {}
+    face_ids = set(face_ids) | set(params.get("pending_face_ids", []))
+    if params.get("matching_media_id") is not None:
+        face_ids.update(_created_face_ids(session, params["matching_media_id"], params.get("matching_after_face_id", 0)))
+    _save_pending_faces(session, task, face_ids)
     matched = 0
-    if (
-        face_ids
-        and settings.face_recognition.match_new_faces_on_index
-        and task.status != Status.CANCELLED
-    ):
+    if (face_ids and not stopped and settings.face_recognition.match_new_faces_on_index
+            and task.status not in ("cancelled", "interrupted", "failed")):
         set_task_progress(task.id, current_step="matching_known_persons")
         threshold, min_margin = matching_thresholds()
-        matched = len(
-            match_faces_to_persons(
-                session, sorted(face_ids), threshold=threshold, min_margin=min_margin
-            )
-        )
-    task.result = {**(task.result or {}), "faces_matched": matched}
+        matched = len(match_faces_to_persons(
+            session, sorted(face_ids), threshold=threshold, min_margin=min_margin
+        ))
+        task.params = {**task.params, "pending_face_ids": []}
+    task.result = {**(task.result or {}), "faces_matched": (task.result or {}).get("faces_matched", 0) + matched}
+    session.add(task)
+
 
 
 def run_media_processing_and_chain(task_id: str) -> None:
@@ -265,11 +274,15 @@ def run_media_processing_and_chain(task_id: str) -> None:
     run_media_processing(task_id, clustering_chained=clustering_chained)
 
     logger.info("Media processing finished.")
+    with Session(db.engine) as session:
+        previous = session.get(ProcessingTask, task_id)
+        if previous is None or previous.status != Status.COMPLETED:
+            return
     if clustering_chained:
         logger.info("Starting Person Clustering...")
         with Session(db.engine) as new_session:
             next_task = ProcessingTask(
-                task_type="cluster_persons", total=0, processed=0
+                task_type="cluster_persons", total=0, processed=0, params={}
             )
             new_session.add(next_task)
             new_session.commit()
@@ -290,11 +303,8 @@ def run_media_processing(task_id: str, *, clustering_chained: bool = False) -> N
         try:
             with Session(db.engine) as s:
                 task = s.get(ProcessingTask, task_id)
-                if task and task.status == "running":
-                    task.status = "failed"
-                    task.finished_at = datetime.now(timezone.utc)
-                    s.add(task)
-                    safe_commit(s)
+                if task:
+                    _finish_task(s, task, "failed")
         except Exception:
             logger.exception("Failed to mark task %s as failed", task_id)
         clear_task_progress(task_id)
@@ -316,11 +326,11 @@ def _run_media_processing(task_id: str, *, clustering_chained: bool = False) -> 
         if not task:
             logger.error("Task with id %s not found!", task_id)
             return
+        if task.status in ("cancelled", "interrupted", "failed"):
+            return
 
-        task.status = "running"
-        task.started_at = datetime.now(timezone.utc)
-        session.add(task)
-        safe_commit(session)
+        if not _start_task(session, task):
+            return
 
         set_task_progress(task_id, current_step="preparing", current_item=None)
 
@@ -336,12 +346,7 @@ def _run_media_processing(task_id: str, *, clustering_chained: bool = False) -> 
             name="process_media", cancelled=is_cancelled
         ) as acquired:
             if not acquired:
-                session.refresh(task)
-                task.status = "cancelled"
-                task.finished_at = datetime.now(timezone.utc)
-                session.add(task)
-                safe_commit(session)
-                clear_task_progress(task_id)
+                _finish_processing_task(session, task)
                 return
 
             for proc in processors:
@@ -353,18 +358,22 @@ def _run_media_processing(task_id: str, *, clustering_chained: bool = False) -> 
                 and not clustering_chained
                 and any(proc.name == "faces" and proc.active for proc in processors)
             )
-            new_face_ids: set[int] = set()
+            new_face_ids: set[int] = set((task.params or {}).get("pending_face_ids", []))
             task.total = _count_media_to_process(session)
             session.add(task)
             safe_commit(session)
 
+            failures = 0
+            retry_ids = _prepare_failed_retries(session, task)
+            failed_ids = set(retry_ids)
+            last_media_id = int((task.params or {}).get("last_media_id", 0))
             batch_index = 0
             while True:
                 if _is_task_cancelled(task_id):
                     logger.info("Task cancelled. Stopping before next batch.")
                     break
 
-                medias_batch = _fetch_media_batch_to_process(session, batch_size)
+                medias_batch = _fetch_media_batch_to_process(session, batch_size, last_media_id, retry_ids)
                 if not medias_batch:
                     logger.info("No more media to process. Finishing.")
                     break
@@ -383,6 +392,8 @@ def _run_media_processing(task_id: str, *, clustering_chained: bool = False) -> 
                         cancelled_mid_batch = True
                         break
 
+                    last_media_id = max(last_media_id, media.id)
+                    retry_ids.discard(media.id)
                     media_path = Path(media.path) if media.path else None
 
                     if media_path is None or not media_path.exists():
@@ -416,12 +427,20 @@ def _run_media_processing(task_id: str, *, clustering_chained: bool = False) -> 
                         set_task_progress(task_id, current_step="idle")
                         continue
 
-                    before_id = _latest_face_id(session) if collect_faces else None
-                    _apply_processors(media, scenes, session, task_id=task_id)
+                    before_id = _checkpoint_faces(session, task, media) if collect_faces else None
+                    succeeded = _apply_processors(media, scenes, session, task_id=task_id)
+                    failures += int(not succeeded)
+                    if succeeded:
+                        failed_ids.discard(media.id)
+                    else:
+                        failed_ids.add(media.id)
                     if before_id is not None:
                         new_face_ids.update(
                             _created_face_ids(session, media.id, before_id)
                         )
+                    _save_pending_faces(session, task, new_face_ids)
+                    task.params = {**(task.params or {}), "last_media_id": last_media_id,
+                                   "failed_media_ids": sorted(failed_ids)}
                     session.add(media)
 
                     task.processed += 1
@@ -456,13 +475,9 @@ def _run_media_processing(task_id: str, *, clustering_chained: bool = False) -> 
             remaining = _count_media_to_process(session)
             task.total = task.processed + remaining
             _record_face_matches(session, task, new_face_ids)
-            task.status = (
-                "completed" if task.status != "cancelled" else "cancelled"
-            )
-            task.finished_at = datetime.now(timezone.utc)
             session.add(task)
             safe_commit(session)
-            clear_task_progress(task_id)
+            _finish_processing_task(session, task, failures)
 
 
 def run_single_processor(
@@ -485,152 +500,85 @@ def run_single_processor(
     target.active = True  # run regardless of per-processor config flag
 
     pending_condition = None if force else target.get_pending_condition()
-    # When there is no pending condition and we are not forcing, treat every
-    # media item as a candidate (e.g. exif processor has no completion flag).
-    use_offset_paging = force or pending_condition is None
-
     batch_size = 100
-
     with Session(db.engine) as session:
         task = session.get(ProcessingTask, task_id)
-        if not task:
-            logger.error("Task %s not found.", task_id)
+        if not task or task.status in ("cancelled", "interrupted", "failed"):
             return
-
-        task.status = Status.RUNNING
-        task.started_at = datetime.now(timezone.utc)
+        if not _start_task(session, task):
+            return
+        retry_ids = _prepare_failed_retries(session, task)
+        failed_ids = set(retry_ids)
+        params = dict(task.params or {})
+        params.update(processor_name=processor_name, force=force)
+        last_id = int(params.get("last_media_id", 0))
+        upper_id = params.get("upper_media_id")
+        if upper_id is None:
+            upper_id = session.exec(select(func.max(Media.id))).one() or 0
+        params["upper_media_id"] = upper_id
+        task.params = params
         session.add(task)
         safe_commit(session)
-
-        set_task_progress(task_id, current_step="preparing", current_item=None)
-
-        with heavy_writer(
-            name=f"run_processor_{processor_name}",
-            cancelled=lambda: _is_task_cancelled(task_id),
-        ) as acquired:
-            if not acquired:
-                session.refresh(task)
-                task.status = Status.CANCELLED
-                task.finished_at = datetime.now(timezone.utc)
+        failures = 0
+        try:
+            with heavy_writer(name=f"run_processor_{processor_name}",
+                              cancelled=lambda: _is_task_cancelled(task_id)) as acquired:
+                if not acquired:
+                    return
+                def candidates():
+                    stmt = select(Media).where(or_(Media.id > last_id, col(Media.id).in_(retry_ids)), Media.id <= upper_id,
+                        col(Media.missing_since).is_(None), col(Media.processing_error).is_(None))
+                    if pending_condition is not None:
+                        stmt = stmt.where(pending_condition)
+                    return stmt
+                task.total = session.exec(select(func.count()).select_from(candidates().subquery())).one()
                 session.add(task)
                 safe_commit(session)
-                clear_task_progress(task_id)
-                return
-
-            def _count() -> int:
-                stmt = select(func.count(col(Media.id))).where(
-                    col(Media.missing_since).is_(None),
-                    col(Media.processing_error).is_(None),
-                )
-                if pending_condition is not None:
-                    stmt = stmt.where(pending_condition)
-                return session.exec(stmt).first() or 0
-
-            task.total = _count()
-            session.add(task)
-            safe_commit(session)
-
-            offset = 0
-            while True:
-                if _is_task_cancelled(task_id):
-                    logger.info("Task cancelled. Stopping before next batch.")
-                    break
-
-                stmt = select(Media).where(
-                    col(Media.missing_since).is_(None),
-                    col(Media.processing_error).is_(None),
-                )
-                if pending_condition is not None:
-                    stmt = stmt.where(pending_condition)
-                if use_offset_paging:
-                    stmt = stmt.order_by(col(Media.id).asc()).offset(offset)
-                else:
-                    stmt = stmt.order_by(col(Media.duration).asc())
-                stmt = stmt.limit(batch_size)
-
-                batch: List[Media] = session.exec(stmt).all()
-                if not batch:
-                    break
-
-                logger.info(
-                    "Processor '%s': processing batch of %d items (offset %d).",
-                    processor_name,
-                    len(batch),
-                    offset,
-                )
-
-                batch_dirty = False
-                cancelled_mid_batch = False
-
-                for media in batch:
-                    if _is_task_cancelled(task_id):
-                        cancelled_mid_batch = True
+                while not _is_task_cancelled(task_id):
+                    batch = session.exec(candidates().order_by(Media.id).limit(batch_size)).all()
+                    if not batch:
                         break
-
-                    media_path = Path(media.path) if media.path else None
-                    if media_path is None or not media_path.exists():
-                        if not media.missing_since:
+                    for media in batch:
+                        if _is_task_cancelled(task_id):
+                            break
+                        media_path = Path(media.path)
+                        if not media_path.exists():
                             media.missing_since = datetime.now(timezone.utc)
                             session.add(media)
-                            batch_dirty = True
-                        offset += 1
-                        continue
-
-                    if force:
-                        target.reset_for_media(media, session)
-
-                    set_task_progress(
-                        task_id,
-                        current_item=os.fspath(media.path),
-                        current_step="extracting_scenes",
-                    )
-                    scenes = _get_or_extract_scenes(media, session)
-
-                    if scenes or target.handles_empty_scenes:
-                        set_task_progress(
-                            task_id,
-                            current_item=os.fspath(media.path),
-                            current_step=processor_name,
-                        )
-                        target.process(media, session, scenes=scenes)
-                        session.add(media)
-                    elif media_path.exists():
-                        _apply_processors(media, [], session, task_id=task_id)
-
-                    task.processed += 1
-                    batch_dirty = True
-                    session.add(task)
-                    # Commit per item so the SQLite write lock is held for one
-                    # item's work, not a whole batch; other writers time out at
-                    # 30 s otherwise.
-                    safe_commit(session)
-                    set_task_progress(task_id, current_step="idle")
-
-                if batch_dirty:
-                    safe_commit(session)
-
-                if cancelled_mid_batch:
-                    break
-
-                if use_offset_paging:
-                    offset += len(batch)
-
+                        else:
+                            if force:
+                                target.reset_for_media(media, session)
+                            before_id = (_checkpoint_faces(session, task, media)
+                                         if processor_name == "faces" and settings.face_recognition.match_new_faces_on_index else None)
+                            set_task_progress(task_id, current_item=os.fspath(media.path), current_step="extracting_scenes")
+                            scenes = _get_or_extract_scenes(media, session)
+                            succeeded = _process_one(target, media, scenes, session, task_id)
+                            failures += int(not succeeded)
+                            if succeeded:
+                                failed_ids.discard(media.id)
+                            else:
+                                failed_ids.add(media.id)
+                            if before_id is not None:
+                                _save_pending_faces(session, task, set(_created_face_ids(session, media.id, before_id)))
+                        last_id = max(last_id, media.id)
+                        retry_ids.discard(media.id)
+                        task.params = {**task.params, "last_media_id": last_id,
+                                       "failed_media_ids": sorted(failed_ids)}
+                        task.processed += 1
+                        session.add(task)
+                        safe_commit(session)
+                session.refresh(task)
+                _record_face_matches(session, task, set())
+                session.add(task)
+                safe_commit(session)
+        except Exception:
+            failures += 1
+            raise
+        finally:
             try:
                 target.unload()
-            except Exception:
-                pass
-
-            remaining = _count()
-            task.total = task.processed + remaining
-            task.status = (
-                Status.CANCELLED
-                if _is_task_cancelled(task_id)
-                else Status.COMPLETED
-            )
-            task.finished_at = datetime.now(timezone.utc)
-            session.add(task)
-            safe_commit(session)
-            clear_task_progress(task_id)
+            finally:
+                _finish_processing_task(session, task, failures)
 
 
 def edit_processor_names() -> list[str]:
@@ -657,142 +605,80 @@ def edit_processor_names() -> list[str]:
 def run_processors_for_media(
     task_id: str, processor_names: list[str], media_ids: list[int]
 ) -> None:
-    """Run a specific set of processors over a specific set of media IDs.
-
-    Each processor is run in sequence; each media item is reset before reprocessing.
-    """
+    """Reprocess selected items, checkpointing successful processor/item pairs."""
     if not processors:
         load_processors()
-
     targets = [p for p in processors if p.name in processor_names]
-    if not targets:
-        logger.error("None of the requested processors were found: %s", processor_names)
-        return
-
     with Session(db.engine) as session:
         task = session.get(ProcessingTask, task_id)
-        if not task:
-            logger.error("Task %s not found.", task_id)
+        if not task or task.status in ("cancelled", "interrupted", "failed"):
             return
-
-        task.status = Status.RUNNING
-        task.started_at = datetime.now(timezone.utc)
-        task.total = len(media_ids) * len(targets)
+        if not _start_task(session, task):
+            return
+        task.params = {**(task.params or {}), "processor_names": processor_names, "media_ids": media_ids}
+        completed = {name: set(ids) for name, ids in task.params.get("completed_media", {}).items()}
+        task.total = sum(sum(mid not in completed.get(target.name, set()) for mid in media_ids) for target in targets)
         session.add(task)
         safe_commit(session)
-
-        set_task_progress(task_id, current_step="preparing", current_item=None)
-
-        with heavy_writer(
-            name="run_processors_for_media",
-            cancelled=lambda: _is_task_cancelled(task_id),
-        ) as acquired:
-            if not acquired:
+        failures = int(not targets)
+        try:
+            with heavy_writer(name="run_processors_for_media",
+                              cancelled=lambda: _is_task_cancelled(task_id)) as acquired:
+                if not acquired:
+                    return
+                for target in targets:
+                    if _is_task_cancelled(task_id):
+                        break
+                    try:
+                        target.load_model()
+                        target.active = True
+                    except Exception as exc:
+                        logger.exception("Processor %s failed to load", target.name)
+                        failures += 1
+                        task.result = {**(task.result or {}), "error": f"{target.name}: {exc}"[:500]}
+                        session.add(task)
+                        safe_commit(session)
+                        continue
+                    done = completed.setdefault(target.name, set())
+                    try:
+                        for media_id in media_ids:
+                            if _is_task_cancelled(task_id):
+                                break
+                            if media_id in done:
+                                continue
+                            media = session.get(Media, media_id)
+                            if media is None:
+                                done.add(media_id)
+                            elif not Path(media.path).exists():
+                                media.missing_since = datetime.now(timezone.utc)
+                                session.add(media)
+                                done.add(media_id)
+                            else:
+                                target.reset_for_media(media, session)
+                                before_id = (_checkpoint_faces(session, task, media)
+                                             if target.name == "faces" and settings.face_recognition.match_new_faces_on_index else None)
+                                set_task_progress(task_id, current_item=os.fspath(media.path), current_step="extracting_scenes")
+                                scenes = _get_or_extract_scenes(media, session)
+                                succeeded = _process_one(target, media, scenes, session, task_id)
+                                if before_id is not None:
+                                    _save_pending_faces(session, task, set(_created_face_ids(session, media.id, before_id)))
+                                if succeeded:
+                                    done.add(media_id)
+                                else:
+                                    failures += 1
+                                session.add(media)
+                            task.processed += 1
+                            task.params = {**task.params, "completed_media": {name: sorted(ids) for name, ids in completed.items()}}
+                            session.add(task)
+                            safe_commit(session)
+                    finally:
+                        target.unload()
                 session.refresh(task)
-                task.status = Status.CANCELLED
-                task.finished_at = datetime.now(timezone.utc)
+                _record_face_matches(session, task, set(), stopped=_is_task_cancelled(task_id))
                 session.add(task)
                 safe_commit(session)
-                clear_task_progress(task_id)
-                return
-
-            new_face_ids: set[int] = set()
-            for target in targets:
-                if _is_task_cancelled(task_id):
-                    break
-
-                try:
-                    target.load_model()
-                except Exception:  # noqa: BLE001 - one processor must not sink the rest
-                    logger.exception(
-                        "Processor %s failed to load; skipping it for this run", target.name
-                    )
-                    task.processed += len(media_ids)
-                    session.add(task)
-                    safe_commit(session)
-                    continue
-                target.active = True
-
-                batch_size = 100
-                cancelled_processor = False
-
-                for batch_start in range(0, len(media_ids), batch_size):
-                    if _is_task_cancelled(task_id):
-                        cancelled_processor = True
-                        break
-
-                    batch_ids = media_ids[batch_start : batch_start + batch_size]
-                    batch: List[Media] = session.exec(
-                        select(Media).where(
-                            col(Media.id).in_(batch_ids),
-                            col(Media.missing_since).is_(None),
-                        )
-                    ).all()
-
-                    batch_dirty = False
-                    for media in batch:
-                        if _is_task_cancelled(task_id):
-                            cancelled_processor = True
-                            break
-
-                        media_path = Path(media.path) if media.path else None
-                        if media_path is None or not media_path.exists():
-                            task.processed += 1
-                            continue
-
-                        target.reset_for_media(media, session)
-
-                        set_task_progress(
-                            task_id,
-                            current_item=os.fspath(media.path),
-                            current_step="extracting_scenes",
-                        )
-                        scenes = _get_or_extract_scenes(media, session)
-
-                        if scenes or target.handles_empty_scenes:
-                            set_task_progress(
-                                task_id,
-                                current_item=os.fspath(media.path),
-                                current_step=target.name,
-                            )
-                            before_id = (
-                                _latest_face_id(session)
-                                if target.name == "faces"
-                                and settings.face_recognition.match_new_faces_on_index
-                                else None
-                            )
-                            target.process(media, session, scenes=scenes)
-                            if before_id is not None:
-                                new_face_ids.update(
-                                    _created_face_ids(session, media.id, before_id)
-                                )
-                            session.add(media)
-
-                        task.processed += 1
-                        batch_dirty = True
-                        session.add(task)
-                        set_task_progress(task_id, current_step="idle")
-
-                    if batch_dirty:
-                        safe_commit(session)
-
-                    if cancelled_processor:
-                        break
-
-                try:
-                    target.unload()
-                except Exception:
-                    pass
-
-                if cancelled_processor:
-                    break
-
-            if _is_task_cancelled(task_id):
-                task.status = Status.CANCELLED
-            _record_face_matches(session, task, new_face_ids)
-            if task.status != Status.CANCELLED:
-                task.status = Status.COMPLETED
-            task.finished_at = datetime.now(timezone.utc)
-            session.add(task)
-            safe_commit(session)
-            clear_task_progress(task_id)
+        except Exception:
+            failures += 1
+            raise
+        finally:
+            _finish_processing_task(session, task, failures)

@@ -424,7 +424,7 @@ class FaceAssignmentProvenanceTests(unittest.TestCase):
 class FaceAssignmentMigrationTests(unittest.TestCase):
     def test_upgrade_preserves_legacy_unknown_assignments_and_downgrade_removes_columns(self):
         script = ScriptDirectory.from_config(Config("alembic.ini"))
-        self.assertEqual(script.get_heads(), ["3d4e5f607182"])
+        self.assertEqual(script.get_heads(), ["4e5f60718293"])
         revision = script.get_revision("2c3d4e5f6071")
         self.assertEqual(revision.down_revision, "1b2c3d4e5f60")
         engine = create_engine("sqlite://")

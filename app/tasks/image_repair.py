@@ -109,6 +109,16 @@ def run_repair_job(job_id: str) -> None:
                 transport_width=transport.width,
                 transport_height=transport.height,
             )
+            if "subject_box" in params:
+                box = params["subject_box"]
+                scale_x = transport.width / source.width
+                scale_y = transport.height / source.height
+                params["subject_box"] = {
+                    "x": max(0, round(box["x"] * scale_x)),
+                    "y": max(0, round(box["y"] * scale_y)),
+                    "width": max(1, round(box["width"] * scale_x)),
+                    "height": max(1, round(box["height"] * scale_y)),
+                }
         result = repair_client().repair(
             attempt_id=UUID(job_id),
             profile_id=profile,

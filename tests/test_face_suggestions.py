@@ -379,6 +379,9 @@ class FaceSuggestionsTests(unittest.TestCase):
         self.run_index_task(selected=True, cancelled=True)
 
     def test_chain_wrapper_passes_explicit_skip_flag(self):
+        task = ProcessingTask(id="test-chain", task_type="process_media", status="completed")
+        self.session.add(task)
+        self.session.commit()
         with (
             patch.object(media_processing.db, "engine", self.engine),
             patch.object(settings.general, "enable_people", True),

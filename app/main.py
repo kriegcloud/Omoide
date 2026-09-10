@@ -320,6 +320,9 @@ def _preferred_webview_gui() -> str | None:
 
 
 def scheduled_scan_job():
+    if not settings.scan.auto_scan:
+        logger.info("Auto scan disabled; skipping scheduled callback.")
+        return
     logger.info("Running scheduled cleanup and process chain...")
     with Session(db.engine) as session:
         # Check if any part of the chain is already running
@@ -343,7 +346,8 @@ def scheduled_scan_job():
 
         # Create the first task in the chain
         task = ProcessingTask(
-            task_type="clean_missing_files", total=0, processed=0
+            task_type="clean_missing_files", total=0, processed=0,
+            params={"chain": True},
         )
         session.add(task)
         session.commit()

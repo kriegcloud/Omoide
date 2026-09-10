@@ -1,9 +1,7 @@
 """Re-enqueue supported tasks from their persisted inputs.
 
-Resume starts a new task and relies on the existing worker's incremental work
-selection. In particular, a library-wide run_processor always uses force=False,
-even if its original params say True, so already-processed media are skipped.
-Selection runs intentionally reprocess the same media IDs.
+Workers use persisted cursors, completed selection entries and pending face IDs
+so resuming preserves forced work without replaying committed items.
 """
 
 from __future__ import annotations
@@ -29,6 +27,9 @@ from app.tasks import (
     run_duplicate_detection,
     run_geocode_places,
     run_media_processing,
+    run_media_processing_and_chain,
+    run_cleanup_and_chain,
+    run_scan_and_chain,
     run_person_clustering,
     run_processors_for_media,
     run_scan,
@@ -41,7 +42,7 @@ def _resume_processor(params: dict) -> Callable[[str], None]:
     processor_name = params.get("processor_name")
     if not isinstance(processor_name, str) or not processor_name:
         raise ValueError("Missing processor_name")
-    return lambda task_id: run_single_processor(task_id, processor_name, force=False)
+    return lambda task_id: run_single_processor(task_id, processor_name, force=bool(params.get("force", False)))
 
 
 def _resume_selection(params: dict) -> Callable[[str], None]:
@@ -63,11 +64,11 @@ def _resume_duplicates(params: dict) -> Callable[[str], None]:
 
 
 RESUMABLE_TASK_TYPES: dict[str, Callable[[dict], Callable[[str], None]]] = {
-    "scan": lambda params: run_scan,
-    "process_media": lambda params: run_media_processing,
+    "scan": lambda params: run_scan_and_chain if params.get("chain") else run_scan,
+    "process_media": lambda params: run_media_processing_and_chain if params.get("chain") else run_media_processing,
     "cluster_persons": lambda params: run_person_clustering,
     "find_duplicates": _resume_duplicates,
-    "clean_missing_files": lambda params: clean_missing_files,
+    "clean_missing_files": lambda params: run_cleanup_and_chain if params.get("chain") else clean_missing_files,
     "compute_blur_scores": lambda params: compute_blur_scores,
     "build_events": lambda params: run_build_events,
     "geocode_places": lambda params: run_geocode_places,

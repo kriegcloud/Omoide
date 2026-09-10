@@ -5,8 +5,8 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 
 import numpy as np
-from sqlalchemy import select, text
-from sqlmodel import Session
+from sqlalchemy import text
+from sqlmodel import Session, select
 
 import app.database as db
 from app.database import safe_commit

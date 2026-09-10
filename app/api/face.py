@@ -11,12 +11,13 @@ from fastapi import (
 )
 from pydantic import BaseModel
 from sqlalchemy import func
+from sqlalchemy.dialects.sqlite import insert
 from sqlmodel import Session, delete, select, text, update
 
 from app.config import settings
 from app.database import get_session, safe_commit, safe_execute
 from app.logger import logger
-from app.models import Face, FaceAssignmentSource, Person, PersonMediaLink
+from app.models import Face, FaceAssignmentSource, FaceSuggestionRejection, Person, PersonMediaLink
 from app.schemas.face import (
     AssignSuggestedFaces,
     AssignSuggestedFacesResult,
@@ -30,6 +31,7 @@ from app.schemas.face import (
 from app.schemas.person import PersonMinimal
 from app.services.face_matching import (
     load_prototype_index,
+    load_suggestion_rejections,
     load_unassigned_face_embeddings,
     score_faces,
 )
@@ -297,6 +299,21 @@ class FaceCreatePerson(BaseModel):
     name: str | None = None
 
 
+class FaceSuggestionRejectionRequest(BaseModel):
+    person_id: int
+
+
+def _validate_suggestion_rejection(
+    session: Session, face_id: int, person_id: int
+) -> None:
+    if settings.general.presentation_mode:
+        raise HTTPException(status_code=403, detail="Not allowed in presentation mode.")
+    if session.get(Face, face_id) is None:
+        raise HTTPException(status_code=404, detail="Face not found")
+    if session.get(Person, person_id) is None:
+        raise HTTPException(status_code=404, detail="Person not found")
+
+
 @router.get("/orphans/suggestions", response_model=OrphanFaceSuggestionsPage)
 def get_orphan_face_suggestions(
     session: Session = Depends(get_session),
@@ -323,7 +340,10 @@ def get_orphan_face_suggestions(
     ranked = sorted(
         (
             match
-            for match in score_faces(index, face_ids, embeddings, frontalities)
+            for match in score_faces(
+                index, face_ids, embeddings, frontalities,
+                rejected_persons=load_suggestion_rejections(session, face_ids),
+            )
             if match.score >= min_score
         ),
         key=lambda match: (-match.score, match.face_id),
@@ -489,3 +509,37 @@ def old_person_can_be_deleted(
 
     remove_person(person_id, session, reason=f"empty-after-{reason}", commit=commit)
     return True
+
+
+@router.post("/{face_id}/reject-suggestion")
+def reject_face_suggestion(
+    face_id: int,
+    body: FaceSuggestionRejectionRequest,
+    session: Session = Depends(get_session),
+) -> dict[str, int | bool]:
+    """Remember a review decision without changing the face's ownership."""
+    _validate_suggestion_rejection(session, face_id, body.person_id)
+    session.exec(
+        insert(FaceSuggestionRejection)
+        .values(face_id=face_id, person_id=body.person_id)
+        .on_conflict_do_nothing(index_elements=["face_id", "person_id"])
+    )
+    safe_commit(session)
+    return {"face_id": face_id, "person_id": body.person_id, "rejected": True}
+
+
+@router.delete("/{face_id}/reject-suggestion")
+def undo_face_suggestion_rejection(
+    face_id: int,
+    body: FaceSuggestionRejectionRequest,
+    session: Session = Depends(get_session),
+) -> dict[str, int | bool]:
+    _validate_suggestion_rejection(session, face_id, body.person_id)
+    session.exec(
+        delete(FaceSuggestionRejection).where(
+            FaceSuggestionRejection.face_id == face_id,
+            FaceSuggestionRejection.person_id == body.person_id,
+        )
+    )
+    safe_commit(session)
+    return {"face_id": face_id, "person_id": body.person_id, "rejected": False}

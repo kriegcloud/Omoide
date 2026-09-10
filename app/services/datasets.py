@@ -99,14 +99,14 @@ def render_caption(
         candidates = sorted(
             {person.name.strip(), slugify(person.name)}, key=len, reverse=True
         )
-        for candidate in candidates:
-            if candidate:
-                caption = re.sub(
-                    re.escape(candidate),
-                    dataset.trigger_word,
-                    caption,
-                    flags=re.IGNORECASE,
-                )
+        alternatives = "|".join(re.escape(candidate) for candidate in candidates if candidate)
+        if alternatives:
+            caption = re.sub(
+                rf"(?<!\w)(?:{alternatives})(?!\w)",
+                lambda _: dataset.trigger_word,
+                caption,
+                flags=re.IGNORECASE,
+            )
 
     rendered = dataset.caption_template.format(
         trigger=dataset.trigger_word,

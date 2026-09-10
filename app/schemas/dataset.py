@@ -1,4 +1,6 @@
 from datetime import datetime
+import re
+from string import Formatter
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -24,6 +26,28 @@ def validate_dataset_path_token(value: str | None) -> str | None:
     return value
 
 
+def validate_caption_template(value: str | None) -> str | None:
+    """Accept templates that can render the three supported string fields."""
+    if value is None:
+        return value
+    formatter = Formatter()
+    try:
+        for _, field, spec, conversion in formatter.parse(value):
+            if field is None:
+                continue
+            if field not in {"trigger", "class", "caption"}:
+                raise ValueError("Allowed caption fields are {trigger}, {class}, and {caption}")
+            if "{" in spec or "}" in spec:
+                raise ValueError("Caption fields cannot be used inside format specifiers")
+            # Validate formatting without allocating a user-specified padding
+            # width. All three template values are strings.
+            sample = formatter.convert_field("", conversion)
+            format(sample, re.sub(r"[0-9]+", "1", spec))
+    except (ValueError, KeyError, IndexError) as exc:
+        raise ValueError(f"Invalid caption template: {exc}") from exc
+    return value
+
+
 class DatasetCreate(BaseModel):
     name: str
     slug: str | None = None
@@ -41,6 +65,7 @@ class DatasetCreate(BaseModel):
     cover_media_id: int | None = None
 
     _safe_tokens = field_validator("trigger_word", "class_token")(validate_dataset_path_token)
+    _caption_template = field_validator("caption_template")(validate_caption_template)
 
 
 class DatasetUpdate(BaseModel):
@@ -61,6 +86,7 @@ class DatasetUpdate(BaseModel):
     composition_targets: dict[str, dict[str, float]] | None = None
 
     _safe_tokens = field_validator("trigger_word", "class_token")(validate_dataset_path_token)
+    _caption_template = field_validator("caption_template")(validate_caption_template)
 
 
 class DatasetRead(BaseModel):

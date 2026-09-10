@@ -7,6 +7,7 @@ from app.config import settings
 from app.logger import logger
 from app.models import ProcessingTask
 from .maintenance import clean_missing_files
+from .common import _start_task, _finish_task
 from .media_processing import run_media_processing_and_chain
 from .scan import run_scan
 
@@ -16,10 +17,20 @@ __all__ = ["run_cleanup_and_chain", "run_scan_and_chain"]
 def run_cleanup_and_chain(task_id: str) -> None:
     if settings.scan.auto_clean_on_scan:
         clean_missing_files(task_id)
+    else:
+        with Session(db.engine) as session:
+            previous = session.get(ProcessingTask, task_id)
+            if previous is None or not _start_task(session, previous):
+                return
+            _finish_task(session, previous, "completed")
+    with Session(db.engine) as session:
+        previous = session.get(ProcessingTask, task_id)
+        if previous is None or previous.status != "completed":
+            return
 
     logger.info("Cleanup task finished, starting scan task.")
     with Session(db.engine) as new_session:
-        next_task = ProcessingTask(task_type="scan", total=0, processed=0)
+        next_task = ProcessingTask(task_type="scan", total=0, processed=0, params={"chain": True})
         new_session.add(next_task)
         new_session.commit()
         new_session.refresh(next_task)
@@ -29,11 +40,15 @@ def run_cleanup_and_chain(task_id: str) -> None:
 
 def run_scan_and_chain(task_id: str) -> None:
     run_scan(task_id)
+    with Session(db.engine) as session:
+        previous = session.get(ProcessingTask, task_id)
+        if previous is None or previous.status != "completed":
+            return
 
     logger.info("Scan task finished, starting media processing task.")
     with Session(db.engine) as new_session:
         next_task = ProcessingTask(
-            task_type="process_media", total=0, processed=0
+            task_type="process_media", total=0, processed=0, params={"chain": True}
         )
         new_session.add(next_task)
         new_session.commit()

@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 from app.config import settings
 from app.database import safe_commit
 from app.logger import logger
-from app.models import Face, FaceAssignmentSource, Person
+from app.models import Face, FaceAssignmentSource, FaceSuggestionRejection, Person
 from app.services.face_provenance import face_assignment_values
 from app.utils import (
     recalculate_person_appearance_counts,
@@ -53,11 +53,28 @@ def _pose_bin(frontality: float | None) -> str:
     return "quarter" if frontality >= 0.25 else "profile"
 
 
+def load_suggestion_rejections(
+    session: Session, face_ids: list[int]
+) -> dict[int, set[int]]:
+    """Load explicit review decisions only for the faces being scored."""
+    rejected: dict[int, set[int]] = {}
+    for chunk in _iter_chunks(sorted(set(face_ids)), 500):
+        rows = session.exec(
+            select(FaceSuggestionRejection.face_id, FaceSuggestionRejection.person_id)
+            .where(FaceSuggestionRejection.face_id.in_(chunk))
+        ).all()
+        for face_id, person_id in rows:
+            rejected.setdefault(face_id, set()).add(person_id)
+    return rejected
+
+
 def score_faces(
     index: PrototypeIndex,
     face_ids: list[int],
     embeddings: np.ndarray,
     frontalities: list[float | None],
+    *,
+    rejected_persons: dict[int, set[int]] | None = None,
 ) -> list[FaceMatch]:
     """Score valid faces against normalized prototypes, without database writes.
 
@@ -81,6 +98,11 @@ def score_faces(
             continue
         similarities = (chunk[valid] / norms[valid, None]) @ index.matrix.T
         similarities = np.clip(similarities, -1.0, 1.0)
+        if rejected_persons:
+            for row, local_index in enumerate(valid):
+                excluded = rejected_persons.get(int(face_ids[start + int(local_index)]))
+                if excluded:
+                    similarities[row, np.isin(index.person_ids, list(excluded))] = -np.inf
         best_indices = np.argmax(similarities, axis=1)
         best_scores = similarities[np.arange(len(valid)), best_indices]
         best_persons = index.person_ids[best_indices]
@@ -91,6 +113,8 @@ def score_faces(
         ).max(axis=1)
         other_scores = np.where(np.isfinite(other_scores), other_scores, -1.0)
         for row, local_index in enumerate(valid):
+            if not np.isfinite(best_scores[row]):
+                continue
             offset = start + int(local_index)
             matches.append(
                 FaceMatch(
@@ -168,7 +192,10 @@ def match_faces_to_persons(
     ids, embeddings, frontalities = load_unassigned_face_embeddings(session, face_ids)
     assignments = {
         match.face_id: match.person_id
-        for match in score_faces(index, ids, embeddings, frontalities)
+        for match in score_faces(
+            index, ids, embeddings, frontalities,
+            rejected_persons=load_suggestion_rejections(session, ids),
+        )
         if match.score >= threshold and match.margin >= min_margin
     }
     if assignments:
@@ -439,7 +466,11 @@ def _bulk_assign_faces_to_persons(
         for face_chunk in _iter_chunks(person_face_ids, chunk_size):
             claimed_ids = session.exec(
                 update(Face).where(
-                    Face.id.in_(face_chunk), Face.person_id.is_(None)
+                    Face.id.in_(face_chunk), Face.person_id.is_(None),
+                    ~select(FaceSuggestionRejection.face_id).where(
+                        FaceSuggestionRejection.face_id == Face.id,
+                        FaceSuggestionRejection.person_id == person_id,
+                    ).exists(),
                 ).values(**face_assignment_values(person_id, FaceAssignmentSource.AUTO_MATCH))
                 .returning(Face.id)
             ).scalars().all()

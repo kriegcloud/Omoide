@@ -1,12 +1,14 @@
 import ctypes
 import ctypes.util
 import os
+import re
 import sys
 import threading
 from enum import Enum
 from pathlib import Path
 
 from sqlalchemy import event
+from sqlalchemy.engine import make_url
 from sqlalchemy.engine.result import ScalarResult
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, create_engine
@@ -263,6 +265,49 @@ def run_migrations():
     logger.info("Alembic migrations applied successfully.")
 
 
+def validate_clip_vector_space(model, *, previous_model=None, database_url=None):
+    """Validate existing CLIP vectors without recreating or deleting them.
+
+    Different models can have equal dimensions but incompatible vector spaces.
+    A deliberate vector rebuild must remove the old tables/vectors before such
+    a change is accepted. Inspect inactive profiles without creating a database.
+    """
+    target = engine
+    active_path = target.url.database
+    if database_url is None and active_path not in (None, "", ":memory:") and not Path(active_path).is_file():
+        return
+    if database_url is not None:
+        url = make_url(database_url)
+        if not url.database or not Path(url.database).is_file():
+            return
+        target = create_engine(url)
+        _attach_engine_listeners(target)
+    try:
+        with target.connect() as connection:
+            for table in ("media_embeddings", "scene_embeddings"):
+                definition = connection.exec_driver_sql(
+                    "SELECT sql FROM sqlite_master WHERE name = ?", (table,)
+                ).scalar()
+                if not definition:
+                    continue
+                match = re.search(r"embedding\s+float\s*\[\s*(\d+)\s*\]", definition, re.I)
+                wrong_dimension = match is None or int(match.group(1)) != model.embedding_size
+                changed_space = previous_model is not None and previous_model != model
+                populated = changed_space and connection.exec_driver_sql(
+                    f"SELECT 1 FROM {table} LIMIT 1"
+                ).first() is not None
+                if wrong_dimension or populated:
+                    raise ValueError(
+                        f"CLIP model change requires a vector rebuild: {table} contains "
+                        f"an incompatible vector space for {model.model_name} "
+                        f"({model.embedding_size} dimensions). Rebuild the media and scene "
+                        "vector tables before changing the model. Existing vectors were preserved."
+                    )
+    finally:
+        if target is not engine:
+            target.dispose()
+
+
 def ensure_vec_tables():
     """Ensure vec0 virtual tables exist (idempotent)."""
     # Try best to ensure the sqlite-vec extension can be located in binary mode
@@ -287,6 +332,7 @@ def ensure_vec_tables():
                 os.environ.setdefault("SQLITE_VEC_PATH", str(base / vec_name))
 
     dim_media = settings.ai.clip_model_embedding_size
+    validate_clip_vector_space(settings.ai.clip_model)
     with engine.begin() as conn:
         conn.exec_driver_sql(
             f"""
