@@ -52,6 +52,22 @@ def _largest_face(faces):
     )
 
 
+PADDED_RETRY_PAD_PCT = 0.4
+
+
+def _pad_for_detection(rgb: np.ndarray, pad_pct: float = PADDED_RETRY_PAD_PCT) -> np.ndarray:
+    """Return a gray-bordered copy so the detector sees context around a tight crop."""
+    height, width = rgb.shape[:2]
+    pad_y = max(1, int(height * pad_pct))
+    pad_x = max(1, int(width * pad_pct))
+    return np.pad(
+        rgb,
+        ((pad_y, pad_y), (pad_x, pad_x), (0, 0)),
+        mode="constant",
+        constant_values=128,
+    )
+
+
 def _initialize_state(session: Session) -> None:
     session.exec(
         text(
@@ -171,8 +187,21 @@ def migrate(batch_size: int, limit: int | None) -> None:
             if rgb is not None:
                 try:
                     detected = client.get(rgb)
-                    if detected:
-                        embedding = _largest_face(detected).embedding
+                    chosen = _largest_face(detected) if detected else None
+                    if chosen is None or chosen.embedding is None:
+                        # Face thumbnails are tight crops; SCRFD often finds nothing
+                        # until the crop is padded (same fallback as the processor,
+                        # app/processors/faces.py). Retry once on a gray-padded copy.
+                        padded = _pad_for_detection(rgb)
+                        retried = client.get(padded)
+                        if retried:
+                            chosen = _largest_face(retried)
+                    if chosen is not None:
+                        embedding = chosen.embedding
+                        if embedding is None:
+                            reason = getattr(chosen, "embedding_reason", None)
+                            if reason:
+                                outcome = f"no_embedding:{str(reason)[:40]}"
                 except (OSError, RuntimeError):
                     # Service failures say nothing about the thumbnail's readability.
                     outcome = "inference_error"

@@ -44,10 +44,19 @@ class FaceMigrationSafetyTests(unittest.TestCase):
             face_id = face.id
             session.exec(text("INSERT INTO face_embeddings VALUES (:face_id, -1, :old)").bindparams(face_id=face_id, old=b'old vector'))
             session.commit()
+        calls = []
+
         def inference(rgb):
+            calls.append(rgb.shape)
             if error:
                 raise error
-            return [SimpleNamespace(bbox=np.array([0, 0, 10, 10]), embedding=np.ones(512, dtype=np.float32))] if detected else []
+            if detected == 'padded-only':
+                # The 16x16 fixture crop yields nothing; only the gray-padded retry (larger) detects.
+                found = rgb.shape[0] > 16
+            else:
+                found = bool(detected)
+            return [SimpleNamespace(bbox=np.array([0, 0, 10, 10]), embedding=np.ones(512, dtype=np.float32))] if found else []
+        self._inference_calls = calls
         client = SimpleNamespace(health=lambda: {'model': 'fake', 'runtime': {'actualCompute': 'cpu'}}, get=inference)
         output = io.StringIO()
         with patch.object(migration, 'engine', engine), patch.object(migration, '_backup_database', return_value=root / 'backup.db'), patch.object(migration, 'AdaFaceSocketAnalysis', return_value=client), patch.object(settings.general, 'data_dir', root), contextlib.redirect_stdout(output):
@@ -60,6 +69,23 @@ class FaceMigrationSafetyTests(unittest.TestCase):
             outcomes = session.exec(text('SELECT outcome FROM face_embedding_migration')).all()
             status = session.exec(text('SELECT status FROM model_fingerprints')).scalar_one()
         return row, [row[0] for row in outcomes], status, output.getvalue()
+
+    def test_tight_crop_is_retried_with_gray_padding(self):
+        # Live migration on 2026-09-10 lost ~50% of faces to `no_embedding` because
+        # SCRFD finds nothing on tight thumbnail crops; the padded retry recovers them.
+        row, outcomes, status, _ = self._run_migration(detected='padded-only')
+        self.assertEqual(outcomes, ['migrated'])
+        self.assertNotEqual(row[0], b'old vector')
+        self.assertEqual(status, 'ready')
+        self.assertEqual(len(self._inference_calls), 2)
+        self.assertEqual(self._inference_calls[0], (16, 16, 3))
+        self.assertGreater(self._inference_calls[1][0], 16)
+
+    def test_padding_helper_adds_gray_border(self):
+        padded = migration._pad_for_detection(np.zeros((10, 20, 3), dtype=np.uint8), 0.5)
+        self.assertEqual(padded.shape, (20, 40, 3))
+        self.assertEqual(int(padded[0, 0, 0]), 128)
+        self.assertEqual(int(padded[10, 20, 0]), 0)
 
     def test_service_oserror_is_retryable_and_preserves_existing_vector(self):
         row, outcomes, status, _ = self._run_migration(error=OSError('socket unavailable'))
