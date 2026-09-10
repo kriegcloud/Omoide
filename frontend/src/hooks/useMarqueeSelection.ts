@@ -1,4 +1,5 @@
 import { useHotkeyRegistry } from "../hotkeys/useHotkey";
+import { selectAllBindings } from "../hotkeys/keymap";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useSelection, useSelectionList } from "../context/SelectionContext";
@@ -157,7 +158,7 @@ export function useGridSelection<TId extends number | string = number>({
     let clientY = 0;
     let active = false;
     let frame: number | null = null;
-    let mode: "replace" | "add" | "remove" = "replace";
+    let mode: "add" | "remove" = "add";
     let initialSelection = new Set<TId>();
     let enteredSelection = false;
     let scrollTarget: HTMLElement | null = null;
@@ -246,9 +247,7 @@ export function useGridSelection<TId extends number | string = number>({
 
       const next = mode === "add"
         ? new Set([...initialSelection, ...intersecting])
-        : mode === "remove"
-          ? new Set(Array.from(initialSelection).filter((id) => !intersecting.has(id)))
-          : intersecting;
+        : new Set(Array.from(initialSelection).filter((id) => !intersecting.has(id)));
       if (next.size > 0 && !selectingRef.current && !enteredSelection) {
         enteredSelection = true;
         if (onEnterSelectionRef.current) onEnterSelectionRef.current();
@@ -305,7 +304,7 @@ export function useGridSelection<TId extends number | string = number>({
       if (event.pointerId !== pointerId) return;
       clientX = event.clientX;
       clientY = event.clientY;
-      mode = event.altKey ? "remove" : event.ctrlKey || event.metaKey ? "add" : "replace";
+      mode = event.altKey ? "remove" : "add";
       if (!active) {
         const offset = scrollOffset();
         const distance = Math.hypot(
@@ -385,12 +384,10 @@ export function useGridSelection<TId extends number | string = number>({
       startPageY = event.clientY + offset.y;
       clientX = event.clientX;
       clientY = event.clientY;
+      // Always union/subtract against this snapshot, so shrinking the rectangle
+      // preserves previous drags but releases ids added only by this drag.
       initialSelection = new Set(selectedIdsRef.current);
-      mode = event.altKey
-        ? "remove"
-        : event.ctrlKey || event.metaKey
-          ? "add"
-          : "replace";
+      mode = event.altKey ? "remove" : "add";
       window.addEventListener("pointermove", handlePointerMove, {
         passive: false,
       });
@@ -436,8 +433,11 @@ export function useGridSelection<TId extends number | string = number>({
       const focusedGrid = target instanceof Element ? target.closest("[data-selection-grid]") : null;
       if (focusedGrid && focusedGrid !== container) return false;
       if (container.getClientRects().length === 0) return false;
-      const next = new Set(loadedIds ?? Array.from(container.querySelectorAll<HTMLElement>(itemSelector), getIdRef.current));
-      if (!next.size) return false;
+      const allLoaded = new Set(loadedIds ?? Array.from(container.querySelectorAll<HTMLElement>(itemSelector), getIdRef.current));
+      if (!allLoaded.size) return false;
+      const next = Array.from(allLoaded).every((id) => selectedIdsRef.current.has(id))
+        ? new Set<TId>()
+        : allLoaded;
       event.preventDefault();
       cancelMarqueeRef.current?.();
       onEnterSelectionRef.current?.();
@@ -446,9 +446,9 @@ export function useGridSelection<TId extends number | string = number>({
     };
     container.setAttribute("data-selection-grid", "");
     const unregister = registerHotkey(() => ({
-      bindings: [{ key: "a", ctrl: true }, { key: "a", meta: true }],
+      bindings: selectAllBindings,
       handler: handleSelectAll,
-      options: { scope: "page", description: "Select all loaded items", when: () => container.getClientRects().length > 0 },
+      options: { scope: "page", when: () => container.getClientRects().length > 0 },
     }));
     return () => {
       container.removeAttribute("data-selection-grid");

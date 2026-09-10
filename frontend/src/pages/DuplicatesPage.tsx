@@ -70,7 +70,18 @@ function GroupRow({ index, style, data }: ListChildComponentProps<GroupRowData>)
   return (
     <div style={style}>
       {group ? (
-        <Box ref={rowRef} sx={{ pb: 3 }}>
+        <Box ref={rowRef} sx={{
+          pb: 3,
+          // Each group's action header sticks within the virtual list's own
+          // scrollport, then leaves with its group. Page filters stay above it.
+          "& > .MuiPaper-root > .MuiBox-root:first-of-type": {
+            position: "sticky",
+            top: 0,
+            zIndex: (theme) => theme.zIndex.appBar - 1,
+            bgcolor: "background.paper",
+            boxShadow: 1,
+          },
+        }}>
           <DuplicateGroup
             group={group}
             selecting={data.selecting}

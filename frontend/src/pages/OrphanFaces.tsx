@@ -19,7 +19,6 @@ import {
   DialogActions,
   Button,
   Stack,
-  Paper,
   Alert,
   Snackbar,
   ToggleButton,
@@ -41,6 +40,7 @@ import { Person } from "../types";
 import { FaceGrid } from "../components/FaceGrid"; // Import our DUMB grid component
 import ConfirmDialog from "../components/ConfirmDialog";
 import OrphanFaceSuggestions from "../components/OrphanFaceSuggestions";
+import { StickySelectionToolbar } from "../components/BulkResolveToolbar";
 
 export default function OrphanFacesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -278,70 +278,69 @@ function AllOrphanFaces() {
 
   return (
     <Container id="unassigned-faces" maxWidth="xl" sx={{ pt: 4, pb: 7 }}>
-      {/* The header and toolbar are now part of the page's main layout flow */}
       <Box sx={{ display: "flex", alignItems: "center", flexWrap: "wrap", mb: 2, gap: 2 }}>
         <Typography variant="h4" sx={{ flexGrow: 1 }}>
           Unassigned Faces
         </Typography>
-        <Button
-          size="small"
-          variant="outlined"
-          color="error"
-          disabled={isProcessing || orphanCount === null || orphanCount === 0}
-          onClick={() => setConfirmDeleteAllOpen(true)}
-        >
-          Delete all ({orphanCount === null ? "…" : orphanCount.toLocaleString()})
-        </Button>
-        <Button
-          size="small"
-          onClick={handleSelectAll}
-          disabled={orphans.length === 0}
-        >
-          {selectedFaceIds.length < orphans.length
-            ? "Select All"
-            : "Select None"}
-        </Button>
       </Box>
 
       {countError && <Alert severity="error" sx={{ mb: 2 }}>{countError}</Alert>}
 
-      {selectedFaceIds.length > 0 && (
-        <Paper elevation={2} sx={{ p: 1, mb: 2, bgcolor: "action.selected" }}>
-          <Stack direction="row" spacing={1} alignItems="center">
-            <Typography sx={{ ml: 1 }} variant="subtitle1">
-              {selectedFaceIds.length} selected · {orphans.length} loaded
-            </Typography>
-            {hasMore && <Chip size="small" label="Load more to select the rest" />}
-            <Box sx={{ flexGrow: 1 }} />
-            <Button
-              variant="contained"
-              size="small"
-              disabled={isProcessing}
-              onClick={openAssignDialog}
-            >
-              Assign...
-            </Button>
-            <Button
-              variant="contained"
-              size="small"
-              disabled={isProcessing}
-              onClick={() => setCreateDialogOpen(true)}
-            >
-              Create...
-            </Button>
-            <Button
-              variant="outlined"
-              color="error"
-              size="small"
-              disabled={isProcessing}
-              onClick={() => setConfirmDeleteOpen(true)}
-            >
-              Delete
-            </Button>
-            {isProcessing && <CircularProgress size={20} />}
-          </Stack>
-        </Paper>
-      )}
+      <StickySelectionToolbar sx={{ p: 1, mb: 2 }}>
+        <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
+          <Typography sx={{ ml: 1 }} variant="subtitle1">
+            {selectedFaceIds.length} selected · {orphans.length} loaded
+          </Typography>
+          {hasMore && <Chip size="small" label="Load more to select the rest" />}
+          <Box sx={{ flexGrow: 1 }} />
+          <Button
+            size="small"
+            onClick={handleSelectAll}
+            disabled={orphans.length === 0}
+          >
+            {selectedFaceIds.length < orphans.length ? "Select All" : "Select None"}
+          </Button>
+          {selectedFaceIds.length > 0 && (
+            <>
+              <Button
+                variant="contained"
+                size="small"
+                disabled={isProcessing}
+                onClick={openAssignDialog}
+              >
+                Assign...
+              </Button>
+              <Button
+                variant="contained"
+                size="small"
+                disabled={isProcessing}
+                onClick={() => setCreateDialogOpen(true)}
+              >
+                Create...
+              </Button>
+              <Button
+                variant="outlined"
+                color="error"
+                size="small"
+                disabled={isProcessing}
+                onClick={() => setConfirmDeleteOpen(true)}
+              >
+                Delete
+              </Button>
+            </>
+          )}
+          <Button
+            size="small"
+            variant="outlined"
+            color="error"
+            disabled={isProcessing || orphanCount === null || orphanCount === 0}
+            onClick={() => setConfirmDeleteAllOpen(true)}
+          >
+            Delete all ({orphanCount === null ? "…" : orphanCount.toLocaleString()})
+          </Button>
+          {isProcessing && <CircularProgress size={20} />}
+        </Stack>
+      </StickySelectionToolbar>
 
       <ListState
         loading={isLoading && orphans.length === 0}

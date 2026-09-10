@@ -47,6 +47,11 @@ export const gridBindings: HotkeyBinding[] = [
   ...["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].map(key => ({ key, description: "Move focus between tiles" })),
 ];
 
+export const selectAllBindings: HotkeyBinding[] = [
+  { key: "a", ctrl: true, description: "Select all loaded / clear" },
+  { key: "a", meta: true, description: "Select all loaded / clear" },
+];
+
 export const selectionBindings: HotkeyBinding[] = [
   { key: "Delete", description: "Delete selected files…", destructive: true },
   { key: "Delete", shift: true, description: "Remove selected records…", destructive: true },
