@@ -12,6 +12,7 @@ import VideocamOffIcon from "@mui/icons-material/VideocamOff";
 import { ShortVideoItem } from "../types";
 import { getShortVideos, resolveShortVideos } from "../services/shortvideos";
 import { useCursorList } from "../hooks/useCursorList";
+import { useSelection } from "../context/SelectionContext";
 import { useGridSelection } from "../hooks/useMarqueeSelection";
 import BulkResolveToolbar, {
   BulkResolveAction,
@@ -64,7 +65,8 @@ const ShortVideosPage: React.FC = () => {
   } = useCursorList<ShortVideoItem>(fetcher);
 
   const gridRef = useRef<HTMLDivElement>(null);
-  const selecting = selectedIds.size > 0;
+  const { isSelecting: globalSelecting } = useSelection();
+  const selecting = globalSelecting || selectedIds.size > 0;
   const { marqueeRect, onItemClick } = useGridSelection({
     containerRef: gridRef,
     selectedIds,
