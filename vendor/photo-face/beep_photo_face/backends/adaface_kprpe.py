@@ -836,7 +836,12 @@ def _resolve_artifact_paths(
     return detector_path, aligner_path, recognizer_path
 
 
-def load_backend(arguments: WorkerArguments, detector_fallback: Any) -> LoadedBackend:
+def load_backend(
+    arguments: WorkerArguments,
+    detector_fallback: Any,
+    *,
+    det_size: tuple[int, int] = (640, 640),
+) -> LoadedBackend:
     torch, safetensors_torch = _import_adaface_dependencies()
     selection = resolve_compute(torch, arguments)
     detector_path, aligner_path, recognizer_path = _resolve_artifact_paths(
@@ -864,7 +869,7 @@ def load_backend(arguments: WorkerArguments, detector_fallback: Any) -> LoadedBa
         str(detector_path), providers=["CPUExecutionProvider"]
     )
     detector.prepare(
-        ctx_id=-1, input_size=(640, 640), det_thresh=arguments.detection_threshold
+        ctx_id=-1, input_size=det_size, det_thresh=arguments.detection_threshold
     )
     actual_providers = tuple(detector.session.get_providers())
     if actual_providers != ("CPUExecutionProvider",):
@@ -874,6 +879,12 @@ def load_backend(arguments: WorkerArguments, detector_fallback: Any) -> LoadedBa
                 f"detector initialized with providers {actual_providers!r}, expected "
                 "('CPUExecutionProvider',)"
             ),
+        )
+
+    if tuple(detector.input_size) != det_size:
+        raise WorkerError(
+            "unexpected-detector-size",
+            "det_10g did not accept the requested detector input size",
         )
 
     aligner, priors = _build_aligner(torch)

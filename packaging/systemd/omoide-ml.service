@@ -10,6 +10,8 @@ Type=simple
 WorkingDirectory=/home/elpresidank/YeeBois/workstation-apps/Omoide/vendor/photo-face
 Environment=PYTHONPATH=/home/elpresidank/YeeBois/workstation-apps/Omoide/vendor/photo-face
 Environment=HIP_VISIBLE_DEVICES=0
+# --det-size N optionally sets SCRFD's square CPU input (default 640;
+# multiples of 32, 320..1600). Use separate sockets for resolution experiments.
 Environment=LD_LIBRARY_PATH=/home/elpresidank/.cache/beep/photo-face/rocm-libs/hipsparselt-7.2.4-1.1/opt/rocm/lib:/opt/rocm/lib
 ExecStart=/home/elpresidank/.cache/omoide/photo-face/venv-rocm72/bin/python -m beep_photo_face.service --socket /home/elpresidank/.local/share/omoide-portal/run/omoide-ml.sock --model-root /home/elpresidank/.local/share/omoide-portal/models/adaface-kprpe --detector /home/elpresidank/.local/share/omoide-portal/models/adaface-kprpe/detector/det_10g.onnx --aligner /home/elpresidank/.local/share/omoide-portal/models/adaface-kprpe/aligner/model.safetensors --recognizer /home/elpresidank/.local/share/omoide-portal/models/adaface-kprpe/recognizer/model.safetensors --device 0 --batch-size 16
 Restart=on-failure

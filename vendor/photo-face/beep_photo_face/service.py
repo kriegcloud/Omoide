@@ -120,7 +120,9 @@ class AdaFaceService:
             lambda _: (_ for _ in ()).throw(
                 WorkerError("configuration-error", "detector fallback is disabled")
             ),
+            det_size=(arguments.det_size, arguments.det_size),
         )
+        self.det_size = arguments.det_size
 
     def handle(self, request: dict[str, Any]) -> dict[str, Any]:
         if request.get("protocol") != PROTOCOL_VERSION:
@@ -131,6 +133,7 @@ class AdaFaceService:
                 "ok": True,
                 "protocol": PROTOCOL_VERSION,
                 "model": MODEL_NAME,
+                "detSize": self.det_size,
                 "runtime": self.backend.model["runtime"],
             }
         if action != "faces":
@@ -181,7 +184,19 @@ def _serve(arguments: argparse.Namespace) -> None:
             socket_path.unlink()
 
 
-def main() -> None:
+def _det_size(value: str) -> int:
+    try:
+        size = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("det-size must be an integer") from error
+    if not 320 <= size <= 1600 or size % 32:
+        raise argparse.ArgumentTypeError(
+            "det-size must be a multiple of 32 between 320 and 1600"
+        )
+    return size
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Pinned AdaFace service for Omoide")
     parser.add_argument("--socket", type=Path, required=True)
     parser.add_argument("--model-root", type=Path, required=True)
@@ -190,9 +205,14 @@ def main() -> None:
     parser.add_argument("--recognizer", type=Path, required=True)
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--det-size", type=_det_size, default=640)
     parser.add_argument("--detection-threshold", type=float, default=0.5)
     parser.add_argument("--timeout", type=float, default=180.0)
-    _serve(parser.parse_args())
+    return parser
+
+
+def main() -> None:
+    _serve(build_parser().parse_args())
 
 
 if __name__ == "__main__":

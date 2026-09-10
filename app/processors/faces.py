@@ -5,7 +5,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 from cv2.typing import MatLike
-from PIL import Image, ImageOps
+from PIL import Image
 from PIL.ImageFile import ImageFile
 from sqlmodel import select, text
 from tqdm import tqdm
@@ -16,15 +16,13 @@ from app.database import safe_commit
 from app.logger import logger
 from app.models import ExifData, Face, Media, Person, Scene
 from app.processors.base import MediaProcessor
+from app.services.face_working_image import MAX_DET_DIM, face_scene_rgb, face_working_image
 from app.utils import (
     auto_select_profile_face,
     get_thumb_folder,
     to_posix_str,
     vector_to_blob,
 )
-
-
-MAX_DET_DIM = 1280
 
 
 class FaceProcessor(MediaProcessor):
@@ -387,12 +385,10 @@ class FaceProcessor(MediaProcessor):
                     scene = Image.open(
                         settings.general.thumb_dir / scene.thumbnail_path
                     )
-                    scene = ImageOps.exif_transpose(scene)
-                    scene = np.array(scene.convert("RGB"))
+                    scene = face_scene_rgb(scene)
                 else:
                     # plain PIL.Image -> ensure correct orientation + RGB
-                    scene = ImageOps.exif_transpose(scene)
-                    scene = np.array(scene.convert("RGB"))
+                    scene = face_scene_rgb(scene)
             except OSError as exc:
                 logger.warning("Failed to read face scene for %s: %s", media.path, exc)
                 media.processing_error = f"Face extraction read failed: {exc}"
@@ -407,21 +403,11 @@ class FaceProcessor(MediaProcessor):
                 safe_commit(session)
                 return False
 
-            h_orig, w_orig = scene.shape[:2]
-
             # Pre-scale for memory/compute efficiency. Note: this does NOT improve
             # detection sensitivity — the minimum detectable face size in the original
             # equals 16px × (original_size / det_size) regardless of pre-scaling.
             # We still do it to avoid feeding 4032×3024 images into ONNX directly.
-            if max(h_orig, w_orig) > MAX_DET_DIM:
-                s = MAX_DET_DIM / max(h_orig, w_orig)
-                scene_det = cv2.resize(
-                    scene,
-                    (int(w_orig * s), int(h_orig * s)),
-                    interpolation=cv2.INTER_AREA,
-                )
-            else:
-                scene_det = scene
+            scene_det = face_working_image(scene)
 
             try:
                 faces = self.model.get(scene_det)
