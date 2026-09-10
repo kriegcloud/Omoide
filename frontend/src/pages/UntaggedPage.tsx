@@ -16,6 +16,7 @@ import LabelOffIcon from "@mui/icons-material/LabelOff";
 import { UntaggedMediaItem } from "../types";
 import { getUntaggedMedia, resolveUntagged } from "../services/untagged";
 import { useCursorList } from "../hooks/useCursorList";
+import { useSelection } from "../context/SelectionContext";
 import { useGridSelection } from "../hooks/useMarqueeSelection";
 import BulkResolveToolbar, {
   BulkResolveAction,
@@ -63,7 +64,8 @@ const UntaggedPage: React.FC = () => {
   } = useCursorList<UntaggedMediaItem>(fetcher);
 
   const gridRef = useRef<HTMLDivElement>(null);
-  const selecting = selectedIds.size > 0;
+  const { isSelecting: globalSelecting } = useSelection();
+  const selecting = globalSelecting || selectedIds.size > 0;
   const { marqueeRect, onItemClick } = useGridSelection({
     containerRef: gridRef,
     selectedIds,

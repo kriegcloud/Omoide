@@ -21,6 +21,7 @@ import { getBlurryMedia, resolveBlurry, startBlurScoring } from "../services/blu
 import { useTaskCompletionVersion, useTaskEvents } from "../TaskEventsContext";
 import { RerunProcessorsDialog } from "../components/RerunProcessorsDialog";
 import { useCursorList } from "../hooks/useCursorList";
+import { useSelection } from "../context/SelectionContext";
 import { useGridSelection } from "../hooks/useMarqueeSelection";
 import BulkResolveToolbar, {
   BulkResolveAction,
@@ -85,7 +86,8 @@ const BlurryPage: React.FC = () => {
   } = useCursorList<BlurMediaItem>(fetcher, refreshKey);
 
   const gridRef = useRef<HTMLDivElement>(null);
-  const selecting = selectedIds.size > 0;
+  const { isSelecting: globalSelecting } = useSelection();
+  const selecting = globalSelecting || selectedIds.size > 0;
   const { marqueeRect, onItemClick } = useGridSelection({
     containerRef: gridRef,
     selectedIds,

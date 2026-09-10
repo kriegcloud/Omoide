@@ -16,6 +16,7 @@ import EventBusyIcon from "@mui/icons-material/EventBusy";
 import { NoExifDateItem } from "../types";
 import { getNoExifDateMedia, resolveNoExifDate } from "../services/noexifdate";
 import { useCursorList } from "../hooks/useCursorList";
+import { useSelection } from "../context/SelectionContext";
 import { useGridSelection } from "../hooks/useMarqueeSelection";
 import BulkResolveToolbar, {
   BulkResolveAction,
@@ -63,7 +64,8 @@ const NoExifDatePage: React.FC = () => {
   } = useCursorList<NoExifDateItem>(fetcher);
 
   const gridRef = useRef<HTMLDivElement>(null);
-  const selecting = selectedIds.size > 0;
+  const { isSelecting: globalSelecting } = useSelection();
+  const selecting = globalSelecting || selectedIds.size > 0;
   const { marqueeRect, onItemClick } = useGridSelection({
     containerRef: gridRef,
     selectedIds,

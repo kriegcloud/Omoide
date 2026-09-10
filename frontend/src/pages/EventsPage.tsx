@@ -3,10 +3,7 @@ import {
   Alert,
   Box,
   Button,
-  Card,
-  CardActionArea,
   CardContent,
-  Checkbox,
   CircularProgress,
   Container,
   Snackbar,
@@ -14,7 +11,6 @@ import {
 } from "@mui/material";
 import TheatersIcon from "@mui/icons-material/Theaters";
 import AutorenewIcon from "@mui/icons-material/Autorenew";
-import { Link } from "react-router-dom";
 import { useInView } from "react-intersection-observer";
 import config, { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
@@ -23,6 +19,7 @@ import { getEvents, startBuildEvents } from "../services/features";
 import { useTaskCompletionVersion } from "../TaskEventsContext";
 import { EventItem } from "../types";
 import ConfirmDialog from "../components/ConfirmDialog";
+import SelectableTileFrame from "../components/SelectableTileFrame";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 import { useEntitySelection } from "../hooks/useEntitySelection";
 import { useGridSelection } from "../hooks/useMarqueeSelection";
@@ -208,45 +205,16 @@ export default function EventsPage() {
         }}
       >
         {items.map((event) => (
-          <Card
+          <SelectableTileFrame
             key={event.id}
-            data-selectable-id={event.id}
-            sx={{
-              borderRadius: 3,
-              position: "relative",
-              outline: selection.selectedIds.has(event.id) ? "3px solid" : "none",
-              outlineColor: "primary.main",
-            }}
-          >
-            <CardActionArea
-              component={Link}
-              to={`/event/${event.id}`}
-              onClick={(clickEvent) => {
-                if (onItemClick(event.id, clickEvent)) {
-                  clickEvent.preventDefault();
-                  clickEvent.stopPropagation();
-                }
-              }}
-            >
-              <Box
-                sx={{
-                  aspectRatio: "16/9",
-                  bgcolor: "action.hover",
-                  overflow: "hidden",
-                }}
-              >
-                {event.cover_thumbnail && (
-                  <Box
-                    component="img"
-                    src={`${API}/thumbnails/${encodeFilePath(
-                      event.cover_thumbnail
-                    )}`}
-                    alt={event.title ?? "Event"}
-                    loading="lazy"
-                    sx={{ width: "100%", height: "100%", objectFit: "cover" }}
-                  />
-                )}
-              </Box>
+            id={event.id}
+            href={`/event/${event.id}`}
+            selected={selection.selectedIds.has(event.id)}
+            selecting={selection.selectionMode}
+            onSelectionClick={onItemClick}
+            aspectRatio="16/9"
+            linkFooter
+            footer={
               <CardContent sx={{ py: 1.5 }}>
                 <Typography variant="subtitle2" fontWeight={700} noWrap>
                   {event.title || formatRange(event.start_at, event.end_at)}
@@ -258,15 +226,20 @@ export default function EventsPage() {
                   {event.media_count} item{event.media_count === 1 ? "" : "s"}
                 </Typography>
               </CardContent>
-            </CardActionArea>
-            {selection.selectionMode && (
-              <Checkbox
-                checked={selection.selectedIds.has(event.id)}
-                size="small"
-                sx={{ position: "absolute", top: 4, left: 4, pointerEvents: "none" }}
-              />
-            )}
-          </Card>
+            }
+          >
+            <Box sx={{ height: "100%", bgcolor: "action.hover", overflow: "hidden" }}>
+              {event.cover_thumbnail && (
+                <Box
+                  component="img"
+                  src={`${API}/thumbnails/${encodeFilePath(event.cover_thumbnail)}`}
+                  alt={event.title ?? "Event"}
+                  loading="lazy"
+                  sx={{ width: "100%", height: "100%", objectFit: "cover" }}
+                />
+              )}
+            </Box>
+          </SelectableTileFrame>
         ))}
         <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
       </Box>

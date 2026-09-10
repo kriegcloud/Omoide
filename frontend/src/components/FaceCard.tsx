@@ -47,8 +47,9 @@ function FaceCard({
 
   const handleCardClick = () => {
     navigate(`/medium/${face.media_id}`, {
+      replace: !!location.state?.backgroundLocation,
       state: {
-        backgroundLocation: location,
+        backgroundLocation: location.state?.backgroundLocation || location,
         ...(face.timestamp != null && {
           sceneStart: face.timestamp,
           autoplayVideo: true,

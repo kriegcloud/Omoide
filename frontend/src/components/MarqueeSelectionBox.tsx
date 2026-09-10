@@ -21,8 +21,8 @@ export default function MarqueeSelectionBox({
         border: "1px solid",
         borderColor: "primary.main",
         bgcolor: "rgba(25, 118, 210, 0.16)",
-        left: rect.left - ((containerRect?.left ?? 0) + window.scrollX),
-        top: rect.top - ((containerRect?.top ?? 0) + window.scrollY),
+        left: rect.left - ((containerRect?.left ?? 0) + window.scrollX) + (container?.scrollLeft ?? 0),
+        top: rect.top - ((containerRect?.top ?? 0) + window.scrollY) + (container?.scrollTop ?? 0),
         width: rect.width,
         height: rect.height,
       }}

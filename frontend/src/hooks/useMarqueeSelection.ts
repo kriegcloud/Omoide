@@ -16,6 +16,8 @@ export interface SelectionClickEvent {
   altKey: boolean;
   preventDefault: () => void;
   stopPropagation: () => void;
+  /** Lets a tile restore the whole gesture when its next click opens it. */
+  registerUndo?: (restore: () => void) => void;
 }
 
 interface UseGridSelectionOptions<TId extends number | string> {
@@ -37,12 +39,37 @@ interface UseGridSelectionOptions<TId extends number | string> {
 const IGNORE_SELECTOR =
   "button, a[href], input, textarea, select, [contenteditable]:not([contenteditable=false]), [role=menu], [data-no-marquee]";
 const MOVEMENT_THRESHOLD = 6;
-const AUTO_SCROLL_EDGE = 40;
-const AUTO_SCROLL_STEP = 14;
+const AUTO_SCROLL_EDGE = 80;
+const AUTO_SCROLL_STEP = 48;
 // Cards whose tops fall within this band are treated as the same visual row.
 const ROW_TOLERANCE_PX = 24;
 
 const defaultGetId = (element: HTMLElement) => Number(element.dataset.selectableId);
+
+/** Quadratic easing gives precise movement at the edge and speed near its end. */
+export function marqueeScrollVelocity(position: number, top: number, bottom: number): number {
+  const edge = Math.min(AUTO_SCROLL_EDGE, (bottom - top) / 2);
+  if (edge <= 0) return 0;
+  const depth = position < top + edge
+    ? -Math.min(1, Math.max(0, (top + edge - position) / edge))
+    : Math.min(1, Math.max(0, (position - bottom + edge) / edge));
+  return Math.sign(depth) * depth * depth * AUTO_SCROLL_STEP;
+}
+
+function scrollableAncestor(container: HTMLElement): HTMLElement | null {
+  // The grid itself may be the scrollport (e.g. an internally scrolling face grid).
+  for (let element: HTMLElement | null = container;
+    element && element !== document.body && element !== document.documentElement;
+    element = element.parentElement) {
+    if (/(auto|scroll|overlay)/.test(window.getComputedStyle(element).overflowY) &&
+      element.scrollHeight > element.clientHeight) return element;
+  }
+  return null;
+}
+
+function sameMembership<TId>(left: Set<TId>, right: Set<TId>): boolean {
+  return left.size === right.size && Array.from(left).every((id) => right.has(id));
+}
 
 export function useGridSelection<TId extends number | string = number>({
   listKey,
@@ -61,6 +88,7 @@ export function useGridSelection<TId extends number | string = number>({
 }: UseGridSelectionOptions<TId>) {
   const [marqueeRect, setMarqueeRect] = useState<MarqueeRect | null>(null);
   const anchorRef = useRef<TId | null>(null);
+  const clickUndoRef = useRef<{ token: symbol; ids: Set<TId>; anchor: TId | null } | null>(null);
   const selectedIdsRef = useRef(selectedIds);
   const onSelectionChangeRef = useRef(onSelectionChange);
   const getIdRef = useRef(getId);
@@ -127,37 +155,89 @@ export function useGridSelection<TId extends number | string = number>({
     let mode: "replace" | "add" | "remove" = "replace";
     let initialSelection = new Set<TId>();
     let enteredSelection = false;
+    let scrollTarget: HTMLElement | null = null;
+    let geometryDirty = true;
+    let tiles: { id: TId; left: number; right: number; top: number; bottom: number }[] = [];
+    let scrollBounds = { top: 0, bottom: window.innerHeight };
+    let resizeObserver: ResizeObserver | null = null;
+    let mutationObserver: MutationObserver | null = null;
     const initialUserSelect = container.style.userSelect;
 
+    const scrollOffset = () => ({
+      x: window.scrollX + (scrollTarget?.scrollLeft ?? 0),
+      y: window.scrollY + (scrollTarget?.scrollTop ?? 0),
+    });
+    const measureBounds = () => {
+      const rect = scrollTarget?.getBoundingClientRect();
+      const top = (rect?.top ?? 0) + (scrollTarget?.clientTop ?? 0);
+      scrollBounds = {
+        top: Math.max(0, top),
+        bottom: Math.min(window.innerHeight, scrollTarget ? top + scrollTarget.clientHeight : window.innerHeight),
+      };
+    };
+    const invalidateGeometry = () => { geometryDirty = true; };
+    const invalidateLayout = () => {
+      // Offscreen virtual rows cannot be remeasured after a responsive reflow.
+      tiles = [];
+      invalidateGeometry();
+    };
+    const measureTiles = () => {
+      const offset = scrollOffset();
+      resizeObserver?.disconnect();
+      resizeObserver?.observe(container);
+      if (scrollTarget && scrollTarget !== container) resizeObserver?.observe(scrollTarget);
+      const items = Array.from(container.querySelectorAll<HTMLElement>(itemSelector))
+        .filter((item) => !scrollTarget || scrollTarget.contains(item));
+      // Retain positions sampled earlier in this drag when a virtual scrollport
+      // unmounts rows. They still participate as the rectangle grows or shrinks.
+      // The cache is discarded at drag end and on layout resize.
+      const measured = new Map(scrollTarget ? tiles.map((tile) => [tile.id, tile]) : []);
+      for (const item of items) {
+        const rect = item.getBoundingClientRect();
+        resizeObserver?.observe(item);
+        const id = getIdRef.current(item);
+        measured.set(id, {
+          id,
+          left: rect.left + offset.x, right: rect.right + offset.x,
+          top: rect.top + offset.y, bottom: rect.bottom + offset.y,
+        });
+      }
+      tiles = Array.from(measured.values());
+      measureBounds();
+      geometryDirty = false;
+    };
     const updateSelection = () => {
-      const currentPageX = clientX + window.scrollX;
-      const currentPageY = clientY + window.scrollY;
+      if (geometryDirty) measureTiles();
+      const offset = scrollOffset();
+      const currentPageX = clientX + offset.x;
+      const currentPageY = clientY + offset.y;
       const rect = {
         left: Math.min(startPageX, currentPageX),
         top: Math.min(startPageY, currentPageY),
         width: Math.abs(currentPageX - startPageX),
         height: Math.abs(currentPageY - startPageY),
       };
-      setMarqueeRect(rect);
-
-      const viewportRect = {
-        left: rect.left - window.scrollX,
-        right: rect.left + rect.width - window.scrollX,
-        top: rect.top - window.scrollY,
-        bottom: rect.top + rect.height - window.scrollY,
+      // Keep the public rectangle in page coordinates: the overlay can live
+      // inside the scrollport or outside it (the virtualized duplicates list).
+      const overlayRect = {
+        ...rect,
+        left: rect.left - (scrollTarget?.scrollLeft ?? 0),
+        top: rect.top - (scrollTarget?.scrollTop ?? 0),
       };
+      setMarqueeRect((previous) => previous && previous.left === overlayRect.left &&
+        previous.top === overlayRect.top && previous.width === overlayRect.width &&
+        previous.height === overlayRect.height ? previous : overlayRect);
       const intersecting = new Set<TId>();
-      container.querySelectorAll<HTMLElement>(itemSelector).forEach((item) => {
-        const itemRect = item.getBoundingClientRect();
+      for (const item of tiles) {
         if (
-          itemRect.right >= viewportRect.left &&
-          itemRect.left <= viewportRect.right &&
-          itemRect.bottom >= viewportRect.top &&
-          itemRect.top <= viewportRect.bottom
+          item.right >= rect.left &&
+          item.left <= rect.left + rect.width &&
+          item.bottom >= rect.top &&
+          item.top <= rect.top + rect.height
         ) {
-          intersecting.add(getIdRef.current(item));
+          intersecting.add(item.id);
         }
-      });
+      }
 
       const next = mode === "add"
         ? new Set([...initialSelection, ...intersecting])
@@ -168,17 +248,19 @@ export function useGridSelection<TId extends number | string = number>({
         enteredSelection = true;
         if (onEnterSelectionRef.current) onEnterSelectionRef.current();
       }
-      selectedIdsRef.current = next;
-      onSelectionChangeRef.current(next);
+      if (!sameMembership(next, selectedIdsRef.current)) {
+        selectedIdsRef.current = next;
+        onSelectionChangeRef.current(next);
+      }
     };
 
     const tick = () => {
       frame = null;
       if (!active) return;
-      if (clientY < AUTO_SCROLL_EDGE) {
-        window.scrollBy(0, -AUTO_SCROLL_STEP);
-      } else if (clientY > window.innerHeight - AUTO_SCROLL_EDGE) {
-        window.scrollBy(0, AUTO_SCROLL_STEP);
+      if (geometryDirty) measureTiles();
+      const top = marqueeScrollVelocity(clientY, scrollBounds.top, scrollBounds.bottom);
+      if (top !== 0) {
+        (scrollTarget ?? window).scrollBy({ top, behavior: "instant" });
       }
       updateSelection();
       frame = window.requestAnimationFrame(tick);
@@ -192,6 +274,11 @@ export function useGridSelection<TId extends number | string = number>({
       }
       if (frame !== null) window.cancelAnimationFrame(frame);
       frame = null;
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+      resizeObserver = null;
+      mutationObserver = null;
+      tiles = [];
       if (active) {
         suppressClickRef.current = true;
         window.setTimeout(() => {
@@ -204,6 +291,9 @@ export function useGridSelection<TId extends number | string = number>({
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerUp);
+      window.removeEventListener("blur", stop);
+      window.removeEventListener("resize", invalidateLayout);
+      window.removeEventListener("scroll", measureBounds);
     };
 
     const handlePointerMove = (event: PointerEvent) => {
@@ -212,14 +302,42 @@ export function useGridSelection<TId extends number | string = number>({
       clientY = event.clientY;
       mode = event.altKey ? "remove" : event.ctrlKey || event.metaKey ? "add" : "replace";
       if (!active) {
+        const offset = scrollOffset();
         const distance = Math.hypot(
-          event.pageX - startPageX,
-          event.pageY - startPageY,
+          clientX + offset.x - startPageX,
+          clientY + offset.y - startPageY,
         );
         if (distance < MOVEMENT_THRESHOLD) return;
         active = true;
         container.setPointerCapture(event.pointerId);
         container.style.userSelect = "none";
+        // Ignore initial resize notifications and selection-chrome mutations;
+        // only actual geometry changes should invalidate the cached tile rects.
+        const sizes = new WeakMap<Element, string>();
+        resizeObserver = new ResizeObserver((entries) => {
+          for (const entry of entries) {
+            const size = `${entry.contentRect.width}:${entry.contentRect.height}`;
+            const previous = sizes.get(entry.target);
+            if (previous !== undefined && previous !== size) invalidateLayout();
+            sizes.set(entry.target, size);
+          }
+        });
+        mutationObserver = new MutationObserver((records) => {
+          if (records.some((record) => record.type === "attributes"
+            ? record.target instanceof Element &&
+              (record.target.matches(itemSelector) || record.target.querySelector(itemSelector))
+            : [...record.addedNodes, ...record.removedNodes].some((node) =>
+              node instanceof Element && (node.matches(itemSelector) || node.querySelector(itemSelector))))) {
+            invalidateGeometry();
+          }
+        });
+        mutationObserver.observe(container, {
+          childList: true, subtree: true, attributes: true,
+          attributeFilter: ["data-selectable-id", "style", "class"],
+        });
+        geometryDirty = true;
+        window.addEventListener("resize", invalidateLayout);
+        window.addEventListener("scroll", measureBounds);
         frame = window.requestAnimationFrame(tick);
       }
       event.preventDefault();
@@ -254,8 +372,12 @@ export function useGridSelection<TId extends number | string = number>({
 
       enteredSelection = false;
       pointerId = event.pointerId;
-      startPageX = event.pageX;
-      startPageY = event.pageY;
+      // Start at the pointer target as face grids can have an internal
+      // scrollport below the selection container (and a separate pinned section).
+      scrollTarget = scrollableAncestor(target instanceof HTMLElement ? target : target.parentElement ?? container);
+      const offset = scrollOffset();
+      startPageX = event.clientX + offset.x;
+      startPageY = event.clientY + offset.y;
       clientX = event.clientX;
       clientY = event.clientY;
       initialSelection = new Set(selectedIdsRef.current);
@@ -269,6 +391,7 @@ export function useGridSelection<TId extends number | string = number>({
       });
       window.addEventListener("pointerup", handlePointerUp);
       window.addEventListener("pointercancel", handlePointerUp);
+      window.addEventListener("blur", stop);
     };
 
     // Cancel native drag initiation for an eligible marquee, including links/images.
@@ -355,6 +478,21 @@ export function useGridSelection<TId extends number | string = number>({
       if (disabled) return false;
       if (suppressClickRef.current) return true;
       if (!isSelectionGesture(event)) return false;
+      clickUndoRef.current = null;
+      if (event.registerUndo) {
+        const token = Symbol();
+        // Keep one snapshot per grid, rather than retaining an increasingly
+        // large selection snapshot in every previously clicked tile.
+        clickUndoRef.current = { token, ids: new Set(selectedIdsRef.current), anchor: anchorRef.current };
+        event.registerUndo(() => {
+          const previous = clickUndoRef.current;
+          if (previous?.token !== token) return;
+          clickUndoRef.current = null;
+          anchorRef.current = previous.anchor;
+          selectedIdsRef.current = previous.ids;
+          onSelectionChangeRef.current(new Set(previous.ids));
+        });
+      }
       if (!selecting && onEnterSelectionRef.current) onEnterSelectionRef.current();
 
       const container = containerRef.current;
