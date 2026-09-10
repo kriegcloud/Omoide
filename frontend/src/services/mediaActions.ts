@@ -165,3 +165,21 @@ export const batchEditMedia = async (
   if (!res.ok) throw await responseError(res, "Failed to start batch edit");
   return res.json();
 };
+
+export type BulkDeleteAction = "DELETE_FILES" | "DELETE_RECORDS" | "BLACKLIST_RECORDS";
+export interface BulkDeleteResult {
+  removed: number;
+  processed_ids: number[];
+  skipped_ids: number[];
+  errors: { id: number; error?: string; reason?: string }[];
+}
+
+export const bulkDeleteMedia = async (ids: number[], action: BulkDeleteAction): Promise<BulkDeleteResult> => {
+  const res = await fetch(`${API}/api/media/bulk-delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ media_ids: ids, action }),
+  });
+  if (!res.ok) throw await responseError(res, "Failed to delete media");
+  return res.json();
+};

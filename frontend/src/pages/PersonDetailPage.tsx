@@ -7,7 +7,6 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  Typography,
 } from "@mui/material";
 import Alert from "@mui/material/Alert";
 import Snackbar from "@mui/material/Snackbar";
@@ -168,29 +167,10 @@ export default function PersonDetailPage() {
         onClose={() => setConfirmDelete(false)}
       />
 
-      <Dialog open={mergeTarget !== null} onClose={() => setMergeTarget(null)}>
-        <DialogTitle>Confirm Merge</DialogTitle>
-        <DialogContent>
-          <Typography>
-            {/* Display both names for clarity */}
-            Are you sure you want to merge "{person.name}" into "
-            {mergeTarget?.name}"?
-          </Typography>
-          <Typography color="text.secondary" sx={{ mt: 1 }}>
-            This action cannot be undone.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setMergeTarget(null)}>Cancel</Button>
-          <Button
-            onClick={handleConfirmMerge}
-            color="primary"
-            variant="contained"
-          >
-            Confirm Merge
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <ConfirmDialog open={mergeTarget !== null} title="Confirm Merge"
+        message={`Are you sure you want to merge "${person.name}" into "${mergeTarget?.name}"? This action cannot be undone.`}
+        confirmLabel="Confirm Merge" confirmColor="primary" loading={saving}
+        onConfirm={handleConfirmMerge} onClose={() => setMergeTarget(null)} />
 
       {/* Merge Dialog */}
       <Dialog open={mergeOpen} onClose={() => setMergeOpen(false)} fullWidth maxWidth="sm">

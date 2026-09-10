@@ -157,10 +157,26 @@ export const getTheme = (mode: ThemeMode) => {
             background: theme.palette.primary.main,
             color: theme.palette.getContrastText(theme.palette.primary.main),
           }),
-          colorInfo: ({ theme }) => ({
-            background: theme.palette.info.main,
-            color: "#FFFFFF",
-          }),
+          colorInfo: ({ theme, ownerState }) => {
+            const outlined = ownerState.variant === "outlined";
+            const color = outlined
+              ? mode === "light" ? "#1D4ED8" : "#93C5FD"
+              : "#0F172A";
+            const background = outlined
+              ? theme.palette.background.paper
+              : theme.palette.info.main;
+            return {
+              background,
+              color,
+              ...(outlined ? { borderColor: color } : {}),
+              // Keep the accessible pair when MUI applies interactive states.
+              "&.MuiChip-clickable:hover, &.Mui-focusVisible": {
+                background,
+                color,
+                boxShadow: `inset 0 0 0 1px ${color}`,
+              },
+            };
+          },
         },
       },
       MuiTabs: {

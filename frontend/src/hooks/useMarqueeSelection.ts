@@ -1,3 +1,4 @@
+import { useHotkeyRegistry } from "../hotkeys/useHotkey";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useSelection, useSelectionList } from "../context/SelectionContext";
@@ -59,6 +60,7 @@ export function useGridSelection<TId extends number | string = number>({
   selectedIds,
   onSelectionChange,
 }: UseGridSelectionOptions<TId>) {
+  const registerHotkey = useHotkeyRegistry();
   const [marqueeRect, setMarqueeRect] = useState<MarqueeRect | null>(null);
   const anchorRef = useRef<TId | null>(null);
   const selectedIdsRef = useRef(selectedIds);
@@ -300,16 +302,16 @@ export function useGridSelection<TId extends number | string = number>({
   useEffect(() => {
     if (!container || disabled) return;
     const handleSelectAll = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "a") return;
+      if (event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "a") return false;
       const target = event.target;
-      if (target instanceof HTMLElement && (target.closest("input, textarea, select, [contenteditable]:not([contenteditable=false])") || target.isContentEditable)) return;
+      if (target instanceof HTMLElement && (target.closest("input, textarea, select, [contenteditable]:not([contenteditable=false])") || target.isContentEditable)) return false;
       // A modal or another focused grid owns its keyboard events.
-      if (target instanceof Element && target.closest("[role=dialog], [role=menu]")) return;
+      if (target instanceof Element && target.closest("[role=dialog], [role=menu]")) return false;
       const focusedGrid = target instanceof Element ? target.closest("[data-selection-grid]") : null;
-      if (focusedGrid && focusedGrid !== container) return;
-      if (container.getClientRects().length === 0) return;
+      if (focusedGrid && focusedGrid !== container) return false;
+      if (container.getClientRects().length === 0) return false;
       const next = new Set(Array.from(container.querySelectorAll<HTMLElement>(itemSelector), getIdRef.current));
-      if (!next.size) return;
+      if (!next.size) return false;
       event.preventDefault();
       cancelMarqueeRef.current?.();
       onEnterSelectionRef.current?.();
@@ -317,12 +319,16 @@ export function useGridSelection<TId extends number | string = number>({
       onSelectionChangeRef.current(next);
     };
     container.setAttribute("data-selection-grid", "");
-    window.addEventListener("keydown", handleSelectAll);
+    const unregister = registerHotkey(() => ({
+      bindings: [{ key: "a", ctrl: true }, { key: "a", meta: true }],
+      handler: handleSelectAll,
+      options: { scope: "page", description: "Select all loaded items", when: () => container.getClientRects().length > 0 },
+    }));
     return () => {
       container.removeAttribute("data-selection-grid");
-      window.removeEventListener("keydown", handleSelectAll);
+      unregister();
     };
-  }, [container, disabled, itemSelector]);
+  }, [container, disabled, itemSelector, registerHotkey]);
 
   useEffect(() => {
     if (!selecting || disabled) return;
@@ -332,6 +338,10 @@ export function useGridSelection<TId extends number | string = number>({
       if (target instanceof HTMLElement && (
         target.closest("input, textarea, select") || target.isContentEditable
       )) return;
+      if (ownsMediaSelection) {
+        cancelMarqueeRef.current?.();
+        return false;
+      }
       // A page can have multiple grids sharing one selection store.
       event.preventDefault();
       if (cancelMarqueeRef.current) cancelMarqueeRef.current();
@@ -339,9 +349,11 @@ export function useGridSelection<TId extends number | string = number>({
       onSelectionChangeRef.current(new Set<TId>());
       if (onExitSelection) onExitSelection();
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selecting, disabled, onExitSelection]);
+    return registerHotkey(() => ({
+      bindings: [{ key: "Escape" }], handler: handleKeyDown,
+      options: { scope: "page", description: "Clear selection" },
+    }));
+  }, [selecting, disabled, onExitSelection, ownsMediaSelection, registerHotkey]);
 
   const isSelectionGesture = useCallback(
     (event: SelectionClickEvent) => !disabled && (

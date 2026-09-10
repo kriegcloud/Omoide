@@ -48,7 +48,9 @@ export const saveConfig = async (
   return response.json();
 };
 
-export const reloadConfig = async (): Promise<AppConfig> => {
+export const reloadConfig = async (
+  acceptedConfig?: AppConfig
+): Promise<AppConfig> => {
   const response = await fetch(`${API}/api/config/reload`, {
     method: "POST",
   });
@@ -56,9 +58,13 @@ export const reloadConfig = async (): Promise<AppConfig> => {
     throw new Error("Failed to reload config");
   }
 
-  // Fetch latest config from backend so we can sync frontend runtime flags
+  // Presentation mode disables config reads as soon as reload succeeds.
+  // The save response is already the accepted server configuration.
   invalidateConfigCache();
-  const latest = await getConfig();
+  const latest = acceptedConfig?.general.presentation_mode
+    ? acceptedConfig
+    : await getConfig();
+  configPromise = Promise.resolve(latest);
 
   // In production builds, config getters read from window.runtimeConfig.
   // Update these values so components referencing config.PRESENTATION_MODE (etc.)

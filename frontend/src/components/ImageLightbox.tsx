@@ -1,3 +1,4 @@
+import { useDialogHotkeyScope, useHotkeys, useHotkeyHelp } from "../hotkeys/useHotkey";
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { Dialog, Box, IconButton, Typography } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
@@ -150,12 +151,16 @@ export function ImageLightbox({ open, src, alt, onClose }: ImageLightboxProps) {
     pinchPanRef.current = null;
   };
 
-  // Keyboard shortcuts — registered in the capture phase so Arrow keys are
-  // consumed here (pan when zoomed, otherwise noop) and never reach the
-  // page-level prev/next navigation handler while the lightbox is open.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
+  const hotkeyScope = useDialogHotkeyScope(open);
+  const openHelp = useHotkeyHelp();
+  useHotkeys([
+    ...["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].map(key => ({ key, description: "Pan zoomed image" })),
+    { key: "+", description: "Zoom in" }, { key: "=", description: "Zoom in" },
+    { key: "-", description: "Zoom out" }, { key: "0", description: "Reset zoom" },
+    { key: "?", description: "Show keyboard shortcuts" },
+  ], (e) => {
+    if (e.key === "?") { openHelp(); return; }
+
       if (
         e.key === "ArrowLeft" ||
         e.key === "ArrowRight" ||
@@ -183,16 +188,14 @@ export function ImageLightbox({ open, src, alt, onClose }: ImageLightboxProps) {
       } else if (e.key === "0") {
         reset();
       }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [open, reset, updateState]);
+  }, { scope: "dialog", dialogRef: hotkeyScope, enabled: open });
 
   const { zoom, panX, panY } = viewState;
   const cursor = zoom > MIN_ZOOM ? (isDragging ? "grabbing" : "grab") : "zoom-in";
 
   return (
     <Dialog
+      ref={hotkeyScope}
       open={open}
       onClose={onClose}
       maxWidth={false}

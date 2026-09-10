@@ -1,3 +1,4 @@
+import { useHotkeys } from "../hotkeys/useHotkey";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -333,14 +334,14 @@ export default function DatasetTriagePage() {
     }
   }, [caption, current, datasetId, replaceEntry]);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement;
-      const editing = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
-      if (editing) {
-        if (event.key === "Escape") target.blur();
-        return;
-      }
+  useHotkeys([
+    { key: "k", description: "Keep item" }, { key: "x", description: "Exclude item" },
+    { key: "c", description: "Crop item" }, { key: "e", description: "Edit caption" },
+    { key: "r", description: "Repair item" }, { key: "1", description: "Set weight to 0.5" },
+    { key: "2", description: "Set weight to 1" }, { key: "3", description: "Set weight to 1.5" },
+    { key: "ArrowLeft", description: "Previous triage item" }, { key: "ArrowRight", description: "Next triage item" },
+    { key: "u", description: "Undo triage action" }, { key: "?", description: "Show triage shortcuts" },
+  ], event => {
       if (event.key === "?") {
         event.preventDefault();
         setHelpOpen((open) => !open);
@@ -362,10 +363,7 @@ export default function DatasetTriagePage() {
       else if (key === "arrowleft") move(-1);
       else if (key === "arrowright") move(1);
       else if (key === "u") void undo();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [cropOpen, current, exclude, helpOpen, keep, move, repairAnchor, setWeight, undo]);
+  }, { scope: "page", enabled: !busy && !cropOpen && !repairAnchor && !helpOpen });
 
   const beginRepair = async (profile: RepairProfile) => {
     if (!current) return;

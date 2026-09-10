@@ -360,7 +360,7 @@ export default function ConfigurationPage() {
   }, [config]);
 
   const handleSave = async () => {
-    if (!config) return;
+    if (!config || isSaving) return;
     setIsSaving(true);
     try {
       const normalizedMediaDirs = (config.general.media_dirs ?? []).map(
@@ -400,7 +400,10 @@ export default function ConfigurationPage() {
         );
       }
 
-      await saveConfig(sanitized, removedMountedPaths.length > 0);
+      const accepted = await saveConfig(
+        sanitized,
+        removedMountedPaths.length > 0
+      );
 
       // If a different profile is selected, switch to it as part of Save
       if (
@@ -410,28 +413,22 @@ export default function ConfigurationPage() {
       ) {
         setIsSwitchingProfile(true);
         await apiSwitchProfile(selectedProfilePath);
+        // Switching activates the target config and database on the server.
+        // Discard old-library caches and requests before any protected reread.
+        window.location.reload();
+        return;
       }
 
       // Reload backend config and sync frontend runtime flags; also
       // update local state with the authoritative server config.
-      const latest = await reloadConfig();
+      const latest = await reloadConfig(accepted);
       setConfig(latest);
       setSavedMediaDirPaths(
         normalizedMediaDirPaths(latest.general.media_dirs ?? [])
       );
       setAcknowledgedRemovedMediaDirPaths(new Set());
-      await refreshProfiles();
-
-      // If the profile changed, do a full page reload to ensure all pages pull fresh data
-      if (
-        profiles &&
-        selectedProfilePath &&
-        selectedProfilePath !== profiles.active_path
-      ) {
-        try {
-          window.location.reload();
-        } catch {}
-        return; // Unreachable after reload, but keeps intent clear
+      if (!latest.general.presentation_mode) {
+        await refreshProfiles();
       }
 
       setSnackbar({
@@ -722,21 +719,9 @@ export default function ConfigurationPage() {
     setCreatingProfile(true);
     try {
       await apiCreateProfile(newProfilePath, newProfileName || "Profile");
-      const latest = await reloadConfig();
-      setConfig(latest);
-      setSavedMediaDirPaths(
-        normalizedMediaDirPaths(latest.general.media_dirs ?? [])
-      );
-      setAcknowledgedRemovedMediaDirPaths(new Set());
-      const lp = await listProfiles();
-      setProfiles(lp);
-      setSelectedProfilePath(lp.active_path);
-      setSnackbar({
-        open: true,
-        message: "Profile created",
-        severity: "success",
-      });
-      setNewProfilePath("");
+      // Creation also activates the new database. Reload just like a profile
+      // switch so no cached list or pending response survives from the old one.
+      window.location.reload();
     } catch (error: unknown) {
       setSnackbar({
         open: true,
@@ -2435,7 +2420,21 @@ export default function ConfigurationPage() {
       <Typography variant="h4" gutterBottom sx={{ mb: 4 }}>
         Configuration
       </Typography>
-      <Box sx={{ flexGrow: 1, bgcolor: "background.paper", display: "flex" }}>
+      <Box
+        component="fieldset"
+        disabled={isSaving}
+        {...(isSaving ? { inert: "" } : {})}
+        aria-busy={isSaving}
+        sx={{
+          flexGrow: 1,
+          bgcolor: "background.paper",
+          display: "flex",
+          border: 0,
+          p: 0,
+          m: 0,
+          minWidth: 0,
+        }}
+      >
         <Tabs
           orientation="vertical"
           variant="scrollable"

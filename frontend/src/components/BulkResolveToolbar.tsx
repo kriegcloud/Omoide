@@ -1,3 +1,7 @@
+import { SelectionHotkeyDialogs } from "../hotkeys/SelectionHotkeyDialogs";
+import { useHotkeys, useHotkey } from "../hotkeys/useHotkey";
+import { selectionBindings } from "../hotkeys/keymap";
+import config from "../config";
 import React, { useState } from "react";
 import {
   Button,
@@ -94,6 +98,13 @@ const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
     setPending({ action, selectAll });
   };
 
+  useHotkeys(selectionBindings.filter(binding => ["Delete", "x", "a"].includes(binding.key)), (event) => {
+    if (event.key === "Delete") requestAction(event.shiftKey ? "DELETE_RECORDS" : "DELETE_FILES");
+    else if (event.key.toLowerCase() === "x") requestAction("BLACKLIST_RECORDS");
+    else setAssignIds(Array.from(selectedIds));
+  }, { scope: "page", enabled: selectedCount > 0 && !isActionLoading && !config.PRESENTATION_MODE });
+  useHotkey({ key: "Escape" }, onClearSelection, { scope: "page", enabled: selectedCount > 0, description: "Clear selection" });
+
   const handleConfirm = async () => {
     if (!pending) return;
     const ids = pending.selectAll ? [] : Array.from(selectedIds);
@@ -125,6 +136,7 @@ const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
 
   return (
     <>
+      <SelectionHotkeyDialogs mediaIds={[...selectedIds]} enabled={!isActionLoading} />
       <Paper variant="outlined" sx={{ mb: 3, position: "sticky", top: 64, zIndex: 10 }}>
         <Stack
           direction={{ xs: "column", md: "row" }}

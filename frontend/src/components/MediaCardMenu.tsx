@@ -1,4 +1,4 @@
-import { lazy, Suspense, MouseEvent, useEffect, useState } from "react";
+import { lazy, Suspense, MouseEvent, useEffect, useRef, useState } from "react";
 import {
   Alert,
   CircularProgress,
@@ -72,6 +72,12 @@ export default function MediaCardMenu({
   const [repairAnchorEl, setRepairAnchorEl] = useState<HTMLElement | null>(null);
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [busy, setBusy] = useState(false);
+  const deleteBusyRef = useRef(false);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: number;
+    mediaListKey?: string;
+    onDeleted?: () => void;
+  } | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [favorite, setFavorite] = useState(!!media.is_favorite);
   const [editorMedia, setEditorMedia] = useState<Media | null>(null);
@@ -88,6 +94,9 @@ export default function MediaCardMenu({
   const openDialog = (kind: DialogKind) => {
     closeMenu();
     setDialogError(null);
+    if (kind === "deleteRecord" || kind === "deleteFile") {
+      setDeleteTarget({ id: media.id, mediaListKey, onDeleted });
+    }
     setDialog(kind);
   };
   const applyMedia = (updated: Media | MediaPreview) => {
@@ -169,14 +178,23 @@ export default function MediaCardMenu({
     }
   };
 
+  const closeDeleteDialog = () => {
+    if (deleteBusyRef.current) return;
+    setDialog(null);
+    setDeleteTarget(null);
+  };
   const confirmDelete = async (deleteFile: boolean) => {
+    if (!deleteTarget || deleteBusyRef.current) return;
+    const target = deleteTarget;
+    deleteBusyRef.current = true;
     setBusy(true);
     try {
-      if (deleteFile) await deleteMediaFile(media.id);
-      else await deleteMediaRecord(media.id);
-      if (mediaListKey) removeItem(mediaListKey, media.id);
+      if (deleteFile) await deleteMediaFile(target.id);
+      else await deleteMediaRecord(target.id);
+      if (target.mediaListKey) removeItem(target.mediaListKey, target.id);
       setDialog(null);
-      onDeleted?.();
+      setDeleteTarget(null);
+      target.onDeleted?.();
       setSnackbar({
         message: deleteFile ? "File deleted" : "Record removed",
         severity: "success",
@@ -184,6 +202,7 @@ export default function MediaCardMenu({
     } catch (error) {
       fail(error, deleteFile ? "Failed to delete file" : "Failed to remove record");
     } finally {
+      deleteBusyRef.current = false;
       setBusy(false);
     }
   };
@@ -368,7 +387,7 @@ export default function MediaCardMenu({
         message="The record will be removed from the database. The file on disk is kept and can be re-imported by scanning."
         confirmLabel="Remove Record"
         loading={busy}
-        onClose={() => setDialog(null)}
+        onClose={closeDeleteDialog}
         onConfirm={() => void confirmDelete(false)}
       />
       <ConfirmDialog
@@ -377,7 +396,7 @@ export default function MediaCardMenu({
         message="The file will be permanently deleted from disk. This cannot be undone."
         confirmLabel="Delete File"
         loading={busy}
-        onClose={() => setDialog(null)}
+        onClose={closeDeleteDialog}
         onConfirm={() => void confirmDelete(true)}
       />
       <Snackbar

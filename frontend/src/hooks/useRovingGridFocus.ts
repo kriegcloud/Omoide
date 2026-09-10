@@ -1,7 +1,13 @@
+import { useHotkeys } from "../hotkeys/useHotkey";
+import { gridBindings, isHotkeyAllowed } from "../hotkeys/keymap";
 import { useEffect, useRef, useState, type RefObject } from "react";
 
 /** One tab stop per face grid; measure rows again after responsive layout changes. */
 export function useRovingGridFocus(containerRef: RefObject<HTMLElement | null>) {
+  useHotkeys(gridBindings.filter(binding => binding.key.startsWith("Arrow")), () => {}, {
+    scope: "page", local: true,
+    when: event => !!containerRef.current?.contains(event.target as Node),
+  });
   const [container, setContainer] = useState<HTMLElement | null>(null);
   const focused = useRef<HTMLElement | null>(null);
   useEffect(() => { setContainer(containerRef.current); });
@@ -18,7 +24,7 @@ export function useRovingGridFocus(containerRef: RefObject<HTMLElement | null>) 
       if (tile && container.contains(tile)) { focused.current = tile; sync(); }
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!event.key.startsWith("Arrow") || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (!isHotkeyAllowed(event) || !event.key.startsWith("Arrow") || event.altKey || event.ctrlKey || event.metaKey) return;
       const items = tiles();
       const index = items.indexOf(event.target as HTMLElement);
       if (index < 0) return; // Nested buttons and inputs retain their own keys.

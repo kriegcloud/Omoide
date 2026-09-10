@@ -7,6 +7,7 @@ import { TaskEventsProvider } from "./TaskEventsContext";
 import { UndoProvider } from "./context/UndoContext";
 import { SelectionProvider } from "./context/SelectionContext";
 import { ScrollToTop } from "./components/ScrollToTop";
+import { HotkeyProvider } from "./hotkeys/HotkeyProvider";
 import { AppRoutes } from "./routes";
 
 export default function App() {
@@ -20,8 +21,10 @@ export default function App() {
         <UndoProvider>
           <SelectionProvider>
             <Router>
-              <ScrollToTop />
-              <AppRoutes />
+              <HotkeyProvider>
+                <ScrollToTop />
+                <AppRoutes />
+              </HotkeyProvider>
             </Router>
           </SelectionProvider>
         </UndoProvider>
