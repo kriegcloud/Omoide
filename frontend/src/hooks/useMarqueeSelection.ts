@@ -24,6 +24,8 @@ export interface SelectionClickEvent {
 interface UseGridSelectionOptions<TId extends number | string> {
   listKey?: string;
   loadedCount?: number;
+  /** Complete visual order for virtualized grids; selection survives unmounts. */
+  orderedIds?: TId[];
   hasMore?: boolean;
   containerRef: React.RefObject<HTMLElement | null>;
   itemSelector?: string;
@@ -75,6 +77,7 @@ function sameMembership<TId>(left: Set<TId>, right: Set<TId>): boolean {
 export function useGridSelection<TId extends number | string = number>({
   listKey,
   loadedCount,
+  orderedIds: loadedIds,
   hasMore = false,
   containerRef,
   itemSelector = "[data-selectable-id]",
@@ -433,7 +436,7 @@ export function useGridSelection<TId extends number | string = number>({
       const focusedGrid = target instanceof Element ? target.closest("[data-selection-grid]") : null;
       if (focusedGrid && focusedGrid !== container) return false;
       if (container.getClientRects().length === 0) return false;
-      const next = new Set(Array.from(container.querySelectorAll<HTMLElement>(itemSelector), getIdRef.current));
+      const next = new Set(loadedIds ?? Array.from(container.querySelectorAll<HTMLElement>(itemSelector), getIdRef.current));
       if (!next.size) return false;
       event.preventDefault();
       cancelMarqueeRef.current?.();
@@ -451,7 +454,7 @@ export function useGridSelection<TId extends number | string = number>({
       container.removeAttribute("data-selection-grid");
       unregister();
     };
-  }, [container, disabled, itemSelector, registerHotkey]);
+  }, [container, disabled, itemSelector, registerHotkey, loadedIds]);
 
   useEffect(() => {
     if (!selecting || disabled) return;
@@ -512,7 +515,7 @@ export function useGridSelection<TId extends number | string = number>({
         // Order by visual position (rows, then columns) rather than DOM order:
         // masonry grids render column-major, so DOM order would make a range
         // across one visual row span whole columns.
-        const orderedIds = Array.from(
+        const orderedIds = loadedIds ?? Array.from(
           container.querySelectorAll<HTMLElement>(itemSelector),
           (item) => {
             const rect = item.getBoundingClientRect();
@@ -547,7 +550,7 @@ export function useGridSelection<TId extends number | string = number>({
       onSelectionChangeRef.current(next);
       return true;
     },
-    [containerRef, disabled, selecting, isSelectionGesture, itemSelector],
+    [containerRef, disabled, selecting, isSelectionGesture, itemSelector, loadedIds],
   );
 
   return { marqueeRect, onItemClick, isSelectionGesture };

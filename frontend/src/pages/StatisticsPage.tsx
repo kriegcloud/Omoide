@@ -1,3 +1,4 @@
+import { useMutationRefresh, useUndoRefresh } from "../context/UndoContext";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -139,14 +140,17 @@ export default function StatisticsPage() {
 
   const [stats, setStats] = useState<LibraryStats | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
+  useMutationRefresh(["media:deleted", "media:updated", "media:moved", "face:deleted", "face:assigned", "face:detached", "person:changed", "person:created", "duplicates:resolved", "list:invalidate"], () => { setRevision(value => value + 1); });
+  useUndoRefresh("library-statistics", async () => { setRevision(value => value + 1); });
 
   useEffect(() => {
+    let active = true;
     getLibraryStats()
-      .then(setStats)
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : "Failed to load stats")
-      );
-  }, []);
+      .then(value => { if (active) { setStats(value); setError(null); } })
+      .catch(err => { if (active) setError(err instanceof Error ? err.message : "Failed to load stats"); });
+    return () => { active = false; };
+  }, [revision]);
 
   const yearMax = useMemo(
     () =>

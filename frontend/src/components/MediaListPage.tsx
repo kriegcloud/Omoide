@@ -1,14 +1,14 @@
+import ListStateView from "./ListState";
+import { useListInvalidation } from "../stores/useListStore";
 import { useUndoRefresh } from "../context/UndoContext";
 import { refreshCachedList } from "../stores/useListStore";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Masonry from "react-masonry-css";
 import SortIcon from "@mui/icons-material/Sort";
 import RefreshIcon from "@mui/icons-material/Refresh";
-import SearchOffIcon from "@mui/icons-material/SearchOff";
 import { useInView } from "react-intersection-observer";
 import { useSearchParams } from "react-router-dom";
 import {
-  Alert,
   Box,
   Button,
   Chip,
@@ -16,11 +16,10 @@ import {
   Container,
   Menu,
   MenuItem,
+  Typography,
 } from "@mui/material";
 
 import MediaCard from "./MediaCard";
-import { MediaSkeleton } from "./MediaSkeleton";
-import { EmptyState } from "./EmptyState";
 import { useListStore, defaultListState } from "../stores/useListStore";
 import { useTaskCompletionVersion } from "../TaskEventsContext";
 import { CursorPage, Media } from "../types";
@@ -74,13 +73,18 @@ export default function MediaListPage({
   const { items, hasMore, isLoading, error } = useListStore(
     (state) => state.lists[listKey] || defaultListState
   );
-  const { fetchInitial, loadMore, clearList, clearListsByPrefix } =
-    useListStore();
+  const fetchInitial = useListStore(state => state.fetchInitial);
+const loadMore = useListStore(state => state.loadMore);
+const clearList = useListStore(state => state.clearList);
+const clearListsByPrefix = useListStore(state => state.clearListsByPrefix);
 
+  useListInvalidation(listKey);
   const refreshKey = useTaskCompletionVersion([
     "scan",
     "process_media",
     "batch_edit_media",
+    "run_processor_for_media",
+    "clean_missing_files",
   ]);
   const [seenRefreshKey, setSeenRefreshKey] = useState(refreshKey);
   const hasNewItems = refreshKey !== seenRefreshKey;
@@ -201,50 +205,7 @@ export default function MediaListPage({
         </Menu>
       </Box>
 
-      {error && (
-        <Alert
-          severity="error"
-          sx={{ mb: 2 }}
-          action={
-            <Button color="inherit" size="small" onClick={refetch}>
-              Retry
-            </Button>
-          }
-        >
-          {error}
-        </Alert>
-      )}
-
-      {/* Loading Skeletons */}
-      {items.length === 0 && isLoading && (
-        <Box
-          sx={{
-            display: "grid",
-            gap: 2,
-            gridTemplateColumns: {
-              xs: "repeat(2, 1fr)",
-              sm: "repeat(3, 1fr)",
-              md: "repeat(4, 1fr)",
-              lg: "repeat(5, 1fr)",
-            },
-          }}
-        >
-          {[...Array(15)].map((_, i) => (
-            <Box key={i} sx={{ aspectRatio: "3/4" }}>
-              <MediaSkeleton />
-            </Box>
-          ))}
-        </Box>
-      )}
-
-      {/* Empty State */}
-      {items.length === 0 && !isLoading && !error && (
-        <EmptyState
-          icon={<SearchOffIcon />}
-          title={emptyTitle}
-          description={emptyDescription}
-        />
-      )}
+      <ListStateView loading={isLoading && items.length === 0} error={error} empty={!isLoading && items.length === 0} emptyMessage={emptyTitle} action={<Typography color="text.secondary">{emptyDescription}</Typography>} onRetry={refetch} />
 
       {items.length > 0 && (
         <Box ref={gridRef} sx={{ position: "relative" }}>

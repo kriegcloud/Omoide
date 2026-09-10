@@ -1,3 +1,4 @@
+import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
 import { Media, MediaPreview, Task } from "../types";
 import type { CropAspect, CropFraming, FaceCropSuggestion, MediaDetail } from "../types";
@@ -32,6 +33,7 @@ export const deleteMediaRecord = async (mediaId: number) => {
     method: "DELETE",
   });
   if (!res.ok) throw new Error("Failed to delete media record");
+  mutationBus.emit({ type: "media:deleted", ids: [mediaId] });
 };
 
 export const deleteMediaFile = async (mediaId: number) => {
@@ -39,6 +41,7 @@ export const deleteMediaFile = async (mediaId: number) => {
     method: "DELETE",
   });
   if (!res.ok) throw new Error("Failed to delete media file");
+  mutationBus.emit({ type: "media:deleted", ids: [mediaId] });
 };
 
 export const openMediaFolder = async (mediaId: number): Promise<void> => {
@@ -71,7 +74,9 @@ export const setMediaFavorite = async (
     body: JSON.stringify({ is_favorite: isFavorite }),
   });
   if (!res.ok) throw new Error("Failed to update favorite");
-  return res.json();
+  const result = await res.json();
+  mutationBus.emit({ type: "media:updated", items: [result] });
+  return result;
 };
 
 export const moveMedia = async (
@@ -84,7 +89,9 @@ export const moveMedia = async (
     body: JSON.stringify({ destination_dir: destinationDir }),
   });
   if (!res.ok) throw await responseError(res, "Failed to move media");
-  return res.json();
+  const result = await res.json();
+  mutationBus.emit({ type: "media:moved", items: [result], fromFolder: null, toFolder: destinationDir });
+  return result;
 };
 
 export const renameMedia = async (
@@ -97,7 +104,9 @@ export const renameMedia = async (
     body: JSON.stringify({ filename }),
   });
   if (!res.ok) throw await responseError(res, "Failed to rename media");
-  return res.json();
+  const result = await res.json();
+  mutationBus.emit({ type: "media:updated", items: [result] });
+  return result;
 };
 
 export const bulkMoveMedia = async (
@@ -110,7 +119,9 @@ export const bulkMoveMedia = async (
     body: JSON.stringify({ media_ids: mediaIds, destination_dir: destinationDir }),
   });
   if (!res.ok) throw await responseError(res, "Failed to move selected media");
-  return res.json();
+  const result = await res.json();
+  mutationBus.emit({ type: "media:moved", items: result.moved_ids.map((id: number) => ({ id })), fromFolder: null, toFolder: destinationDir });
+  return result;
 };
 
 export const createMediaFolder = async (
@@ -136,7 +147,10 @@ export const editMedia = async (
     body: JSON.stringify(request),
   });
   if (!res.ok) throw await responseError(res, "Failed to save image edits");
-  return res.json();
+  const result = await res.json();
+  if (request.mode === "overwrite") mutationBus.emit({ type: "media:updated", items: [result.media] });
+  else mutationBus.emit({ type: "list:invalidate", prefix: "" });
+  return result;
 };
 
 export const getFaceCropSuggestions = async (
@@ -181,5 +195,8 @@ export const bulkDeleteMedia = async (ids: number[], action: BulkDeleteAction): 
     body: JSON.stringify({ media_ids: ids, action }),
   });
   if (!res.ok) throw await responseError(res, "Failed to delete media");
-  return res.json();
+  const result = await res.json();
+  if (Array.isArray(result.processed_ids)) mutationBus.emit({ type: "media:deleted", ids: result.processed_ids });
+  else mutationBus.emit({ type: "list:invalidate", prefix: "" });
+  return result;
 };

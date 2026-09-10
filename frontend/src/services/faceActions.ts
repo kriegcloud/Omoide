@@ -1,3 +1,4 @@
+import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
 import { FaceAssign, FaceAssignSource, Person } from "../types";
 
@@ -13,6 +14,8 @@ export const assignFace = async (
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Assign failed: ${res.status}`);
+  mutationBus.emit({ type: "face:assigned", faceIds, personId, previous: {} });
+  mutationBus.emit({ type: "person:changed", ids: [personId] });
 };
 
 export const createPersonFromFaces = async (
@@ -26,7 +29,10 @@ export const createPersonFromFaces = async (
   });
   if (!res.ok) throw new Error(`Create person failed: ${res.status}`);
   const json = await res.json();
-  return (json as any).person ?? (json as any);
+  const person: Person = json.person ?? json;
+  mutationBus.emit({ type: "person:created", id: person.id });
+  mutationBus.emit({ type: "face:assigned", faceIds, personId: person.id, previous: {} });
+  return person;
 };
 
 export const deleteFace = async (faceIds: number[]) => {
@@ -36,6 +42,8 @@ export const deleteFace = async (faceIds: number[]) => {
     method: "DELETE",
   });
   if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+  mutationBus.emit({ type: "face:deleted", ids: faceIds });
+  mutationBus.emit({ type: "person:changed", ids: [] });
 };
 
 export const detachFace = async (faceIds: number[]) => {
@@ -45,6 +53,8 @@ export const detachFace = async (faceIds: number[]) => {
     body: JSON.stringify({ face_ids: faceIds }),
   });
   if (!res.ok) throw new Error(`Detach failed: ${res.status}`);
+  mutationBus.emit({ type: "face:detached", faceIds, personId: null });
+  mutationBus.emit({ type: "person:changed", ids: [] });
 };
 
 export const deleteAllOrphanFaces = async (): Promise<{ deleted: number }> => {
@@ -53,5 +63,16 @@ export const deleteAllOrphanFaces = async (): Promise<{ deleted: number }> => {
     const error: { detail?: unknown } = await response.json().catch(() => ({}));
     throw new Error(typeof error.detail === "string" ? error.detail : "Failed to delete all unassigned faces");
   }
-  return response.json();
+  const result = await response.json();
+  mutationBus.emit({ type: "face:deleted", ids: [] });
+  mutationBus.emit({ type: "list:invalidate", prefix: "orphan-faces" });
+  return result;
+};
+
+export const rejectFaceSuggestion = async (faceId: number, personId: number): Promise<void> => {
+  const response = await fetch(`${API}/api/faces/${faceId}/reject-suggestion`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ person_id: personId }),
+  });
+  if (!response.ok) throw new Error(`Failed to reject suggestion (${response.status})`);
+  mutationBus.emit({ type: "list:invalidate", prefix: "orphan-face-suggestions" });
 };

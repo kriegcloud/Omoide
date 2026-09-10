@@ -54,7 +54,7 @@ const BlurryPage: React.FC = () => {
     open: false, message: "", severity: "success",
   });
 
-  const refreshKey = useTaskCompletionVersion(["compute_blur_scores"]);
+  const refreshKey = useTaskCompletionVersion(["compute_blur_scores", "run_processor_for_media", "clean_missing_files"]);
   const { activeTasks } = useTaskEvents();
   const blurTask = activeTasks.find((t) => t.task_type === "compute_blur_scores");
 
@@ -81,7 +81,6 @@ const BlurryPage: React.FC = () => {
     setSelectedIds,
     selectVisible,
     clearSelection,
-    removeItems,
     refetch,
   } = useCursorList<BlurMediaItem>(fetcher, refreshKey);
 
@@ -110,14 +109,12 @@ const BlurryPage: React.FC = () => {
   );
 
   const handleResolved = useCallback(
-    (removedIds: number[], removed: number, selectAll: boolean) => {
-      if (selectAll) {
-        refetch();
-      } else {
-        removeItems(removedIds, removed);
-      }
+    (_removedIds: number[], _removed: number, selectAll: boolean) => {
+      // Successful service events reconcile processed ids across every list.
+      if (selectAll) void refetch();
+      clearSelection();
     },
-    [refetch, removeItems]
+    [refetch, clearSelection]
   );
 
   const applyThreshold = () => {
@@ -246,6 +243,8 @@ const BlurryPage: React.FC = () => {
       <ReviewMediaGrid
         gridRef={gridRef}
         marqueeRect={marqueeRect}
+        error={error}
+        onRetry={refetch}
         itemCount={items.length}
         isLoading={isLoading}
         hasMore={hasMore}

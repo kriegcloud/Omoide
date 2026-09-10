@@ -40,7 +40,8 @@ function harness(relative, overrides = {}) {
     'react-router-dom': {useParams: () => ({id: routeId}), useLocation: () => location, useNavigate: () => (...args) => navigations.push(args)},
     '@mui/material': ui,
     '../stores/useListStore': {useListStore: (selector) => selector ? selector(store) : store},
-    '../context/UndoContext': {useUndoRefresh: () => {}},
+    '../context/UndoContext': {useUndoRefresh: () => {}, useMutationRefresh: () => {}},
+    '../stores/mutationBus': { mutationBus: { emit() {} }, runOptimistic: async ({apply, request, rollback}) => { const snapshot = apply(); try { return await request(); } catch (error) { rollback(snapshot); throw error; } } },
     '../TaskEventsContext': {useTaskCompletionVersion: () => 0},
     '../config': {__esModule: true, default: {PRESENTATION_MODE: false}},
     '../services/mediaActions': {deleteMediaFile: async (id) => deleted.push(id), deleteMediaRecord: async (id) => deleted.push(id)},
@@ -67,7 +68,7 @@ async function testMenuSnapshot(deleteFile = true) {
   find(changed, 'ConfirmDialog', (p) => p.title === (deleteFile ? 'Delete File from Disk?' : 'Remove from Library?')).props.onConfirm();
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(h.deleted, [101], 'delete must use media present when confirm opened');
-  assert.deepEqual(h.removed, [['test-list-101', 101]], 'cache removal must use captured media and list');
+  assert.deepEqual(h.removed, [], 'services own cache removal; the card must not patch one list again');
   assert.deepEqual(callbacks, [101], 'completion must use callback captured for the deleted media');
 }
 async function testViewerSnapshot(deleteFile = true) {
@@ -81,7 +82,7 @@ async function testViewerSnapshot(deleteFile = true) {
   const changed = h.render();
   await find(changed, 'ActionDialogs').props[deleteFile ? 'onConfirmDeleteFile' : 'onConfirmDeleteRecord']();
   assert.deepEqual(h.deleted, [101], 'viewer delete must use captured media after route change');
-  assert.deepEqual(h.removed, [['test-list-101', 101]], 'viewer cache removal must use captured media and list');
+  assert.deepEqual(h.removed, [], 'services own cache removal; the viewer must not patch one list again');
 }
 async function testTabPanelLabels() {
   const h = harness('frontend/src/components/MediaContentTabs.tsx');

@@ -1,3 +1,4 @@
+import { mutationBus, type MutationType } from "../stores/mutationBus";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 export interface UndoableAction {
@@ -66,4 +67,25 @@ export function useUndoRefresh(key: string | undefined, refresh: () => Promise<v
     if (key === undefined) return;
     return registerRefresh(key, () => latest.current());
   }, [key, registerRefresh]);
+}
+
+/** Refresh only interested mounted views. Coalesce events from one service operation. */
+export function useMutationRefresh(events: readonly MutationType[], refresh: () => Promise<void> | void) {
+  const latest = useRef(refresh);
+  latest.current = refresh;
+  const key = events.join("|");
+  useEffect(() => {
+    const types = new Set(key.split("|"));
+    let active = true;
+    let queued = false;
+    const unsubscribe = mutationBus.subscribe(event => {
+      if (!types.has(event.type) || queued || !active) return;
+      queued = true;
+      queueMicrotask(() => {
+        queued = false;
+        if (active) Promise.resolve().then(() => latest.current()).catch(error => console.error("Mutation refresh failed", error));
+      });
+    });
+    return () => { active = false; unsubscribe(); };
+  }, [key]);
 }

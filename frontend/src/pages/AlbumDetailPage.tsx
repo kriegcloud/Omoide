@@ -39,7 +39,7 @@ export default function AlbumDetailPage() {
   const albumId = Number(id);
   const navigate = useNavigate();
   const { push, refreshVisible } = useUndo();
-  const { selectedIds, clear, isSelecting, toggleSelecting } = useSelection();
+  const { selectedIds, clear, isSelecting } = useSelection();
 
   const [album, setAlbum] = useState<Album | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -92,8 +92,7 @@ export default function AlbumDetailPage() {
   const handleStartAdding = () => {
     // Jump to the library in select mode; the floating action bar's
     // "Add to Album" finishes the flow.
-    if (!isSelecting) toggleSelecting();
-    navigate("/images");
+    navigate("/images", { state: { beginSelection: true, addToAlbumId: albumId } });
   };
 
   const handleRemoveSelected = async () => {

@@ -11,7 +11,7 @@ export const getMedia = async (
   signal?: AbortSignal
 ): Promise<MediaDetail> => {
   const response = await fetch(`${API}/api/media/${id}`, { signal });
-  if (!response.ok) throw new Error(`Failed to load media (${response.status})`);
+  if (!response.ok) throw Object.assign(new Error(`Failed to load media (${response.status})`), { status: response.status });
   return response.json();
 };
 

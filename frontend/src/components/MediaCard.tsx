@@ -13,7 +13,7 @@ import { encodeFilePath } from "../urlUtils";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import PlayCircleOutlineIcon from "@mui/icons-material/PlayCircleOutline";
 import FavoriteIcon from "@mui/icons-material/Favorite";
-import { useSelection } from "../context/SelectionContext";
+import { useSelectionItem } from "../context/SelectionContext";
 import MediaCardMenu, { MediaPersonContext } from "./MediaCardMenu";
 import DatasetItemMenu from "./DatasetItemMenu";
 import SelectableTileFrame from "./SelectableTileFrame";
@@ -99,7 +99,7 @@ interface MediaCardProps {
   onSelectionClick?: (id: number, event: SelectionClickEvent) => boolean;
 }
 
-export default function MediaCard({
+function MediaCard({
   media,
   mediaListKey,
   navigationContext,
@@ -107,7 +107,7 @@ export default function MediaCard({
   datasetContext,
   onSelectionClick,
 }: MediaCardProps) {
-  const { isSelecting, selectedIds, toggle, beginSelecting } = useSelection();
+  const { isSelecting, isSelected, toggle, beginSelecting } = useSelectionItem(media?.id ?? null);
   // This state now explicitly controls when the video player is active.
   const [isPlayerActive, setIsPlayerActive] = useState(false);
   const [playerUrl, setPlayerUrl] = useState<string | null>(null);
@@ -131,7 +131,6 @@ export default function MediaCard({
     : `${API}/static/brand/404.png`;
   const filename = media ? media.filename : "404 Not found";
   const mediaId = media ? media.id : null;
-  const isSelected = mediaId != null && selectedIds.has(mediaId);
   let thumbUrl;
   if (media) {
     if (useOriginalGif) {
@@ -298,6 +297,8 @@ export default function MediaCard({
             {/* We now explicitly render the thumbnail image for videos */}
             <CardMedia
               component="img"
+              loading="lazy"
+              decoding="async"
               draggable={false}
               src={thumbUrl}
               alt={filename}
@@ -447,3 +448,13 @@ export default function MediaCard({
     </SelectableTileFrame>
   );
 }
+
+// Pages often create a navigation wrapper per map iteration while reusing ids.
+export default React.memo(MediaCard, (previous, next) =>
+  previous.media === next.media &&
+  previous.mediaListKey === next.mediaListKey &&
+  previous.navigationContext?.ids === next.navigationContext?.ids &&
+  previous.personContext === next.personContext &&
+  previous.datasetContext === next.datasetContext &&
+  previous.onSelectionClick === next.onSelectionClick,
+);

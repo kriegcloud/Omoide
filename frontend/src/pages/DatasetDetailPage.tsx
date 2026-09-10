@@ -1,3 +1,4 @@
+import { useVisiblePolling } from "../hooks/useVisiblePolling";
 import { useUndoRefresh } from "../context/UndoContext";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInView } from "react-intersection-observer";
@@ -147,6 +148,13 @@ export default function DatasetDetailPage() {
   // Items arrive in pages of 500; the sentinel below the grid pulls the rest.
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [bucketText, setBucketText] = useState("");
+  const routeGeneration = useRef(0);
+  const listGeneration = useRef(0);
+  const analysisGeneration = useRef(0);
+  const morePending = useRef(false);
+  const sortRef = useRef("position");
   const { ref: loadMoreRef, inView: loadMoreInView } = useInView({ rootMargin: "400px" });
   const [exports, setExports] = useState<DatasetExport[]>([]);
   const [runs, setRuns] = useState<TrainingRun[]>([]);
@@ -157,6 +165,7 @@ export default function DatasetDetailPage() {
   const [gapMedia, setGapMedia] = useState<Media[]>([]);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [sort, setSort] = useState("position");
+  sortRef.current = sort;
   const [tab, setTab] = useState(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -195,26 +204,54 @@ export default function DatasetDetailPage() {
     onSelectionChange: selection.setSelected,
   });
 
-  useUndoRefresh(`dataset:${datasetId}`, async () => {
-    const [nextDataset, page] = await Promise.all([getDataset(datasetId), getDatasetItems(datasetId, null, sort)]);
-    setDataset(nextDataset);
-    setItems(page.items);
-    setNextCursor(page.next_cursor ?? null);
-  });
+  useEffect(() => {
+    routeGeneration.current += 1;
+    setDataset(null);
+    setBucketText("");
+    setItems([]);
+    setNextCursor(null);
+    setExports([]);
+    setRuns([]);
+    setAnalysis(null);
+    setGaps([]);
+    setError(null);
+    setPageError(null);
+    setLoading(true);
+    setLoadingMore(false);
+    setSaving(false);
+    setCropItem(null);
+    setCaptionItem(null);
+    setGapPreview(null);
+    setBatchCropOpen(false);
+    setRepairOpen(false);
+    setFrameMiningOpen(false);
+    setAutoOpen(false);
+    setRegularizationOpen(false);
+    return () => {
+      routeGeneration.current += 1;
+      listGeneration.current += 1;
+      analysisGeneration.current += 1;
+      selection.clear();
+    };
+  }, [datasetId, selection.clear]);
 
   // The analysis is the expensive, optional part of the page: it runs after
   // the dataset, items and exports are on screen and its failure only
   // affects the Analysis tab.
   const loadAnalysis = useCallback(async () => {
+    const route = routeGeneration.current;
+    const revision = ++analysisGeneration.current;
     setAnalysisError(null);
     try {
       const [nextAnalysis, nextGaps] = await Promise.all([
         getDatasetAnalysis(datasetId),
         getDatasetGaps(datasetId),
       ]);
+      if (route !== routeGeneration.current || revision !== analysisGeneration.current) return;
       setAnalysis(nextAnalysis);
       setGaps(nextGaps);
     } catch (reason) {
+      if (route !== routeGeneration.current || revision !== analysisGeneration.current) return;
       setAnalysis(null);
       setAnalysisError(reason instanceof Error ? reason.message : "Failed to analyse dataset");
     }
@@ -224,32 +261,58 @@ export default function DatasetDetailPage() {
     if (poseTaskVersion > 0) void loadAnalysis();
   }, [poseTaskVersion, loadAnalysis]);
 
-  const load = useCallback(async () => {
+  const loadItems = useCallback(async () => {
+    const route = routeGeneration.current;
+    const revision = ++listGeneration.current;
+    morePending.current = false;
+    setLoadingMore(false);
+    setPageError(null);
+    setItems([]);
+    setNextCursor(null);
     try {
-      const [nextDataset, page, history, runHistory] = await Promise.all([
-        getDataset(datasetId),
-        getDatasetItems(datasetId, null, sort),
-        getDatasetExports(datasetId),
-        getTrainingRuns(datasetId),
-      ]);
-      setDataset(nextDataset);
+      const page = await getDatasetItems(datasetId, null, sortRef.current);
+      if (route !== routeGeneration.current || revision !== listGeneration.current) return;
       setItems(page.items);
       setNextCursor(page.next_cursor ?? null);
+    } catch (reason) {
+      if (route === routeGeneration.current && revision === listGeneration.current) {
+        setPageError(reason instanceof Error ? reason.message : "Failed to load dataset items");
+      }
+    }
+  }, [datasetId]);
+
+  const load = useCallback(async () => {
+    const route = routeGeneration.current;
+    setError(null);
+    try {
+      const [nextDataset, history, runHistory] = await Promise.all([
+        getDataset(datasetId), getDatasetExports(datasetId), getTrainingRuns(datasetId),
+      ]);
+      if (route !== routeGeneration.current) return;
+      // Keep the editable settings draft while refreshing server metadata.
+      setDataset((draft) => draft?.id === nextDataset.id
+        ? { ...draft, item_count: nextDataset.item_count, included_count: nextDataset.included_count }
+        : nextDataset);
+      setBucketText((draft) => draft || nextDataset.buckets.join(", "));
       setExports(history);
       setRuns(runHistory);
       setExportLayout(nextDataset.export_layout);
       void loadAnalysis();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Failed to load dataset");
+      if (route === routeGeneration.current) setError(reason instanceof Error ? reason.message : "Failed to load dataset");
     } finally {
-      setLoading(false);
+      if (route === routeGeneration.current) setLoading(false);
     }
-  }, [datasetId, sort, loadAnalysis]);
+  }, [datasetId, loadAnalysis]);
 
-  useEffect(() => { void load(); return () => selection.clear(); }, [load]);
+  useUndoRefresh(`dataset:${datasetId}`, async () => { await Promise.all([load(), loadItems()]); });
+  useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    if (frameMiningTaskVersion > 0) void load();
-  }, [frameMiningTaskVersion, load]);
+    void loadItems();
+  }, [datasetId, sort, loadItems]);
+  useEffect(() => {
+    if (frameMiningTaskVersion > 0) { void load(); void loadItems(); }
+  }, [frameMiningTaskVersion, load, loadItems]);
   useEffect(() => {
     if (!gapPreview) { setGapMedia([]); return; }
     let cancelled = false;
@@ -260,52 +323,84 @@ export default function DatasetDetailPage() {
     return () => { cancelled = true; };
   }, [gapPreview]);
   const hasRunning = exports.some((entry) => entry.status === "pending" || entry.status === "running");
-  useEffect(() => {
-    if (!hasRunning) return;
-    const timer = window.setInterval(() => void getDatasetExports(datasetId).then(setExports), 3000);
-    return () => window.clearInterval(timer);
-  }, [datasetId, hasRunning]);
+  const pollExports = useCallback(async (isCurrent: () => boolean) => {
+    try {
+      const history = await getDatasetExports(datasetId);
+      if (isCurrent()) setExports(history);
+    } catch (reason) {
+      if (isCurrent()) setError(reason instanceof Error ? reason.message : "Failed to refresh exports");
+    }
+  }, [datasetId]);
+  useVisiblePolling(pollExports, 3000, hasRunning);
   const hasActiveRun = runs.some((entry) => entry.status === "requested" || entry.status === "running");
-  useEffect(() => {
-    if (!hasActiveRun) return;
-    const timer = window.setInterval(() => {
-      void Promise.all([getTrainingRuns(datasetId), getTrainingHealth()])
-        .then(([nextRuns, nextHealth]) => {
-          setRuns(nextRuns);
-          setTrainingHealth(nextHealth);
-        })
-        .catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to refresh training runs"));
-    }, 5000);
-    return () => window.clearInterval(timer);
-  }, [datasetId, hasActiveRun]);
+  const pollRuns = useCallback(async (isCurrent: () => boolean) => {
+    try {
+      const [nextRuns, nextHealth] = await Promise.all([getTrainingRuns(datasetId), getTrainingHealth()]);
+      if (!isCurrent()) return;
+      setRuns(nextRuns);
+      setTrainingHealth(nextHealth);
+    } catch (reason) {
+      if (isCurrent()) setError(reason instanceof Error ? reason.message : "Failed to refresh training runs");
+    }
+  }, [datasetId]);
+  useVisiblePolling(pollRuns, 5000, hasActiveRun);
 
-  useEffect(() => {
-    if (!loadMoreInView || !nextCursor || loadingMore || tab !== 0) return;
-    let cancelled = false;
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || morePending.current) return;
+    const route = routeGeneration.current;
+    const revision = listGeneration.current;
+    morePending.current = true;
     setLoadingMore(true);
-    getDatasetItems(datasetId, nextCursor, sort)
-      .then((page) => {
-        if (cancelled) return;
-        setItems((current) => {
-          const seen = new Set(current.map((entry) => entry.id));
-          return [...current, ...page.items.filter((entry) => !seen.has(entry.id))];
-        });
-        setNextCursor(page.next_cursor ?? null);
-      })
-      .catch((reason) => console.error("Failed to load more dataset items", reason))
-      .finally(() => { if (!cancelled) setLoadingMore(false); });
-    return () => { cancelled = true; };
-  }, [loadMoreInView, nextCursor, loadingMore, tab, datasetId, sort]);
+    setPageError(null);
+    try {
+      const page = await getDatasetItems(datasetId, nextCursor, sort);
+      if (route !== routeGeneration.current || revision !== listGeneration.current) return;
+      setItems((current) => {
+        const seen = new Set(current.map((entry) => entry.id));
+        return [...current, ...page.items.filter((entry) => !seen.has(entry.id))];
+      });
+      setNextCursor(page.next_cursor ?? null);
+    } catch (reason) {
+      if (route === routeGeneration.current && revision === listGeneration.current) setPageError(reason instanceof Error ? reason.message : "Failed to load more dataset items");
+    } finally {
+      if (route === routeGeneration.current && revision === listGeneration.current) {
+        morePending.current = false;
+        setLoadingMore(false);
+      }
+    }
+  }, [datasetId, nextCursor, sort]);
+  useEffect(() => {
+    if (loadMoreInView && nextCursor && !loadingMore && !pageError && tab === 0) void loadMore();
+  }, [loadMoreInView, nextCursor, loadingMore, pageError, tab, loadMore]);
 
   const patchItem = async (item: DatasetItem, input: Parameters<typeof updateDatasetItem>[2]) => {
+    const route = routeGeneration.current;
     const updated = await updateDatasetItem(datasetId, item.id, input);
+    if (route !== routeGeneration.current) return;
     setItems((current) => current.map((entry) => entry.id === updated.id ? updated : entry));
   };
   const refreshCuration = async () => {
-    const page = await getDatasetItems(datasetId, null, sort);
-    setItems(page.items);
-    setNextCursor(page.next_cursor ?? null);
-    await loadAnalysis();
+    await Promise.all([loadItems(), loadAnalysis()]);
+  };
+  const saveSettings = async () => {
+    if (!dataset || dataset.id !== datasetId || saving) return;
+    const route = routeGeneration.current;
+    const buckets = bucketText.split(",").map((value) => Number(value.trim()));
+    if (!buckets.length || buckets.some((value) => !Number.isInteger(value) || value <= 0)) {
+      setError("Buckets must be comma-separated positive whole numbers.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const updated = await updateDataset(datasetId, { ...dataset, buckets });
+      if (route !== routeGeneration.current) return;
+      setDataset(updated);
+      setBucketText(updated.buckets.join(", "));
+    } catch (reason) {
+      if (route === routeGeneration.current) setError(reason instanceof Error ? reason.message : "Failed to save dataset");
+    } finally {
+      if (route === routeGeneration.current) setSaving(false);
+    }
   };
   const selectedItems = useMemo(() => items.filter((item) => selection.selectedIds.has(item.media_id)), [items, selection.selectedIds]);
   const bulkExcluded = async (excluded: boolean) => {
@@ -320,7 +415,7 @@ export default function DatasetDetailPage() {
     selection.clear();
   };
 
-  if (loading) return <Box minHeight="60vh" display="grid" sx={{ placeItems: "center" }}><CircularProgress /></Box>;
+  if (loading || (dataset !== null && dataset.id !== datasetId)) return <Box minHeight="60vh" display="grid" sx={{ placeItems: "center" }}><CircularProgress /></Box>;
   if (!dataset) return <Container maxWidth="xl" sx={{ py: 4 }}><Alert severity="error">{error ?? "Dataset not found"}</Alert></Container>;
 
   return (
@@ -337,12 +432,12 @@ export default function DatasetDetailPage() {
             <TextField sx={{ mt: 2 }} label="Caption template" value={dataset.caption_template} onChange={(event) => setDataset({ ...dataset, caption_template: event.target.value })} fullWidth disabled={dataset.caption_source === "none"} />
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2} mt={2}>
               <TextField type="number" label="Target resolution" value={dataset.target_resolution} onChange={(event) => setDataset({ ...dataset, target_resolution: Number(event.target.value) })} />
-              <TextField label="Buckets" value={dataset.buckets.join(", ")} onChange={(event) => setDataset({ ...dataset, buckets: event.target.value.split(",").map(Number).filter(Boolean) })} helperText="Comma-separated long sides" />
+              <TextField label="Buckets" value={bucketText} onChange={(event) => setBucketText(event.target.value)} helperText="Comma-separated long sides" />
               <TextField type="number" label="Repeats" value={dataset.repeats} onChange={(event) => setDataset({ ...dataset, repeats: Number(event.target.value) })} />
               <FormControl sx={{ minWidth: 160 }}><InputLabel>Default layout</InputLabel><Select label="Default layout" value={dataset.export_layout} onChange={(event) => setDataset({ ...dataset, export_layout: event.target.value as DatasetExportLayout })}><MenuItem value="ai_toolkit">ai-toolkit</MenuItem><MenuItem value="kohya">Kohya</MenuItem><MenuItem value="onetrainer">OneTrainer</MenuItem></Select></FormControl>
             </Stack>
           </Box>
-          <Button startIcon={<SaveIcon />} variant="contained" disabled={saving} onClick={async () => { setSaving(true); try { setDataset(await updateDataset(datasetId, dataset)); } catch (reason) { setError(reason instanceof Error ? reason.message : "Failed to save dataset"); } finally { setSaving(false); } }}>Save</Button>
+          <Button startIcon={<SaveIcon />} variant="contained" disabled={saving} onClick={() => void saveSettings()}>Save</Button>
         </Stack>
       </Paper>
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
@@ -376,6 +471,7 @@ export default function DatasetDetailPage() {
               <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
             </Box>
           )}
+          {pageError && <Alert severity="error" action={<Button onClick={() => void (nextCursor ? loadMore() : loadItems())}>Retry</Button>}>{pageError}</Alert>}
           {nextCursor && (
             <Box ref={loadMoreRef} sx={{ display: "grid", placeItems: "center", py: 3 }}>
               {loadingMore ? <CircularProgress size={24} /> : <Typography variant="caption" color="text.secondary">{items.length} of {dataset.item_count ?? "?"} loaded</Typography>}
@@ -476,7 +572,7 @@ export default function DatasetDetailPage() {
           {gapPreview && <Typography color="text.secondary" mb={2}>Add up to {gapPreview.deficit} images for {gapPreview.dimension} · {gapPreview.band.replaceAll("_", " ")}.</Typography>}
           {gapMedia.length === 0 ? <CircularProgress size={24} /> : <Box sx={{ display: "grid", gap: 1, gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(4, 1fr)", md: "repeat(6, 1fr)" } }}>{gapMedia.map((media) => <Box key={media.id} component="img" src={`${API}/thumbnails/${encodeFilePath(media.thumbnail_path)}`} alt={media.filename} sx={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 2, bgcolor: "action.hover" }} />)}</Box>}
         </DialogContent>
-        <DialogActions><Button onClick={() => setGapPreview(null)}>Cancel</Button><Button variant="contained" disabled={gapMedia.length === 0} onClick={async () => { await addDatasetItems(datasetId, gapMedia.map((media) => media.id)); setGapPreview(null); await load(); }}>Add {gapMedia.length}</Button></DialogActions>
+        <DialogActions><Button onClick={() => setGapPreview(null)}>Cancel</Button><Button variant="contained" disabled={gapMedia.length === 0} onClick={async () => { await addDatasetItems(datasetId, gapMedia.map((media) => media.id)); setGapPreview(null); await Promise.all([load(), loadItems()]); }}>Add {gapMedia.length}</Button></DialogActions>
       </Dialog>
 
       <BatchCropDialog
@@ -495,7 +591,7 @@ export default function DatasetDetailPage() {
         open media={{ ...cropItem.media, tags: [], faces: [], extracted_scenes: false } as Media}
         mode="virtual" loadableDesignState={(cropItem.edit_design_state as FilerobotDesignState | null) ?? null}
         onClose={() => setCropItem(null)}
-        onOpsReady={(ops, designState) => { void patchItem(cropItem, { edit_ops: ops, edit_design_state: designState }); setCropItem(null); }}
+        onOpsReady={async (ops, designState) => { await patchItem(cropItem, { edit_ops: ops, edit_design_state: designState }); }}
       /></Suspense>}
     </Container>
   );

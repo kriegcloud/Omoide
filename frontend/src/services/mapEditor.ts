@@ -1,3 +1,4 @@
+import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
 import { CursorPage, MediaPreview } from "../types";
 
@@ -11,6 +12,7 @@ export const getMissingGeoMedia = async (
   const response = await fetch(
     `${API}/api/media/missing-geo?${params.toString()}`
   );
+  if (!response.ok) throw new Error("Failed to load media missing geolocation");
   return response.json();
 };
 
@@ -28,4 +30,6 @@ export const updateMediaGeolocation = async (
     }),
   });
   if (!res.ok) throw new Error("Failed to update media geolocation");
+  mutationBus.emit({ type: "media:updated", items: [{ id: mediaId, latitude, longitude }] });
+  mutationBus.emit({ type: "list:invalidate", prefix: "media-missing-geolocation" });
 };

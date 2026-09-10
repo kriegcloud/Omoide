@@ -1,7 +1,10 @@
+import { mutationBus } from "../stores/mutationBus";
+import { ListRevision, mergeUnique } from "../stores/listReconciliation";
+import ListState from "./ListState";
 import { useUndoRefresh } from "../context/UndoContext";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Masonry from "react-masonry-css";
-import { Alert, Box, CircularProgress } from "@mui/material";
+import { Box, CircularProgress } from "@mui/material";
 import { useInView } from "react-intersection-observer";
 import MediaCard from "./MediaCard";
 import { CursorPage, Media } from "../types";
@@ -41,6 +44,7 @@ export function CursorMediaGrid({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestSeq = useRef(0);
+  const revision = useRef(new ListRevision());
   const inFlightRef = useRef(false);
   const gridRef = useRef<HTMLDivElement>(null);
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
@@ -63,17 +67,15 @@ export function CursorMediaGrid({
     async (fromCursor: string | null, replace: boolean, throwOnError = false) => {
       if (inFlightRef.current) return;
       const seq = ++requestSeq.current;
+      const started = revision.current.revision;
       inFlightRef.current = true;
       setIsLoading(true);
       setError(null);
       try {
         const page = await fetcher(fromCursor);
         if (seq !== requestSeq.current) return;
-        setItems((prev) => {
-          const next = replace ? page.items : [...prev, ...page.items];
-          onItemsChange?.(next);
-          return next;
-        });
+        const incoming = revision.current.reconcile(page.items, started, replace);
+        setItems((prev) => replace ? incoming : mergeUnique(prev, incoming));
         setCursor(page.next_cursor);
         setHasMore(page.next_cursor !== null);
       } catch (err) {
@@ -88,7 +90,7 @@ export function CursorMediaGrid({
         }
       }
     },
-    [fetcher, onItemsChange]
+    [fetcher]
   );
 
   useUndoRefresh(`cursor:${listKey}`, async () => {
@@ -106,6 +108,7 @@ export function CursorMediaGrid({
     setCursor(null);
     setHasMore(true);
     void loadPage(null, true);
+    return () => { requestSeq.current += 1; inFlightRef.current = false; };
   }, [listKey, refreshToken, loadPage]);
 
   useEffect(() => {
@@ -114,14 +117,26 @@ export function CursorMediaGrid({
     }
   }, [inView, hasMore, isLoading, error, cursor, loadPage]);
 
+  useEffect(() => { onItemsChange?.(items); }, [items, onItemsChange]);
+  useEffect(() => mutationBus.subscribe(event => {
+    if (event.type === "media:deleted") {
+      revision.current.remove(event.ids);
+      const ids = new Set(event.ids);
+      setItems(previous => previous.filter(item => !ids.has(item.id)));
+    } else if (event.type === "media:updated") {
+      revision.current.patch(event.items);
+      const patches = new Map(event.items.map(item => [item.id, item]));
+      setItems(previous => previous.map(item => patches.has(item.id) ? { ...item, ...patches.get(item.id) } : item));
+    } else if (event.type === "media:moved" || (event.type === "list:invalidate" && listKey.startsWith(event.prefix))) {
+      requestSeq.current += 1;
+      inFlightRef.current = false;
+      void loadPage(null, true);
+    }
+  }), [listKey, loadPage]);
+
   return (
     <Box ref={gridRef} sx={{ position: "relative" }}>
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
-      {items.length === 0 && !isLoading && !error && empty}
+      <ListState loading={isLoading && items.length === 0} error={error} empty={!isLoading && items.length === 0} action={empty} onRetry={() => { void loadPage(cursor, items.length === 0); }} />
       {items.length > 0 && (
         <Masonry
           breakpointCols={breakpointColumnsObj}

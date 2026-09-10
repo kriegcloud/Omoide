@@ -20,6 +20,8 @@ import ArrowForwardIos from "@mui/icons-material/ArrowForwardIos";
 import CloseIcon from "@mui/icons-material/Close";
 
 import { useListStore } from "../stores/useListStore";
+import { mutationBus, runOptimistic } from "../stores/mutationBus";
+import { useMutationRefresh, useUndoRefresh } from "../context/UndoContext";
 import { useTaskCompletionVersion } from "../TaskEventsContext";
 
 import { ActionDialogs } from "../components/ActionDialogs";
@@ -76,13 +78,16 @@ export default function MediaDetailPage() {
   // A. Global state from Zustand for the list context
   const items: unknown[] = listFromStore?.items ?? [];
 
-  const { removeItem, updateItem } = useListStore();
+  const routeId = useRef(id);
+  routeId.current = id;
+  const detailRequest = useRef(0);
 
   // B. Local state for this specific modal's content
   const preloadedMedia = location.state?.media as Media | null;
-  const [detail, setDetail] = useState<MediaDetail | null>(
-    preloadedMedia ? { media: preloadedMedia, persons: [], orphans: [] } : null
+  const [storedDetail, setDetail] = useState<MediaDetail | null>(
+    preloadedMedia && String(preloadedMedia.id) === id ? { media: preloadedMedia, persons: [], orphans: [] } : null
   );
+  const detail = storedDetail && String(storedDetail.media.id) === id ? storedDetail : null;
   const [isDetailLoading, setIsDetailLoading] = useState(true);
   const [loadError, setLoadError] = useState<{ status?: number; message: string } | null>(null);
 
@@ -203,40 +208,61 @@ export default function MediaDetailPage() {
 
   const fetchDetail = useCallback(
     async (signal?: AbortSignal) => {
-      if (!id) return;
+      if (!id || routeId.current !== id) return;
+      const request = ++detailRequest.current;
+      const isCurrent = () => routeId.current === id && request === detailRequest.current && !signal?.aborted;
       setIsDetailLoading(true);
       setLoadError(null);
       try {
         const data = await getMedia(id, signal);
-        if (!signal?.aborted) setDetail(data);
+        if (isCurrent()) setDetail(data);
       } catch (err) {
-        if (!signal?.aborted) {
-          console.error("Failed to fetch media detail:", err);
+        if (isCurrent()) {
+          const status = err && typeof err === "object" && "status" in err ? Number(err.status) : undefined;
+          if (status === 404) {
+            setDetail(null);
+            mutationBus.emit({ type: "media:deleted", ids: [Number(id)] });
+          }
           setLoadError({
+            status,
             message:
               err instanceof Error ? err.message : "Failed to load media",
           });
         }
       } finally {
-        if (!signal?.aborted) setIsDetailLoading(false);
+        if (isCurrent()) setIsDetailLoading(false);
       }
     },
     [id]
   );
 
+  useUndoRefresh(id ? `media-detail:${id}` : undefined, fetchDetail);
+  useMutationRefresh(["face:assigned", "face:detached", "face:deleted", "person:changed", "media:updated"], fetchDetail);
+
   useEffect(() => {
     const controller = new AbortController();
     const currentPreloaded = location.state?.media as Media | null;
-    if (currentPreloaded && String(currentPreloaded.id) === id) {
-      setDetail({ media: currentPreloaded, persons: [], orphans: [] });
-    }
-    fetchDetail(controller.signal);
-    // Load app configuration to determine if running as binary
-    getConfig()
-      .then((cfg) => setIsBinary(!!cfg.general.is_binary))
-      .catch(() => setIsBinary(false));
-    return () => controller.abort();
-  }, [id, location.key, fetchDetail]);
+    setDetail(currentPreloaded && String(currentPreloaded.id) === id
+      ? { media: currentPreloaded, persons: [], orphans: [] }
+      : null);
+    setSeekRequest(null);
+    videoTimeRef.current = 0;
+    setTask(null);
+    setTabKey("");
+    void fetchDetail(controller.signal);
+    return () => {
+      controller.abort();
+      detailRequest.current += 1;
+    };
+  }, [id, location.key, location.state?.media, fetchDetail]);
+
+  useEffect(() => {
+    let active = true;
+    void getConfig()
+      .then((cfg) => { if (active) setIsBinary(!!cfg.general.is_binary); })
+      .catch(() => { if (active) setIsBinary(false); });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     setCompareSource(null);
@@ -280,22 +306,28 @@ export default function MediaDetailPage() {
 
 
   useEffect(() => {
-    if (!task?.id || ["completed", "cancelled"].includes(task.status)) return;
-    const intervalId = setInterval(async () => {
+    if (!task?.id || ["completed", "cancelled", "failed", "interrupted"].includes(task.status)) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      if (!active || routeId.current !== id) return;
+      if (document.hidden) {
+        timer = setTimeout(poll, 1500);
+        return;
+      }
       try {
         const updatedTask = await getTask(task.id);
-        if (["completed", "cancelled"].includes(updatedTask.status)) {
-          clearInterval(intervalId);
-          if (updatedTask.status === "completed") fetchDetail();
-        }
+        if (!active || routeId.current !== id) return;
         setTask(updatedTask);
-      } catch (error) {
-        console.error("Failed to fetch task status:", error);
-        clearInterval(intervalId);
+        if (updatedTask.status === "completed") void fetchDetail();
+        else if (!["cancelled", "failed", "interrupted"].includes(updatedTask.status)) timer = setTimeout(poll, 1500);
+      } catch {
+        if (active) timer = setTimeout(poll, 1500);
       }
-    }, 1500);
-    return () => clearInterval(intervalId);
-  }, [task?.id, task?.status, fetchDetail]);
+    };
+    timer = setTimeout(poll, 1500);
+    return () => { active = false; clearTimeout(timer); };
+  }, [id, task?.id, task?.status, fetchDetail]);
 
   // Per-media processor runs (started from the "Processors" tab) are fired
   // and forgotten by that tab — reload the detail once one actually
@@ -324,14 +356,14 @@ export default function MediaDetailPage() {
   };
   const handleMediaUpdate = (updatedMedia: Media) => {
     setDetail((prevDetail) => {
-      if (!prevDetail) return null;
+      if (!prevDetail || prevDetail.media.id !== updatedMedia.id || String(updatedMedia.id) !== routeId.current) return prevDetail;
       return { ...prevDetail, media: updatedMedia };
     });
   };
 
   const handleTagAddedToMedia = (newTag: Tag) => {
     setDetail((prevDetail) => {
-      if (!prevDetail) return null;
+      if (!prevDetail || String(prevDetail.media.id) !== id || routeId.current !== id) return prevDetail;
 
       const updatedMedia = {
         ...prevDetail.media,
@@ -390,14 +422,27 @@ export default function MediaDetailPage() {
     actionBusyRef.current = true;
     setActionBusy(true);
     try {
-      if (target.mediaListKey) removeItem(target.mediaListKey, target.id);
-      await deleteMediaRecord(target.id);
+      await runOptimistic({
+        apply: () => {
+          const snapshot = detail;
+          if (routeId.current === String(target.id)) {
+            setDetail(null);
+            setIsDetailLoading(false);
+            detailRequest.current += 1;
+          }
+          return snapshot;
+        },
+        request: () => deleteMediaRecord(target.id),
+        rollback: (snapshot) => {
+          if (String(target.id) === routeId.current && snapshot?.media.id === target.id) setDetail(snapshot);
+        },
+      });
       setSnackbar({
         open: true,
         message: "Record deleted",
         severity: "success",
       });
-      navigateAfterDelete();
+      if (routeId.current === String(target.id)) navigateAfterDelete();
     } catch {
       setSnackbar({ open: true, message: "Delete failed", severity: "error" });
     } finally {
@@ -412,10 +457,23 @@ export default function MediaDetailPage() {
     actionBusyRef.current = true;
     setActionBusy(true);
     try {
-      if (target.mediaListKey) removeItem(target.mediaListKey, target.id);
-      await deleteMediaFile(target.id);
+      await runOptimistic({
+        apply: () => {
+          const snapshot = detail;
+          if (routeId.current === String(target.id)) {
+            setDetail(null);
+            setIsDetailLoading(false);
+            detailRequest.current += 1;
+          }
+          return snapshot;
+        },
+        request: () => deleteMediaFile(target.id),
+        rollback: (snapshot) => {
+          if (String(target.id) === routeId.current && snapshot?.media.id === target.id) setDetail(snapshot);
+        },
+      });
       setSnackbar({ open: true, message: "File deleted", severity: "success" });
-      navigateAfterDelete();
+      if (routeId.current === String(target.id)) navigateAfterDelete();
     } catch {
       setSnackbar({
         open: true,
@@ -444,7 +502,7 @@ export default function MediaDetailPage() {
     try {
       const updatedMedia = await setMediaFavorite(media.id, !media.is_favorite);
       setDetail((current) => current?.media.id === media.id ? { ...current, media: updatedMedia } : current);
-      if (mediaListKey) updateItem(mediaListKey, updatedMedia);
+
     } catch {
       setSnackbar({ open: true, message: "Failed to update favorite", severity: "error" });
     } finally {
@@ -476,7 +534,7 @@ export default function MediaDetailPage() {
     ...viewerHotkeys, enabled: !!detail, description: "Toggle media information and tags",
   });
   useHotkey({ key: "?" }, openHotkeyHelp, { ...viewerHotkeys, description: "Show keyboard shortcuts" });
-  const isLoading = !detail && isDetailLoading;
+  const isLoading = !detail && (isDetailLoading || actionBusy);
 
   return (
     <Dialog
@@ -530,7 +588,7 @@ export default function MediaDetailPage() {
           >
             <CircularProgress />
           </Box>
-        ) : loadError && !detail ? (
+        ) : loadError ? (
           <Box
             sx={{
               display: "flex",
@@ -632,6 +690,7 @@ export default function MediaDetailPage() {
                     <BeforeAfterCompare before={compareSource} after={detail.media} />
                   ) : (
                     <MediaDisplay
+                      key={detail.media.id}
                       media={detail.media}
                       initialTime={sceneStartTime ?? undefined}
                       autoplay={shouldAutoplayVideo}
@@ -679,10 +738,10 @@ export default function MediaDetailPage() {
                           cache_version: cacheVersion,
                         };
                         handleMediaUpdate(updatedMedia);
-                        if (mediaListKey) updateItem(mediaListKey, updatedMedia);
+                        mutationBus.emit({ type: "media:updated", items: [updatedMedia] });
                         void fetchDetail().then(() => {
                           setDetail((current) =>
-                            current
+                            current?.media.id === savedDetail.media.id && routeId.current === String(savedDetail.media.id)
                               ? {
                                   ...current,
                                   media: { ...current.media, cache_version: cacheVersion },

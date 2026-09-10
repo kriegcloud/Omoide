@@ -1,3 +1,6 @@
+import { useMutationRefresh, useUndoRefresh } from "../context/UndoContext";
+import ListStateView from "../components/ListState";
+import { useListInvalidation } from "../stores/useListStore";
 import React, {
   useCallback,
   useEffect,
@@ -14,7 +17,6 @@ import {
 import {
   Typography,
   Box,
-  Button,
   CircularProgress,
   Alert,
   FormControl,
@@ -120,7 +122,10 @@ const DuplicatesPage: React.FC = () => {
     error: listError,
   } = useListStore((state) => state.lists[listKey] || defaultListState) as ListState<GroupType>;
   const groups = useMemo(() => duplicateGroups.filter((group) => group.items.length > 1), [duplicateGroups]);
-  const { fetchInitial, loadMore, removeItem, clearList } = useListStore();
+  const fetchInitial = useListStore(state => state.fetchInitial);
+const loadMore = useListStore(state => state.loadMore);
+const removeItem = useListStore(state => state.removeItem);
+const clearList = useListStore(state => state.clearList);
   const { marqueeRect, onItemClick } = useGridSelection({
     listKey,
     hasMore,
@@ -132,6 +137,7 @@ const DuplicatesPage: React.FC = () => {
     onExitSelection: clear,
     allowPlainDragOnItems: false,
   });
+  useListInvalidation(listKey);
   const refreshKey = useTaskCompletionVersion(["find_duplicates", "generate_hashes"]);
   const { activeTasks } = useTaskEvents();
   const duplicateTask = activeTasks.find(
@@ -146,6 +152,8 @@ const DuplicatesPage: React.FC = () => {
   const [isLoadingStats, setIsLoadingStats] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
   const [statsVersion, setStatsVersion] = useState(0);
+  useMutationRefresh(["media:deleted", "media:moved", "duplicates:resolved", "list:invalidate"], () => { setStatsVersion(value => value + 1); });
+  useUndoRefresh("duplicates-stats", async () => { setStats(await getDuplicateStats(folder)); });
 
   const mt = mediaType || undefined;
 
@@ -392,15 +400,7 @@ const DuplicatesPage: React.FC = () => {
           </Alert>
         )}
         {statsError && <Alert severity="error" sx={{ mt: 1 }}>{statsError}</Alert>}
-        {listError && (
-          <Alert
-            severity="error"
-            sx={{ mt: 1 }}
-            action={<Button color="inherit" size="small" onClick={handleRetryLoad}>Retry</Button>}
-          >
-            {listError}
-          </Alert>
-        )}
+        <ListStateView error={listError} onRetry={handleRetryLoad} />
       </Box>
       <Box ref={viewportRef} sx={{ position: "relative", overflow: "hidden", height: viewport.height }}>
         {groups.length > 0 && viewport.width > 0 ? (
@@ -420,11 +420,9 @@ const DuplicatesPage: React.FC = () => {
             {GroupRow}
           </VariableSizeList>
         ) : isLoading ? (
-          <Box sx={{ display: "flex", justifyContent: "center", my: 4 }}>
-            <CircularProgress />
-          </Box>
+          <ListStateView loading />
         ) : !listError && !hasMore ? (
-          <Typography align="center" sx={{ my: 4 }}>No duplicates found.</Typography>
+          <ListStateView empty emptyMessage="No duplicates found." />
         ) : null}
         {/* The overlay stays outside scrolling content so scrollTop does not offset the marquee. */}
         <MarqueeSelectionBox container={viewportRef.current} rect={marqueeRect} />

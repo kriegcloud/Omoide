@@ -11,6 +11,7 @@ function service(fetch) {
   }).outputText;
   const module = { exports: {} };
   new Function('require', 'module', 'exports', 'fetch', code)(name => {
+    if (name === '../stores/mutationBus') return { mutationBus: { emit() {} } };
     assert.equal(name, '../config');
     return { API: 'https://example.invalid' };
   }, module, module.exports, fetch);

@@ -16,6 +16,7 @@ import PhotoSizeSelectSmallIcon from "@mui/icons-material/PhotoSizeSelectSmall";
 
 import { LowResMediaItem } from "../types";
 import { getLowResMedia, resolveLowRes } from "../services/lowresolution";
+import { useTaskCompletionVersion } from "../TaskEventsContext";
 import { useCursorList } from "../hooks/useCursorList";
 import { useSelection } from "../context/SelectionContext";
 import { useGridSelection } from "../hooks/useMarqueeSelection";
@@ -54,6 +55,8 @@ const LowResolutionPage: React.FC = () => {
     open: false, message: "", severity: "success",
   });
 
+  const refreshKey = useTaskCompletionVersion(["run_processor_for_media", "clean_missing_files"]);
+
   const fetcher = useCallback(
     (cursor: string | null) =>
       getLowResMedia({
@@ -77,9 +80,8 @@ const LowResolutionPage: React.FC = () => {
     setSelectedIds,
     selectVisible,
     clearSelection,
-    removeItems,
     refetch,
-  } = useCursorList<LowResMediaItem>(fetcher);
+  } = useCursorList<LowResMediaItem>(fetcher, refreshKey);
 
   const gridRef = useRef<HTMLDivElement>(null);
   const { isSelecting: globalSelecting } = useSelection();
@@ -118,14 +120,12 @@ const LowResolutionPage: React.FC = () => {
   );
 
   const handleResolved = useCallback(
-    (removedIds: number[], removed: number, selectAll: boolean) => {
-      if (selectAll) {
-        refetch();
-      } else {
-        removeItems(removedIds, removed);
-      }
+    (_removedIds: number[], _removed: number, selectAll: boolean) => {
+      // Successful service events reconcile processed ids across every list.
+      if (selectAll) void refetch();
+      clearSelection();
     },
-    [refetch, removeItems]
+    [refetch, clearSelection]
   );
 
   const totalSize = items.reduce((sum, i) => sum + (i.size || 0), 0);
@@ -207,6 +207,8 @@ const LowResolutionPage: React.FC = () => {
       <ReviewMediaGrid
         gridRef={gridRef}
         marqueeRect={marqueeRect}
+        error={error}
+        onRetry={refetch}
         itemCount={items.length}
         isLoading={isLoading}
         hasMore={hasMore}

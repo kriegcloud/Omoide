@@ -24,7 +24,7 @@ function selectionBar(deleteMedia = async () => ({ removed: 1, processed_ids: [1
     'react-router-dom': { useLocation: () => ({ pathname: '/blur' }), matchPath: () => null },
     '../context/SelectionContext': { useSelection: () => selection },
     '../context/UndoContext': { useUndo: () => ({ push() {}, refreshVisible() {} }) },
-    '../stores/useListStore': { useListStore: () => ({ removeItems: (...args) => removed.push(args) }) },
+    '../stores/useListStore': { useListStore: selector => selector({ removeItems: (...args) => removed.push(args) }) },
     '../stores/useLastEditStore': { useLastEditStore: (selector) => selector({ ops: null }) },
     '../services/mediaActions': { bulkDeleteMedia: async (ids, action) => { calls.push({ ids, action }); return deleteMedia(ids, action); } },
     '../config': { __esModule: true, default: { PRESENTATION_MODE: presentationMode } },
@@ -39,7 +39,7 @@ for (const [label, action] of [
   ['Remove records…', 'DELETE_RECORDS'],
   ['Blacklist…', 'BLACKLIST_RECORDS'],
 ]) {
-  test(`${action} snapshots selection and list, and removes only processed ids`, async () => {
+  test(`${action} snapshots selection and lets services reconcile processed ids`, async () => {
     const bar = selectionBar();
     button(bar.render(), label).props.onClick();
     assert.equal(bar.calls.length, 0, 'opening the dialog must never perform deletion');
@@ -51,7 +51,7 @@ for (const [label, action] of [
     bar.selection.listKey = 'later-list';
     await confirmation(bar.render()).props.onConfirm();
     assert.deepEqual(bar.calls, [{ ids: [101, 102], action }]);
-    assert.deepEqual(bar.removed, [['original-list', [101]]], 'skipped media must remain cached');
+    assert.deepEqual(bar.removed, [], 'service events reconcile processed ids across all caches; the bar must not patch one cache again');
     assert.equal(bar.clears(), 1);
     const finished = bar.render();
     assert.equal(confirmation(finished).props.open, false);
@@ -67,7 +67,7 @@ test('bulk deletion reports partial failures while retaining unprocessed ids in 
   const alert = find(bar.render(), 'Alert');
   assert.equal(alert.props.severity, 'error');
   assert.equal(alert.props.children, 'Deleted 1; 1 skipped; 1 failed');
-  assert.deepEqual(bar.removed, [['original-list', [101]]]);
+  assert.deepEqual(bar.removed, [], 'partial-result cache reconciliation belongs to the service bus');
 });
 
 test('failed bulk-delete request preserves selection and confirmation for retry', async () => {

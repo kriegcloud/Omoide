@@ -34,7 +34,7 @@ import {
   setMediaFavorite,
 } from "../services/mediaActions";
 import { useUndoRefresh } from "../context/UndoContext";
-import { refreshCachedList, useListStore } from "../stores/useListStore";
+import { refreshCachedList } from "../stores/useListStore";
 import AssignMediaToPersonDialog from "./AssignMediaToPersonDialog";
 import ConfirmDialog from "./ConfirmDialog";
 import FolderPickerDialog from "./FolderPickerDialog";
@@ -82,7 +82,6 @@ export default function MediaCardMenu({
   const [favorite, setFavorite] = useState(!!media.is_favorite);
   const [editorMedia, setEditorMedia] = useState<Media | null>(null);
   const [snackbar, setSnackbar] = useState<{ message: string; severity: "success" | "error" } | null>(null);
-  const { updateItem, removeItem } = useListStore();
 
   useEffect(() => setFavorite(!!media.is_favorite), [media.id, media.is_favorite]);
 
@@ -101,7 +100,6 @@ export default function MediaCardMenu({
   };
   const applyMedia = (updated: Media | MediaPreview) => {
     setFavorite(updated.is_favorite);
-    if (mediaListKey) updateItem(mediaListKey, updated);
     onMediaChange?.(updated);
   };
   const fail = (error: unknown, fallback: string) => {
@@ -191,7 +189,6 @@ export default function MediaCardMenu({
     try {
       if (deleteFile) await deleteMediaFile(target.id);
       else await deleteMediaRecord(target.id);
-      if (target.mediaListKey) removeItem(target.mediaListKey, target.id);
       setDialog(null);
       setDeleteTarget(null);
       target.onDeleted?.();
@@ -369,7 +366,6 @@ export default function MediaCardMenu({
         onClose={() => setDialog(null)}
         onAssigned={(person) => {
           if (personContext) {
-            if (mediaListKey) removeItem(mediaListKey, media.id);
             onDeleted?.();
           }
           setSnackbar({ message: `Assigned to ${person.name ?? "person"}`, severity: "success" });

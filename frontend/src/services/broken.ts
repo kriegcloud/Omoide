@@ -1,3 +1,4 @@
+import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
 import { BrokenMediaPage, BrokenResolvePayload } from "../types";
 
@@ -25,7 +26,10 @@ export const resolveBroken = async (
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Failed to resolve broken media");
   }
-  return res.json();
+  const result = await res.json();
+  if (Array.isArray(result.processed_ids)) mutationBus.emit({ type: "media:deleted", ids: result.processed_ids });
+  else mutationBus.emit({ type: "list:invalidate", prefix: "" });
+  return result;
 };
 
 export const retryBroken = async (payload: {

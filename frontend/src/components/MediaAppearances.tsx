@@ -49,7 +49,8 @@ export default function MediaAppearances({
   const { items, hasMore, isLoading } = useListStore(
     (state) => state.lists[mediaListKey] || defaultListState
   );
-  const { fetchInitial, loadMore } = useListStore();
+  const fetchInitial = useListStore(state => state.fetchInitial);
+  const loadMore = useListStore(state => state.loadMore);
   const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
 
   useUndoRefresh(`cache:${mediaListKey}`, () => refreshCachedList(mediaListKey));

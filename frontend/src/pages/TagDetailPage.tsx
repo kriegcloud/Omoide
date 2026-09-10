@@ -68,11 +68,13 @@ export default function TagDetailPage() {
   const hasMore = listState?.hasMore ?? defaultListState.hasMore;
   const isLoading = listState?.isLoading ?? defaultListState.isLoading;
   const listError = listState?.error ?? defaultListState.error;
-  const { fetchInitial, loadMore, clearList } = useListStore();
+  const fetchInitial = useListStore((state) => state.fetchInitial);
+  const loadMore = useListStore((state) => state.loadMore);
+  const clearList = useListStore((state) => state.clearList);
 
   const { marqueeRect, onItemClick } = useGridSelection<number>({
-    listKey,
-    loadedCount: mediaItems.length,
+    listKey: `${listKey}:${mediaFilter}`,
+    loadedCount: mediaItems.filter((item) => mediaFilter === "all" || (mediaFilter === "video" ? typeof item.duration === "number" : typeof item.duration !== "number")).length,
     hasMore,
     containerRef: mediaGridRef,
     itemSelector: "[data-selectable-id]",

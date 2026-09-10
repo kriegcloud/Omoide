@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
-import { useUndo, useUndoRefresh } from "../context/UndoContext";
+import { useUndo, useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
+import { runOptimistic } from "../stores/mutationBus";
 import { getPerson, getPersonMediaAppearances } from "../services/person";
 import {
   autoMergeSimilarPersons,
@@ -23,11 +24,7 @@ import { getConfig } from "../services/config";
 import appConfig from "../config";
 import type { MergeResult } from "../services/personActions";
 import { defaultListState, refreshCachedList, useListStore } from "../stores/useListStore";
-import {
-  clearPeopleGrids,
-  patchPersonInGrids,
-  removePeopleFromGrids,
-} from "../stores/peopleCache";
+import { patchPersonInGrids } from "../stores/peopleCache";
 import {
   FaceRead,
   Person,
@@ -50,7 +47,17 @@ export const usePersonDetailPage = () => {
   const navigate = useNavigate();
   const { push, refreshVisible } = useUndo();
 
-  const [person, setPerson] = useState<Person | null>(null);
+  const [storedPerson, setPerson] = useState<Person | null>(null);
+  const person = storedPerson && String(storedPerson.id) === id ? storedPerson : null;
+  const routeId = useRef(id);
+  routeId.current = id;
+  const requests = useRef({ detail: 0, suggestions: 0, similar: 0, relationships: 0 });
+  const beginRequest = useCallback((kind: keyof typeof requests.current, signal?: AbortSignal) => {
+    const revision = ++requests.current[kind];
+    return () => routeId.current === id && requests.current[kind] === revision && !signal?.aborted;
+  }, [id]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [optimisticFaceIds, setOptimisticFaceIds] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ name: "" });
   const [saving, setSaving] = useState(false);
@@ -110,14 +117,17 @@ export const usePersonDetailPage = () => {
   );
 
   const {
-    items: detectedFacesList,
+    items: storedDetectedFacesList,
     hasMore: hasMoreFaces,
     isLoading: loadingMoreFaces,
   } = useListStore(
     (state) => state.lists[detectedFacesListKey] || defaultListState,
   );
 
-  const { fetchInitial, loadMore, removeItems, clearList } = useListStore();
+  const detectedFacesList = storedDetectedFacesList.filter((face) => !optimisticFaceIds.includes(face.id));
+  const fetchInitial = useListStore((state) => state.fetchInitial);
+  const loadMore = useListStore((state) => state.loadMore);
+  const clearList = useListStore((state) => state.clearList);
 
   const refreshDetectedFaces = useCallback(async () => {
     if (!id || !detectedFacesListKey) return;
@@ -153,9 +163,12 @@ export const usePersonDetailPage = () => {
 
   const loadDetail = useCallback(
     async (signal?: AbortSignal) => {
-      if (!id) return;
+      if (!id || routeId.current !== id) return;
+      const isCurrent = beginRequest("detail", signal);
+      setLoadError(null);
       try {
         const personData = await getPerson(id, signal);
+        if (!isCurrent()) return;
         setPerson(personData);
         setForm({
           name: personData.name ?? "",
@@ -164,12 +177,12 @@ export const usePersonDetailPage = () => {
         // made from this page (face assign/detach, rename, merges into us).
         patchPersonInGrids(personData);
       } catch (err) {
-        if (signal?.aborted !== true) {
-          console.error("Error in loadDetail:", err);
+        if (isCurrent()) {
+          setLoadError(err instanceof Error ? err.message : "Failed to load person");
         }
       }
     },
-    [id],
+    [id, beginRequest],
   );
 
   const loadMoreDetectedFaces = useCallback(async () => {
@@ -203,25 +216,24 @@ export const usePersonDetailPage = () => {
 
   const fetchSuggestedFaces = useCallback(
     async (signal?: AbortSignal) => {
-      if (!id) return;
+      if (!id || routeId.current !== id) return;
+      const isCurrent = beginRequest("suggestions", signal);
       setIsLoadingSuggestedFaces(true);
       try {
         const data = await getSuggestedFaces(Number(id), suggestedFacesLimitRef.current, signal);
-        if (signal?.aborted) {
-          return;
-        }
+        if (!isCurrent()) return;
         setSuggestedFaces(Array.isArray(data) ? data : []);
       } catch (err) {
-        if (signal?.aborted !== true) {
+        if (isCurrent()) {
           console.error("Error loading suggested faces:", err);
         }
       } finally {
-        if (signal?.aborted !== true) {
+        if (isCurrent()) {
           setIsLoadingSuggestedFaces(false);
         }
       }
     },
-    [id],
+    [id, beginRequest],
   );
 
   const refreshSuggestedFaces = useCallback(
@@ -231,26 +243,28 @@ export const usePersonDetailPage = () => {
 
   const loadSimilar = useCallback(
     async (signal?: AbortSignal) => {
-      if (!id) return;
+      if (!id || routeId.current !== id) return;
+      const isCurrent = beginRequest("similar", signal);
       setSimilarPersons([]);
       try {
         const data: SimilarPersonWithDetails[] = await getSimilarPersons(
           Number(id),
           signal,
         );
-        setSimilarPersons(data);
+        if (isCurrent()) setSimilarPersons(data);
       } catch (error) {
-        if (signal?.aborted !== true) {
+        if (isCurrent()) {
           console.error("Error loading similarities:", error);
         }
       }
     },
-    [id],
+    [id, beginRequest],
   );
 
   const loadRelationshipGraph = useCallback(
     async (targetDepth?: number, signal?: AbortSignal) => {
-      if (!id) return;
+      if (!id || routeId.current !== id) return;
+      const isCurrent = beginRequest("relationships", signal);
       const depthToRequest = targetDepth ?? relationshipDepth;
       setIsLoadingRelationships(true);
       try {
@@ -260,20 +274,21 @@ export const usePersonDetailPage = () => {
           relationshipMaxNodes,
           signal,
         );
+        if (!isCurrent()) return;
         setRelationshipGraph(graph);
         setRelationshipDepth(depthToRequest);
         setHasLoadedRelationships(true);
       } catch (error) {
-        if (signal?.aborted !== true) {
+        if (isCurrent()) {
           console.error("Error loading relationship graph:", error);
         }
       } finally {
-        if (signal?.aborted !== true) {
+        if (isCurrent()) {
           setIsLoadingRelationships(false);
         }
       }
     },
-    [id, relationshipDepth, relationshipMaxNodes],
+    [id, relationshipDepth, relationshipMaxNodes, beginRequest],
   );
 
   useEffect(() => {
@@ -338,6 +353,19 @@ export const usePersonDetailPage = () => {
     ]);
   });
 
+  useMutationRefresh(["face:assigned", "face:detached", "face:deleted", "person:changed", "media:deleted", "media:updated"], async () => {
+    await Promise.all([
+      refreshDetectedFaces(), refreshMediaAppearances(), loadDetail(),
+      refreshSuggestedFaces(), reloadRelationshipGraphIfLoaded(),
+    ]);
+  });
+
+  const retryDetail = useCallback(async () => {
+    setLoading(true);
+    await loadDetail();
+    if (routeId.current === id) setLoading(false);
+  }, [id, loadDetail]);
+
   const forceRefresh = Boolean(location.state?.forceRefresh);
 
   useEffect(() => {
@@ -351,6 +379,9 @@ export const usePersonDetailPage = () => {
       }
 
       setPerson(null);
+      setLoadError(null);
+      setOptimisticFaceIds([]);
+      setForm({ name: "" });
       setSimilarPersons([]);
       setSuggestedFaces([]);
 
@@ -382,6 +413,10 @@ export const usePersonDetailPage = () => {
 
     return () => {
       controller.abort();
+      requests.current.detail += 1;
+      requests.current.suggestions += 1;
+      requests.current.similar += 1;
+      requests.current.relationships += 1;
     };
   }, [
     id,
@@ -415,14 +450,30 @@ export const usePersonDetailPage = () => {
     reloadRelationshipGraphIfLoaded,
   ]);
 
+  const optimisticallyRemoveFaces = async <T,>(faceIds: number[], request: () => Promise<T>) => {
+    return runOptimistic({
+      apply: () => {
+        const snapshot = suggestedFaces;
+        setOptimisticFaceIds((previous) => [...new Set([...previous, ...faceIds])]);
+        setSuggestedFaces((previous) => previous.filter((face) => !faceIds.includes(face.id)));
+        return snapshot;
+      },
+      request,
+      rollback: (snapshot) => {
+        if (routeId.current !== id) return;
+        setSuggestedFaces(snapshot);
+        setOptimisticFaceIds((previous) => previous.filter((faceId) => !faceIds.includes(faceId)));
+      },
+    });
+  };
+
   const handleAssignWrapper = async (
     faceIds: number[],
     personId: number,
     ) => {
       if (!id) return;
       try {
-        await assignFace(faceIds, personId);
-        setSuggestedFaces((prev) => prev.filter((f) => !faceIds.includes(f.id)));
+        await optimisticallyRemoveFaces(faceIds, () => assignFace(faceIds, personId));
         await Promise.all([
           refreshDetectedFaces(),
           loadDetail(),
@@ -430,6 +481,7 @@ export const usePersonDetailPage = () => {
           refreshSuggestedFaces(),
           reloadRelationshipGraphIfLoaded(),
         ]);
+        if (routeId.current === id) setOptimisticFaceIds((previous) => previous.filter((faceId) => !faceIds.includes(faceId)));
         showMessage(`Assigned ${faceIds.length} face${faceIds.length === 1 ? "" : "s"}`);
       } catch (err) {
         console.error("Failed to assign face:", err);
@@ -440,15 +492,14 @@ export const usePersonDetailPage = () => {
 
   const handleDeleteWrapper = async (faceIds: number[]) => {
       try {
-        await deleteFace(faceIds);
-        removeItems(detectedFacesListKey, faceIds);
-        setSuggestedFaces((prev) => prev.filter((f) => !faceIds.includes(f.id)));
+        await optimisticallyRemoveFaces(faceIds, () => deleteFace(faceIds));
         await Promise.all([
           refreshMediaAppearances(),
           loadDetail(),
           refreshSuggestedFaces(),
           reloadRelationshipGraphIfLoaded(),
         ]);
+        if (routeId.current === id) setOptimisticFaceIds((previous) => previous.filter((faceId) => !faceIds.includes(faceId)));
         showMessage(`Deleted ${faceIds.length} face${faceIds.length === 1 ? "" : "s"}`);
       } catch (err) {
         console.error("Failed to delete face:", err);
@@ -459,15 +510,14 @@ export const usePersonDetailPage = () => {
 
   const handleDetachWrapper = async (faceIds: number[]) => {
       try {
-        await detachFace(faceIds);
-        removeItems(detectedFacesListKey, faceIds);
-        setSuggestedFaces((prev) => prev.filter((f) => !faceIds.includes(f.id)));
+        await optimisticallyRemoveFaces(faceIds, () => detachFace(faceIds));
         await Promise.all([
           refreshMediaAppearances(),
           loadDetail(),
           refreshSuggestedFaces(),
           reloadRelationshipGraphIfLoaded(),
         ]);
+        if (routeId.current === id) setOptimisticFaceIds((previous) => previous.filter((faceId) => !faceIds.includes(faceId)));
         showMessage(`Detached ${faceIds.length} face${faceIds.length === 1 ? "" : "s"}`);
       } catch (err) {
         console.error("Failed to detach face:", err);
@@ -514,8 +564,6 @@ export const usePersonDetailPage = () => {
   ): Promise<Person> => {
     try {
       const newPerson = await createPersonFromFaces(faceIds, name);
-      // A new person exists now; every cached grid is missing it.
-      clearPeopleGrids();
         setSuggestedFaces((prev) => prev.filter((f) => !faceIds.includes(f.id)));
         await Promise.all([
           refreshDetectedFaces(),
@@ -543,7 +591,6 @@ export const usePersonDetailPage = () => {
         const result = await mergeMultiplePersons(Number(id), sourceIds);
         const mergedCount = result.merged_ids.length;
         if (mergedCount > 0) {
-          removePeopleFromGrids(result.merged_ids);
           const skippedCount = result.skipped_ids.length;
           const messageParts = [`Merged ${mergedCount} similar person${mergedCount > 1 ? "s" : ""}`];
           if (skippedCount > 0) {
@@ -588,7 +635,6 @@ export const usePersonDetailPage = () => {
       const result = await autoMergeSimilarPersons(Number(id));
       const mergedCount = result.merged_ids.length;
       if (mergedCount > 0) {
-        removePeopleFromGrids(result.merged_ids);
         const skippedCount = result.skipped_ids.length;
         const messageParts = [`Auto-merged ${mergedCount} similar person${mergedCount > 1 ? "s" : ""}`];
         if (skippedCount > 0) {
@@ -651,13 +697,7 @@ export const usePersonDetailPage = () => {
       const updated = isHidden
         ? await unhidePerson(Number(id))
         : await hidePerson(Number(id));
-      setPerson(updated);
-      // The person grids cache one list per filter (people-grid-all,
-      // people-grid-female, people-grid-hidden, ...); drop the person from
-      // every cached variant of the list they are leaving.
-      removePeopleFromGrids([updated.id]);
-      // The list the person is joining (hidden ⇄ visible) must refetch.
-      clearPeopleGrids();
+      if (routeId.current === id) setPerson(updated);
       showMessage(isHidden ? "Person unhidden" : "Person hidden");
     } catch (err) {
       console.error("Failed to update person visibility:", err);
@@ -668,7 +708,7 @@ export const usePersonDetailPage = () => {
     } finally {
       setSaving(false);
     }
-  }, [id, person, removeItems, showMessage]);
+  }, [id, person, showMessage]);
 
   const handleProfileAssignmentWrapper = async (
     faceId: number,
@@ -693,7 +733,6 @@ export const usePersonDetailPage = () => {
     if (!id) return;
     try {
       await deletePersonService(Number(id));
-      removePeopleFromGrids([Number(id)]);
       showMessage("Person deleted");
       navigate("/people");
     } catch (err) {
@@ -755,9 +794,6 @@ export const usePersonDetailPage = () => {
     setMergeOpen(false);
     try {
       await mergePersons(sourceId, targetId);
-      // We no longer exist; the target's count is refreshed by loadDetail on
-      // the page we navigate to, which patches the grids.
-      removePeopleFromGrids([sourceId]);
       navigate(`/person/${targetId}`, {
         replace: true,
         state: {
@@ -774,6 +810,8 @@ export const usePersonDetailPage = () => {
     id,
     person,
     loading,
+    loadError,
+    retryDetail,
     form,
     saving,
     mergeOpen,

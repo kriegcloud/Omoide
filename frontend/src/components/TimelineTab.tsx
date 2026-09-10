@@ -23,7 +23,8 @@ import {
   getPersonTimeline,
   updateTimelineEvent,
 } from "../services/timeline";
-import { defaultListState, useListStore } from "../stores/useListStore";
+import { defaultListState, refreshCachedList, useListStore } from "../stores/useListStore";
+import { useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
 import {
   MediaPreview,
   Person,
@@ -46,7 +47,15 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia,
   const { items, hasMore, isLoading } = useListStore(
     (state) => state.lists[listKey] || defaultListState
   );
-  const { fetchInitial, loadMore, clearList } = useListStore();
+  const fetchInitial = useListStore((state) => state.fetchInitial);
+  const loadMore = useListStore((state) => state.loadMore);
+  const clearList = useListStore((state) => state.clearList);
+  const refreshTimeline = async () => {
+    setDayToView(null);
+    await refreshCachedList(listKey);
+  };
+  useUndoRefresh(`cache:${listKey}`, refreshTimeline);
+  useMutationRefresh(["face:assigned", "face:detached", "face:deleted", "media:deleted", "media:updated", "person:changed"], refreshTimeline);
   const { ref, inView } = useInView({
     threshold: 0.5,
     skip: isLoading || !hasMore,
@@ -66,10 +75,10 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia,
   }, [person.id, fetchInitial, listKey, clearList]);
 
   useEffect(() => {
-    if (inView) {
+    if (inView && hasMore && !isLoading) {
       loadMore(listKey, (cursor) => getPersonTimeline(person.id, cursor));
     }
-  }, [inView, person.id, loadMore, listKey]);
+  }, [inView, hasMore, isLoading, person.id, loadMore, listKey]);
 
   const handleOpenCreateDialog = () => {
     setEventToEdit(null);
@@ -124,14 +133,7 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia,
   const handleRemoveMedia = async (mediaId: number) => {
     if (!onDetachMedia) return;
     await onDetachMedia(mediaId);
-    clearList(listKey);
-    fetchInitial(listKey, () => getPersonTimeline(person.id, null));
-    // Also remove from current day-view if open
-    setDayToView((prev) => {
-      if (!prev) return null;
-      const updated = prev.filter((m) => m.id !== mediaId);
-      return updated.length > 0 ? updated : null;
-    });
+
   };
 
   const displayItems: TimelineDisplayItem[] = useMemo(() => {
@@ -244,6 +246,8 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia,
               {dayToView.map((media) => (
                 <ImageListItem key={media.id}>
                   <img
+                    loading="lazy"
+                    decoding="async"
                     src={`${API}/thumbnails/${media.thumbnail_path ? encodeFilePath(media.thumbnail_path) : `${media.id}.jpg`}`}
                     alt={media.filename}
                     width={media.width || undefined}

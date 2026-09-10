@@ -82,6 +82,12 @@ export default function DatasetTriagePage() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [retryReady, setRetryReady] = useState(true);
+  const [retryTick, setRetryTick] = useState(0);
+  const queueGeneration = useRef(0);
+  const morePending = useRef(false);
+  const mutationPending = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -96,6 +102,16 @@ export default function DatasetTriagePage() {
 
   useEffect(() => {
     let active = true;
+    queueGeneration.current += 1;
+    morePending.current = false;
+    mutationPending.current = false;
+    setLoadingMore(false);
+    setBusy(false);
+    setNextCursor(null);
+    setPageError(null);
+    setPersonId(null);
+    setCropOpen(false);
+    setRepairAnchor(null);
     setLoading(true);
     setError(null);
     setEntries([]);
@@ -117,8 +133,15 @@ export default function DatasetTriagePage() {
         if (active) setError(reason instanceof Error ? reason.message : "Failed to load triage queue");
       })
       .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [datasetId, filter]);
+    return () => { active = false; queueGeneration.current += 1; };
+  }, [datasetId, filter, retryTick]);
+
+  useEffect(() => {
+    if (!pageError) { setRetryReady(true); return; }
+    setRetryReady(false);
+    const timer = setTimeout(() => setRetryReady(true), 1000);
+    return () => clearTimeout(timer);
+  }, [pageError]);
 
   useEffect(() => {
     setCaption(current?.caption ?? "");
@@ -184,79 +207,88 @@ export default function DatasetTriagePage() {
     ));
   }, [entries.length, nextCursor]);
 
-  const keep = useCallback(async () => {
-    if (!current || busy) return;
+  const reviewCurrent = useCallback(async (excluded: boolean) => {
+    if (!current || busy || mutationPending.current) return;
+    const generation = queueGeneration.current;
+    mutationPending.current = true;
     setBusy(true);
     setError(null);
     remember(current, currentIndex);
+    let persisted = false;
     try {
-      const updated = await reviewDatasetItem(datasetId, current.item.id);
-      replaceEntry(current.item.id, { reviewed_at: updated.reviewed_at ?? null });
-      if (!current.item.reviewed_at && updated.reviewed_at) setReviewedCount((count) => count + 1);
-      advance();
-    } catch (reason) {
-      setHistory((rows) => rows.slice(0, -1));
-      setError(reason instanceof Error ? reason.message : "Failed to review item");
-    } finally {
-      setBusy(false);
-    }
-  }, [advance, busy, current, currentIndex, datasetId, remember, replaceEntry]);
-
-  const exclude = useCallback(async () => {
-    if (!current || busy) return;
-    setBusy(true);
-    setError(null);
-    remember(current, currentIndex);
-    const reviewedAt = current.item.reviewed_at ?? new Date().toISOString();
-    try {
+      // The review endpoint stamps a native server datetime; item PATCH currently
+      // serializes supplied datetime strings before assigning the SQLite column.
       const updated = await updateDatasetItem(datasetId, current.item.id, {
-        excluded: true,
-        excluded_reason: "manual",
-        reviewed_at: reviewedAt,
+        excluded,
+        excluded_reason: excluded ? "manual" : null,
       });
+      if (generation !== queueGeneration.current) return;
+      persisted = true;
       replaceEntry(current.item.id, {
         excluded: updated.excluded,
-        excluded_reason: updated.excluded_reason ?? "manual",
-        reviewed_at: updated.reviewed_at ?? reviewedAt,
+        excluded_reason: updated.excluded_reason ?? null,
       });
-      if (!current.item.reviewed_at) setReviewedCount((count) => count + 1);
+      if (!current.item.reviewed_at) {
+        const reviewed = await reviewDatasetItem(datasetId, current.item.id);
+        if (generation !== queueGeneration.current) return;
+        replaceEntry(current.item.id, { reviewed_at: reviewed.reviewed_at ?? null });
+        if (reviewed.reviewed_at) setReviewedCount((count) => count + 1);
+      }
       advance();
     } catch (reason) {
-      setHistory((rows) => rows.slice(0, -1));
-      setError(reason instanceof Error ? reason.message : "Failed to exclude item");
+      if (generation !== queueGeneration.current) return;
+      // Keep an undo entry when exclusion persisted but the review call failed.
+      if (!persisted) setHistory((rows) => rows.slice(0, -1));
+      setError(reason instanceof Error ? reason.message : "Failed to review item");
     } finally {
-      setBusy(false);
+      if (generation === queueGeneration.current) {
+        mutationPending.current = false;
+        setBusy(false);
+      }
     }
   }, [advance, busy, current, currentIndex, datasetId, remember, replaceEntry]);
+  const keep = useCallback(() => reviewCurrent(false), [reviewCurrent]);
+  const exclude = useCallback(() => reviewCurrent(true), [reviewCurrent]);
 
   const setWeight = useCallback(async (weight: number) => {
-    if (!current || busy || current.item.weight === weight) return;
+    if (!current || busy || mutationPending.current || current.item.weight === weight) return;
+    const generation = queueGeneration.current;
+    mutationPending.current = true;
     setBusy(true);
     setError(null);
     remember(current, currentIndex);
     try {
       const updated = await updateDatasetItem(datasetId, current.item.id, { weight });
+      if (generation !== queueGeneration.current) return;
       replaceEntry(current.item.id, { weight: updated.weight });
     } catch (reason) {
+      if (generation !== queueGeneration.current) return;
       setHistory((rows) => rows.slice(0, -1));
       setError(reason instanceof Error ? reason.message : "Failed to set weight");
     } finally {
-      setBusy(false);
+      if (generation === queueGeneration.current) {
+        mutationPending.current = false;
+        setBusy(false);
+      }
     }
   }, [busy, current, currentIndex, datasetId, remember, replaceEntry]);
 
   const undo = useCallback(async () => {
     const previous = history.at(-1);
-    if (!previous || busy) return;
+    if (!previous || busy || mutationPending.current) return;
+    const generation = queueGeneration.current;
+    mutationPending.current = true;
     setBusy(true);
     setError(null);
     try {
       const updated = await updateDatasetItem(datasetId, previous.itemId, {
         excluded: previous.excluded,
         excluded_reason: previous.excluded_reason,
-        reviewed_at: previous.reviewed_at,
+        // Null clears a newly added review marker; an existing marker stays as is.
+        ...(!previous.reviewed_at ? { reviewed_at: null } : {}),
         weight: previous.weight,
       });
+      if (generation !== queueGeneration.current) return;
       const existing = entries.find((entry) => entry.item.id === previous.itemId);
       if (existing?.item.reviewed_at && !previous.reviewed_at) setReviewedCount((count) => Math.max(0, count - 1));
       if (!existing?.item.reviewed_at && previous.reviewed_at) setReviewedCount((count) => count + 1);
@@ -270,17 +302,25 @@ export default function DatasetTriagePage() {
       setHistory((rows) => rows.slice(0, -1));
       setNotice("Last action undone");
     } catch (reason) {
+      if (generation !== queueGeneration.current) return;
       setError(reason instanceof Error ? reason.message : "Failed to undo action");
     } finally {
-      setBusy(false);
+      if (generation === queueGeneration.current) {
+        mutationPending.current = false;
+        setBusy(false);
+      }
     }
   }, [busy, datasetId, entries, history, replaceEntry]);
 
   const loadMore = useCallback(async () => {
-    if (!nextCursor || loadingMore) return;
+    if (!nextCursor || loading || morePending.current) return false;
+    const generation = queueGeneration.current;
+    morePending.current = true;
     setLoadingMore(true);
+    setPageError(null);
     try {
       const page = await getDatasetTriage(datasetId, filter, nextCursor);
+      if (generation !== queueGeneration.current) return false;
       setEntries((rows) => {
         const seen = new Set(rows.map((entry) => entry.item.id));
         return [...rows, ...page.items.filter((entry) => !seen.has(entry.item.id))];
@@ -288,39 +328,49 @@ export default function DatasetTriagePage() {
       setNextCursor(page.next_cursor ?? null);
       setReviewedCount(page.reviewed_count);
       setTotalCount(page.total_count);
+      return page.items.length > 0;
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Failed to load more items");
+      if (generation === queueGeneration.current) setPageError(reason instanceof Error ? reason.message : "Failed to load more items");
+      return false;
     } finally {
-      setLoadingMore(false);
+      if (generation === queueGeneration.current) {
+        morePending.current = false;
+        setLoadingMore(false);
+      }
     }
-  }, [datasetId, filter, loadingMore, nextCursor]);
+  }, [datasetId, filter, loading, nextCursor]);
 
   useEffect(() => {
-    if (nextCursor && currentIndex >= entries.length - 3) void loadMore();
-  }, [currentIndex, entries.length, loadMore, nextCursor]);
+    if (!loading && !loadingMore && !pageError && nextCursor && currentIndex >= entries.length - 3) void loadMore();
+  }, [currentIndex, entries.length, loadMore, nextCursor, loading, loadingMore, pageError]);
 
   const move = useCallback((direction: -1 | 1) => {
+    if (busy || mutationPending.current || loading) return;
     if (direction < 0) {
       setCurrentIndex((index) => Math.max(0, index - 1));
-      return;
-    }
-    if (currentIndex + 1 < entries.length) {
+    } else if (currentIndex + 1 < entries.length) {
       setCurrentIndex((index) => index + 1);
-    } else if (nextCursor) {
-      void loadMore().then(() => setCurrentIndex((index) => index + 1));
+    } else if (nextCursor && !pageError) {
+      const generation = queueGeneration.current;
+      void loadMore().then((loaded) => {
+        if (loaded && generation === queueGeneration.current) setCurrentIndex((index) => index === currentIndex ? index + 1 : index);
+      });
     }
-  }, [currentIndex, entries.length, loadMore, nextCursor]);
+  }, [busy, loading, currentIndex, entries.length, loadMore, nextCursor, pageError]);
 
   const saveCaption = useCallback(async () => {
-    if (!current) return;
+    if (!current || mutationPending.current) return;
+    const generation = queueGeneration.current;
     const next = caption.trim();
     if (next === current.caption.trim()) return;
+    mutationPending.current = true;
     setBusy(true);
     setError(null);
     try {
       const updated = await updateDatasetItem(datasetId, current.item.id, {
         caption_override: next || null,
       });
+      if (generation !== queueGeneration.current) return;
       replaceEntry(current.item.id, {
         caption: next,
         caption_override: updated.caption_override ?? null,
@@ -328,9 +378,13 @@ export default function DatasetTriagePage() {
       });
       setNotice("Caption saved");
     } catch (reason) {
+      if (generation !== queueGeneration.current) return;
       setError(reason instanceof Error ? reason.message : "Failed to save caption");
     } finally {
-      setBusy(false);
+      if (generation === queueGeneration.current) {
+        mutationPending.current = false;
+        setBusy(false);
+      }
     }
   }, [caption, current, datasetId, replaceEntry]);
 
@@ -411,7 +465,8 @@ export default function DatasetTriagePage() {
 
   return (
     <Box sx={{ height: { xs: "auto", md: "calc(100vh - 64px)" }, minHeight: 650, bgcolor: "grey.950", color: "common.white", display: "flex", flexDirection: "column" }}>
-      {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
+      {error && <Alert severity="error" onClose={() => setError(null)} action={!entries.length ? <Button onClick={() => setRetryTick((tick) => tick + 1)}>Retry</Button> : undefined}>{error}</Alert>}
+      {pageError && <Alert severity="error" action={<Button disabled={!retryReady || loadingMore} onClick={() => void loadMore()}>Retry</Button>}>{pageError}</Alert>}
       {notice && <Alert severity="success" onClose={() => setNotice(null)}>{notice}</Alert>}
       <Box sx={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: { xs: "1fr", md: "minmax(0, 1fr) 370px" } }}>
         <Box ref={imagePanelRef} sx={{ minHeight: { xs: 420, md: 0 }, display: "grid", placeItems: "center", overflow: "hidden", position: "relative" }}>
@@ -437,7 +492,7 @@ export default function DatasetTriagePage() {
               <Button component={RouterLink} to={`/dataset/${datasetId}`} size="small">← Dataset</Button>
               <FormControl size="small" sx={{ minWidth: 125, ml: "auto" }}>
                 <InputLabel>Filter</InputLabel>
-                <Select label="Filter" value={filter} onChange={(event) => setSearchParams(event.target.value === "all" ? {} : { filter: event.target.value })}>
+                <Select label="Filter" value={filter} disabled={busy} onChange={(event) => setSearchParams(event.target.value === "all" ? {} : { filter: event.target.value })}>
                   <MenuItem value="all">All</MenuItem>
                   <MenuItem value="findings">Findings</MenuItem>
                   <MenuItem value="excluded">Excluded</MenuItem>
@@ -484,8 +539,8 @@ export default function DatasetTriagePage() {
           <Button disabled={!current?.face_crop_suggestion || busy} onClick={() => setCropOpen(true)}>C Crop</Button>
           <Button disabled={!current} onClick={() => captionRef.current?.focus()}>E Caption</Button>
           <Button ref={repairButtonRef} disabled={!current || !config.REPAIRS_ENABLED || busy} onClick={(event) => setRepairAnchor(event.currentTarget)}>R Repair</Button>
-          <Button disabled={currentIndex === 0} onClick={() => move(-1)}>←</Button>
-          <Button disabled={!current || (currentIndex === entries.length - 1 && !nextCursor)} onClick={() => move(1)}>→</Button>
+          <Button disabled={busy || currentIndex === 0} onClick={() => move(-1)}>←</Button>
+          <Button disabled={busy || !current || (currentIndex === entries.length - 1 && !nextCursor)} onClick={() => move(1)}>→</Button>
           <Button disabled={!history.length || busy} onClick={() => void undo()}>U Undo</Button>
           <Button onClick={() => setHelpOpen(true)}>?</Button>
           {loadingMore && <CircularProgress size={20} />}

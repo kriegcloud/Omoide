@@ -1,3 +1,5 @@
+import { mutationBus } from "../stores/mutationBus";
+import { ListRevision, mergeUnique } from "../stores/listReconciliation";
 import { useUndoRefresh } from "../context/UndoContext";
 import { useCallback, useEffect, useRef, useState, useId } from "react";
 import { useInView } from "react-intersection-observer";
@@ -36,6 +38,10 @@ export function useCursorList<T extends { id: number }>(
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   const generationRef = useRef(0);
+  const removalSequence = useRef(0);
+  const countedRemovals = useRef(new Map<number, number>());
+  const additionalRemovals = useRef(0);
+  const revision = useRef(new ListRevision());
   const nextCursorRef = useRef<string | null>(null);
   const inFlightRef = useRef(false);
 
@@ -49,14 +55,22 @@ export function useCursorList<T extends { id: number }>(
         setHasMore(false);
       }
       const generation = generationRef.current;
+      const started = revision.current.revision;
+      const removedAtStart = removalSequence.current;
+      const additionalAtStart = additionalRemovals.current;
       inFlightRef.current = true;
       setIsLoading(true);
       setError(null);
       try {
         const page = await fetcher(cursor);
         if (generation !== generationRef.current) return;
-        setItems((prev) => (append ? [...prev, ...page.items] : page.items));
-        setTotal(page.total);
+        const incoming = revision.current.reconcile(page.items, started, !append);
+        setItems((prev) => (append ? mergeUnique(prev, incoming) : incoming));
+        const removedDuringRequest = new Set([...countedRemovals.current].filter(([, sequence]) => sequence > removedAtStart).map(([id]) => id));
+        const incomingIds = new Set(incoming.map(item => item.id));
+        for (const item of page.items) if (!incomingIds.has(item.id)) removedDuringRequest.add(item.id);
+        setTotal(Math.max(0, page.total - removedDuringRequest.size - (additionalRemovals.current - additionalAtStart)));
+        if (!append) for (const [id, sequence] of countedRemovals.current) if (sequence <= removedAtStart) countedRemovals.current.delete(id);
         nextCursorRef.current = page.next_cursor;
         setHasMore(Boolean(page.next_cursor));
         if (!append) setSelectedIds(new Set());
@@ -76,6 +90,7 @@ export function useCursorList<T extends { id: number }>(
 
   useEffect(() => {
     fetchPage(null, false);
+    return () => { generationRef.current += 1; };
   }, [fetchPage, refreshKey]);
 
   useEffect(() => {
@@ -108,6 +123,10 @@ export function useCursorList<T extends { id: number }>(
   const removeItems = useCallback(
     (ids: Iterable<number>, removedCount?: number) => {
       const idSet = ids instanceof Set ? ids : new Set(ids);
+      const sequence = ++removalSequence.current;
+      for (const id of idSet) countedRemovals.current.set(id, sequence);
+      additionalRemovals.current += Math.max(0, (removedCount ?? idSet.size) - idSet.size);
+      revision.current.remove(idSet);
       setItems((prev) => prev.filter((item) => !idSet.has(item.id)));
       setTotal((prev) => Math.max(0, prev - (removedCount ?? idSet.size)));
       setSelectedIds((prev) => {
@@ -120,6 +139,22 @@ export function useCursorList<T extends { id: number }>(
   );
 
   const refetch = useCallback(() => fetchPage(null, false), [fetchPage]);
+
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  useEffect(() => mutationBus.subscribe(event => {
+    if (event.type === "media:deleted") {
+      const visible = event.ids.filter(id => itemsRef.current.some(item => item.id === id));
+      revision.current.remove(event.ids);
+      removeItems(visible);
+    } else if (event.type === "media:updated") {
+      revision.current.patch(event.items);
+      const patches = new Map(event.items.map(item => [item.id, item]));
+      setItems(previous => previous.map(item => patches.has(item.id) ? { ...item, ...patches.get(item.id) } : item));
+    } else if (event.type === "media:moved" || (event.type === "list:invalidate" && event.prefix === "")) {
+      void refetch();
+    }
+  }), [removeItems, refetch]);
 
   const refreshId = useId();
   useUndoRefresh(`cursor-list:${refreshId}`, () => fetchPage(null, false, true));

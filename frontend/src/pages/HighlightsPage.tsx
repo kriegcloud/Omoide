@@ -1,17 +1,17 @@
+import { mutationBus } from "../stores/mutationBus";
+import { ListRevision } from "../stores/listReconciliation";
+import ListState from "../components/ListState";
 import { useUndoRefresh } from "../context/UndoContext";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import Masonry from "react-masonry-css";
 import {
-  Alert,
   Box,
   Chip,
-  CircularProgress,
   Container,
   Typography,
 } from "@mui/material";
 import StarIcon from "@mui/icons-material/Star";
 import MediaCard from "../components/MediaCard";
-import { EmptyState } from "../components/EmptyState";
 import { getHighlights, getHighlightYears } from "../services/features";
 import { HighlightYear, Media } from "../types";
 import { useSelection } from "../context/SelectionContext";
@@ -32,9 +32,39 @@ export default function HighlightsPage() {
   const [items, setItems] = useState<Media[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  useUndoRefresh(`highlights:${year}`, async () => {
-    if (year !== null) setItems(await getHighlights(year));
-  });
+  const generationRef = useRef(0);
+  const revisionRef = useRef(new ListRevision());
+  const refreshLocalRef = useRef<(prefix: string) => void>(() => {});
+  const [retryYears, setRetryYears] = useState(0);
+  useEffect(() => mutationBus.subscribe(event => {
+    if (event.type === "list:invalidate") { refreshLocalRef.current(event.prefix); return; }
+    if (event.type === "media:deleted") revisionRef.current.remove(event.ids);
+    else if (event.type === "media:updated" || event.type === "media:moved") revisionRef.current.patch(event.items);
+    else return;
+    setItems(previous => revisionRef.current.reconcile(previous, 0, false));
+  }), []);
+  const loadHighlights = useCallback(async () => {
+    const generation = ++generationRef.current;
+    const revision = revisionRef.current.revision;
+    if (year === null) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await getHighlights(year);
+      if (generation === generationRef.current) setItems(revisionRef.current.reconcile(data, revision, true));
+    } catch (err) {
+      if (generation === generationRef.current)
+        setError(err instanceof Error ? err.message : "Failed to load highlights");
+    } finally {
+      if (generation === generationRef.current) setIsLoading(false);
+    }
+  }, [year]);
+  useUndoRefresh(`highlights:${year}`, loadHighlights);
+  refreshLocalRef.current = prefix => {
+    if (!(prefix === "" || `highlights:${year}`.startsWith(prefix) || `highlights-${year}`.startsWith(prefix))) return;
+    if (year === null) setRetryYears(value => value + 1);
+    else void loadHighlights();
+  };
   const gridRef = useRef<HTMLDivElement>(null);
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
   const { marqueeRect, onItemClick } = useGridSelection<number>({
@@ -52,31 +82,29 @@ export default function HighlightsPage() {
   });
 
   useEffect(() => {
+    let cancelled = false;
+    setIsLoading(true);
+    setError(null);
     getHighlightYears()
       .then((data) => {
+        if (cancelled) return;
         setYears(data);
         if (data.length > 0) setYear(data[0].year);
         else setIsLoading(false);
       })
       .catch((err) => {
+        if (cancelled) return;
         setError(err instanceof Error ? err.message : "Failed to load years");
         setIsLoading(false);
       });
-  }, []);
+    return () => { cancelled = true; };
+  }, [retryYears]);
 
   useEffect(() => {
-    if (year === null) return;
-    setIsLoading(true);
-    setError(null);
-    getHighlights(year)
-      .then(setItems)
-      .catch((err) =>
-        setError(
-          err instanceof Error ? err.message : "Failed to load highlights"
-        )
-      )
-      .finally(() => setIsLoading(false));
-  }, [year]);
+    setItems([]);
+    void loadHighlights();
+    return () => { generationRef.current += 1; };
+  }, [loadHighlights]);
 
   return (
     <Container maxWidth="xl" sx={{ minHeight: "100vh", py: 4 }}>
@@ -103,23 +131,10 @@ export default function HighlightsPage() {
         ))}
       </Box>
 
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
-
-      {isLoading ? (
-        <Box textAlign="center" py={6}>
-          <CircularProgress />
-        </Box>
-      ) : items.length === 0 && !error ? (
-        <EmptyState
-          icon={<StarIcon />}
-          title="No highlights"
-          description="Scan and process some media first."
-        />
-      ) : (
+      <ListState loading={isLoading && items.length === 0} error={error}
+        empty={!isLoading && items.length === 0} emptyMessage="No highlights yet. Favorite some media to help choose highlights."
+        onRetry={() => { if (year === null) setRetryYears(value => value + 1); else void loadHighlights(); }} />
+      {items.length > 0 && (
         <Box ref={gridRef} sx={{ position: "relative" }}>
           <Masonry
             breakpointCols={breakpointColumnsObj}

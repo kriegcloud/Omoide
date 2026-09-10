@@ -41,7 +41,7 @@ import RepairDialog from "./RepairDialog";
 export const SelectionActionBar: React.FC = () => {
   const { selectedIds, clear, loadedCount, hasMore, listKey } = useSelection();
   const { push, refreshVisible } = useUndo();
-  const { removeItems } = useListStore();
+  const removeItems = useListStore(state => state.removeItems);
   const lastEditOps = useLastEditStore((state) => state.ops);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [albumDialogOpen, setAlbumDialogOpen] = useState(false);
@@ -76,7 +76,6 @@ export const SelectionActionBar: React.FC = () => {
     setBusy(true);
     try {
       const result = await bulkDeleteMedia(pendingDelete.ids, pendingDelete.action);
-      if (pendingDelete.listKey) removeItems(pendingDelete.listKey, result.processed_ids);
       clear();
       setPendingDelete(null);
       setSnackbar({ open: true, message: `Deleted ${result.removed}${result.skipped_ids.length ? `; ${result.skipped_ids.length} skipped` : ""}${result.errors.length ? `; ${result.errors.length} failed` : ""}`, severity: result.errors.length ? "error" : "success" });

@@ -49,6 +49,11 @@ type TaskEventsContextValue = {
 };
 
 const TaskEventsContext = createContext<TaskEventsContextValue | null>(null);
+type CompletionContextValue = Pick<TaskEventsContextValue,
+  "completionCounters" | "globalCompletionCount" | "subscribe">;
+const TaskCompletionContext = createContext<CompletionContextValue | null>(null);
+const isTerminal = (task: Task) =>
+  ["completed", "failed", "cancelled", "interrupted"].includes(task.status);
 
 async function safeFetchTask(id: string): Promise<Task | null> {
   try {
@@ -76,12 +81,16 @@ export function TaskEventsProvider({
     nonce: number;
   } | null>(null);
 
+  const generationRef = useRef(0);
+  const unresolvedRef = useRef(new Map<string, Task>());
+  const finishedIdsRef = useRef(new Set<string>());
   const prevTasksRef = useRef<Record<string, Task>>({});
   const recentIdsRef = useRef<Set<string> | null>(null);
   const pendingFetchRef = useRef<Promise<boolean> | null>(null);
   const subscribersRef = useRef(0);
   const pollTimeoutRef = useRef<number | null>(null);
   const pollingActiveRef = useRef(false);
+  const pollingCycleRef = useRef(0);
   const pausedRef = useRef(false);
   const failureCountRef = useRef(0);
   const isMountedRef = useRef(true);
@@ -90,28 +99,26 @@ export function TaskEventsProvider({
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      generationRef.current += 1;
+      pendingFetchRef.current = null;
     };
   }, []);
 
-  const applyFinishedTasks = useCallback(async (finished: Task[]) => {
-    if (!finished.length) return;
-
-    const resolved = await Promise.all(finished.map((task) => safeFetchTask(task.id)));
-    const resolvedTasks = resolved.filter(
-      (task): task is Task =>
-        Boolean(
-          task &&
-            (task.status === "completed" ||
-              task.status === "failed" ||
-              task.status === "cancelled" ||
-              task.status === "interrupted")
-        )
-    );
-    const completedTasks = resolvedTasks.filter(
-      (task): task is Task => Boolean(task && task.status === "completed")
-    );
-
-    if (!resolvedTasks.length || !isMountedRef.current) return;
+  const applyFinishedTasks = useCallback(async (finished: Task[], generation: number) => {
+    finished.forEach(task => {
+      if (!finishedIdsRef.current.has(task.id)) unresolvedRef.current.set(task.id, task);
+    });
+    const resolved = await Promise.all(Array.from(unresolvedRef.current.values()).map(
+      task => isTerminal(task) ? Promise.resolve(task) : safeFetchTask(task.id)
+    ));
+    if (!isMountedRef.current || generation !== generationRef.current) return;
+    const resolvedTasks = resolved.filter((task): task is Task => Boolean(task && isTerminal(task)));
+    resolvedTasks.forEach(task => {
+      unresolvedRef.current.delete(task.id);
+      finishedIdsRef.current.add(task.id);
+    });
+    const completedTasks = resolvedTasks.filter(task => task.status === "completed");
+    if (!resolvedTasks.length) return;
 
     setLastFinishedTask((previous) => ({
       task: resolvedTasks[0],
@@ -141,22 +148,18 @@ export function TaskEventsProvider({
     setGlobalCompletionCount((value) => value + completedTypes.length);
   }, []);
 
-  const fetchTasks = useCallback(async (): Promise<boolean> => {
-    if (pendingFetchRef.current) {
-      try {
-        await pendingFetchRef.current;
-      } catch {
-        // Previous fetch error already logged; continue.
-      }
-    }
-
+  const fetchTasks = useCallback((): Promise<boolean> => {
+    // All callers await the same in-flight poll. Waiting and then starting a
+    // new request lets several waiting callers bypass the lock together.
+    if (pendingFetchRef.current) return pendingFetchRef.current;
+    const generation = generationRef.current;
     const run = (async () => {
       try {
         const [tasks, recent] = await Promise.all([
           getActiveTasks(),
           getRecentTasks(),
         ]);
-        if (!isMountedRef.current) return true;
+        if (!isMountedRef.current || generation !== generationRef.current) return true;
 
         setActiveTasks(tasks);
         setRecentTasks(recent);
@@ -183,9 +186,7 @@ export function TaskEventsProvider({
           ...newlyRecent,
           ...disappeared.filter((task) => !newlyRecentIds.has(task.id)),
         ];
-        if (finished.length) {
-          await applyFinishedTasks(finished);
-        }
+        await applyFinishedTasks(finished, generation);
         return true;
       } catch (error) {
         if (import.meta.env.DEV) {
@@ -196,17 +197,15 @@ export function TaskEventsProvider({
     })();
 
     pendingFetchRef.current = run;
-    try {
-      return await run;
-    } finally {
-      if (pendingFetchRef.current === run) {
-        pendingFetchRef.current = null;
-      }
-    }
+    void run.finally(() => {
+      if (pendingFetchRef.current === run) pendingFetchRef.current = null;
+    });
+    return run;
   }, [applyFinishedTasks]);
 
   const pollTick = useCallback(async () => {
     if (!pollingActiveRef.current) return;
+    const cycle = pollingCycleRef.current;
     if (
       typeof document !== "undefined" &&
       document.visibilityState === "hidden"
@@ -217,6 +216,7 @@ export function TaskEventsProvider({
     }
 
     const success = await fetchTasks();
+    if (cycle !== pollingCycleRef.current) return;
     failureCountRef.current = success ? 0 : failureCountRef.current + 1;
 
     if (!pollingActiveRef.current || pausedRef.current) return;
@@ -249,6 +249,7 @@ export function TaskEventsProvider({
   const stopPolling = useCallback(() => {
     if (typeof window === "undefined") return;
     pollingActiveRef.current = false;
+    pollingCycleRef.current += 1;
     pausedRef.current = false;
     document.removeEventListener("visibilitychange", handleVisibilityChange);
     if (pollTimeoutRef.current !== null) {
@@ -301,9 +302,14 @@ export function TaskEventsProvider({
     ]
   );
 
+  const completionValue = useMemo(() => ({ completionCounters, globalCompletionCount, subscribe }),
+    [completionCounters, globalCompletionCount, subscribe]);
+
   return (
     <TaskEventsContext.Provider value={value}>
-      {children}
+      <TaskCompletionContext.Provider value={completionValue}>
+        {children}
+      </TaskCompletionContext.Provider>
     </TaskEventsContext.Provider>
   );
 }
@@ -325,7 +331,10 @@ export function useTaskEvents(shouldSubscribe = true) {
 }
 
 export function useTaskCompletionVersion(taskTypes?: TaskType[]) {
-  const { completionCounters, globalCompletionCount } = useTaskEvents();
+  const ctx = useContext(TaskCompletionContext);
+  if (!ctx) throw new Error("useTaskCompletionVersion must be used within a TaskEventsProvider");
+  const { completionCounters, globalCompletionCount, subscribe } = ctx;
+  useEffect(() => subscribe(), [subscribe]);
   if (!taskTypes || taskTypes.length === 0) {
     return globalCompletionCount;
   }

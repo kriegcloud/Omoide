@@ -174,7 +174,9 @@ function grid(t, { nested = false, selected = [], selecting = true } = {}) {
     return tile;
   });
   const runtime = hooks();
-  const { useGridSelection } = load('hooks/useMarqueeSelection.ts', runtime);
+  const registrations = [];
+  const register = read => { registrations.push(read); return () => registrations.splice(registrations.indexOf(read), 1); };
+  const { useGridSelection } = load('hooks/useMarqueeSelection.ts', runtime, { '../hotkeys/useHotkey': { useHotkeyRegistry: () => register } });
   const changes = [];
   const options = { containerRef: { current: container }, selecting, selectedIds: new Set(selected),
     onSelectionChange(ids) { changes.push(new Set(ids)); options.selectedIds = ids; } };
@@ -186,7 +188,7 @@ function grid(t, { nested = false, selected = [], selecting = true } = {}) {
       pageX: 10, pageY: 110, clientX: 10, clientY: 110 }));
     env.win.emit('pointermove', gesture({ pointerId: 1, clientX: x, clientY: y, pageX: x, pageY: y }));
   }
-  return { ...env, runtime, container, scroller, changes, options, render, hook, drag };
+  return { ...env, runtime, container, scroller, changes, options, render, hook, drag, registrations };
 }
 
 test('checkbox Shift-click preserves modifiers and selects the visual range', (t) => {
@@ -464,4 +466,24 @@ test('virtualized scrolling retains previously intersected tiles after they unmo
   g.observers.at(-1).callback([{ type: 'childList', addedNodes: [], removedNodes: removed }]);
   g.tick();
   assert.deepEqual([...g.changes.at(-1)].sort(), [1, 2, 3, 4, 5, 6]);
+});
+
+test('virtualized Shift range uses loaded ids even when the anchor is unmounted', (t) => {
+  const g = grid(t);
+  g.options.orderedIds = [1, 2, 3, 4, 5, 6];
+  g.hook = g.render();
+  g.hook.onItemClick(1, gesture());
+  g.container.children = g.container.children.slice(3);
+  g.hook.onItemClick(6, gesture({ shiftKey: true }));
+  assert.deepEqual([...g.changes.at(-1)], [1, 2, 3, 4, 5, 6]);
+});
+
+
+test('virtualized Select all includes loaded ids beyond mounted cells', (t) => {
+  const g = grid(t);
+  g.options.orderedIds = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+  g.hook = g.render();
+  g.registrations.map(read => read()).find(entry => entry.bindings[0].key === 'a').handler(
+    gesture({ key: 'a', ctrlKey: true, target: g.container }));
+  assert.deepEqual([...g.changes.at(-1)], [1, 2, 3, 4, 5, 6, 7, 8, 9]);
 });

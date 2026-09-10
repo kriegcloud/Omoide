@@ -1,3 +1,4 @@
+import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
 import {
   MissingBulkActionPayload,
@@ -58,7 +59,9 @@ const postMissingAction = async <T>(
     const error = await response.json().catch(() => ({}));
     throw new Error(error.detail || "Missing media action failed");
   }
-  return response.json();
+  const result = await response.json();
+  mutationBus.emit({ type: "list:invalidate", prefix: "" });
+  return result;
 };
 
 export const confirmMissing = (payload: MissingBulkActionPayload) =>

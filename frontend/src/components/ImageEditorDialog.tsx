@@ -167,7 +167,7 @@ interface ImageEditorDialogProps {
   onSaved?: (detail: MediaDetail, mode: "copy" | "overwrite") => void;
   mode?: "write" | "virtual";
   loadableDesignState?: FilerobotDesignState | null;
-  onOpsReady?: (ops: EditOp[], designState: FilerobotDesignState) => void;
+  onOpsReady?: (ops: EditOp[], designState: FilerobotDesignState) => void | Promise<void>;
 }
 
 export default function ImageEditorDialog({
@@ -481,7 +481,7 @@ export default function ImageEditorDialog({
         throw new Error("Make at least one image change before saving.");
       }
       if (mode === "virtual") {
-        onOpsReady?.(ops, freshState);
+        await onOpsReady?.(ops, freshState);
         onClose();
         return;
       }
