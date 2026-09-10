@@ -91,6 +91,7 @@ test("global Escape cancels an active media marquee before clearing its selectio
   window.cancelAnimationFrame = () => {};
   window.setTimeout = () => {};
   window.scrollBy = () => {};
+  window.getComputedStyle = () => ({ overflowY: "visible", overflow: "visible" });
   const container = new ElementStub();
   const tile = new ElementStub();
   tile.dataset.selectableId = "1";
@@ -104,12 +105,14 @@ test("global Escape cancels an active media marquee before clearing its selectio
     toggleSelecting() {},
   };
   const selectionModule = { useSelection: () => selection, useSelectionList() {} };
+  // The merged hook (Lane K) resolves scrollports against document and observes resizes.
+  const document = { body: new ElementStub(), documentElement: new ElementStub() };
   const useGridSelection = load("hooks/useMarqueeSelection.ts", {
     react: state.react,
     "react-router-dom": { useLocation: () => ({ pathname: "/blur" }) },
     "../context/SelectionContext": selectionModule,
     "../hotkeys/useHotkey": { useHotkeyRegistry: () => register },
-  }, { window }).useGridSelection;
+  }, { window, document, ResizeObserver: class { observe() {} disconnect() {} }, getComputedStyle: () => ({ overflowY: "visible", overflow: "visible" }) }).useGridSelection;
   const containerRef = { current: container };
   const render = () => state.render(() => useGridSelection({
     containerRef, selecting: selection.isSelecting,

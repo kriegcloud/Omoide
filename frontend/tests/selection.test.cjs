@@ -63,11 +63,19 @@ function load(relative, runtime, overrides = {}) {
     react: runtime.api,
     '@mui/material': ui,
     '@mui/material/styles': { alpha: (color) => color },
-    'react-router-dom': { Link: 'RouterLink', useLocation: () => ({ pathname: '/images' }), useNavigate: () => () => {} },
+    'react-router-dom': {
+      Link: 'RouterLink',
+      useLocation: () => ({ pathname: '/images' }),
+      useNavigate: () => () => {},
+      // Review pages keep their folder filter in the URL (Lane J).
+      useSearchParams: () => [new URLSearchParams(), () => {}],
+    },
     '../context/SelectionContext': { useSelection: () => ({ setSelected() {}, isSelecting: false }), useSelectionList() {} },
     '../config': { API: '/api' },
     '../urlUtils': { encodeFilePath: encodeURIComponent },
     './SelectableTileFrame': { default: 'SelectableTileFrame', __esModule: true },
+    // Hotkey registry is exercised by src/hotkeys/tests; here it is a no-op that returns an unsubscribe.
+    '../hotkeys/useHotkey': { __esModule: true, useHotkeyRegistry: () => () => () => {}, useHotkey() {}, useHotkeys() {} },
     '../hooks/useMarqueeSelection': { ...loadHookHelpers(), __esModule: true },
     ...overrides,
   };
@@ -257,6 +265,7 @@ for (const page of ['Blurry', 'LowResolution', 'NoExifDate', 'ShortVideos', 'Unt
       '../TaskEventsContext': { useTaskCompletionVersion: () => 0, useTaskEvents: () => ({ activeTasks: [] }) },
       '../components/RerunProcessorsDialog': { RerunProcessorsDialog: 'RerunProcessorsDialog' },
       '../components/BulkResolveToolbar': { __esModule: true, default: 'Toolbar' },
+      '../components/FolderFilterSelect': { __esModule: true, default: 'FolderFilterSelect' },
       '../components/ReviewMediaGrid': { __esModule: true, default: 'Grid' },
       '../components/SelectableMediaTile': { __esModule: true, default: 'Tile' },
       '../formatUtils': { formatBytes: String, formatDuration: String },
