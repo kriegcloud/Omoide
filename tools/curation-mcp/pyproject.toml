@@ -1,0 +1,19 @@
+[project]
+name = "omoide-curation-mcp"
+version = "0.1.0"
+description = "Local stdio MCP adapter for the Omoide curation API"
+requires-python = ">=3.13"
+dependencies = [
+    "httpx==0.28.1",
+    "mcp==2.2.0",
+]
+
+[project.scripts]
+omoide-curation-mcp = "omoide_curation_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/omoide_curation_mcp"]
