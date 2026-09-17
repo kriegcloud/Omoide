@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from app.curation_models import (CurationArtifact, CurationCaption, CurationDataset,
     CurationEvent, CurationGrant, CurationOperation, CurationReview, CurationSource)
 from app.services.curation_artifacts import (TRANSFORM, artifact_bytes, canonical,
-    normalized, publish_artifact, source_bytes)
+    publish_artifact, source_bytes)
 from app.services.curation_media import materialize_media
 from app.services.curation_policy import (PRODUCTION_POLICY_VERSION, authorize, dataset_for,
     digest, fail, mode, require_revision)
