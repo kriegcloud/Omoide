@@ -399,6 +399,11 @@ def cancel_task(
     task.finished_at = datetime.now(timezone.utc)
     session.add(task)
     safe_commit(session)
+    # A cancelled curation job also cancels its admitted operation, unless that
+    # operation already published: published export bytes are never withdrawn.
+    from app.services.curation_jobs import on_task_cancelled
+
+    on_task_cancelled(session, task)
     return task
 
 

@@ -13,6 +13,14 @@ FROM ${OMOIDE_BASE_IMAGE}
 ENV OMOIDE_WORKSTATION_BROWSER_HARDENING=true
 
 USER root
+# Passkey verifier dependencies added by the curation authority work. Versions
+# are the uv.lock pins; --no-deps forbids any unpinned transitive resolution and
+# the build fails loudly if the set is incomplete instead of at first enrollment.
+RUN pip install --no-cache-dir --no-deps \
+        webauthn==3.0.0 cbor2==6.1.4 cryptography==50.0.1 pyopenssl==26.4.0 \
+        pyasn1==0.6.4 pyasn1-modules==0.4.2 cffi==2.0.0 pycparser==3.0 && \
+    python -c "import webauthn, cbor2, OpenSSL, cryptography" && \
+    pip check
 RUN rm -rf /app/static && \
     mkdir -p /app/static /app/media/T7 /app/media/T7XFER && \
     chown -R appuser:appgroup /app/static /app/media

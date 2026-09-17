@@ -40,6 +40,7 @@ const PlaceMediaPage = lazy(() => import("./pages/PlaceMediaPage"));
 const DatasetsPage = lazy(() => import("./pages/DatasetsPage"));
 const DatasetDetailPage = lazy(() => import("./pages/DatasetDetailPage"));
 const DatasetTriagePage = lazy(() => import("./pages/DatasetTriagePage"));
+const CurationReviewPage = lazy(() => import("./pages/CurationReviewPage"));
 const RepairsPage = lazy(() => import("./pages/RepairsPage"));
 
 const RouteFallback = () => (
@@ -102,6 +103,8 @@ export const AppRoutes = () => {
           <Route path="/datasets" element={<DatasetsPage />} />
           <Route path="/dataset/:id" element={<DatasetDetailPage />} />
           <Route path="/dataset/:id/triage" element={<DatasetTriagePage />} />
+          <Route path="/curation" element={<CurationReviewPage />} />
+          <Route path="/curation/:id" element={<CurationReviewPage />} />
           <Route path="/repairs" element={<RepairsPage />} />
           <Route
             path="/blur"
