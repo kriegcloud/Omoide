@@ -1,7 +1,7 @@
 """Trusted local, exact-manifest production registration; no HTTP grant minting."""
 from datetime import UTC, datetime
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
@@ -12,6 +12,7 @@ from sqlmodel import select
 from app.curation_models import CurationDataset, CurationSource
 from app.services.curation_artifacts import (canonical, directory, probe_store_capabilities, read_at,
     safe_parts)
+from app.services.curation_media import VIDEO_EXTENSIONS
 from app.services.curation_policy import digest, fail
 from app.services.source_locations import (PRODUCTION_POLICY_VERSION, compare_source_volume, ensure_disjoint_roots,
     observe_source_volume, registered_source_volume, verify_source_descriptor, verify_source_volume)
@@ -54,6 +55,15 @@ class SourceFileManifest(ClosedManifest):
     ancestry: AncestryAttestation
 
 
+class MediaPolicyManifest(ClosedManifest):
+    """Operator-set media policy, pinned into dataset policy at registration.
+
+    Video frame materialization is off unless this object turns it on, and the
+    flag is a registration-time decision: no HTTP route can raise it afterwards.
+    """
+    video_frame_materialization: bool = False
+
+
 class SourceRegistrationManifest(ClosedManifest):
     schema_version: Literal['omoide.source-registration/v1']
     name: Annotated[str, StringConstraints(min_length=1, max_length=256)]
@@ -63,6 +73,7 @@ class SourceRegistrationManifest(ClosedManifest):
     expected_filesystem_uuid: Annotated[str, StringConstraints(pattern=r'^[A-Za-z0-9.-]{1,128}$')]
     expected_mountpoint: Text
     attestation: OperatorAttestation
+    media_policy: MediaPolicyManifest = Field(default_factory=MediaPolicyManifest)
     files: list[SourceFileManifest] = Field(min_length=1, max_length=100)
 
 
@@ -114,6 +125,12 @@ def _validate_manifest(value) -> SourceRegistrationManifest:
                 prior = mapping.setdefault(key, item.split)
                 if prior != item.split:
                     fail('registration_split_conflict')
+    videos = [item.relative_path for item in manifest.files
+              if PurePosixPath(item.relative_path).suffix.lower() in VIDEO_EXTENSIONS]
+    if videos and not manifest.media_policy.video_frame_materialization:
+        # Registering a video is pointless while its only materialization path is
+        # refused; say so at registration rather than at the first frame request.
+        fail('video_materialization_disabled', 403)
     visiting, visited = set(), set()
     def visit(sha):
         if sha in visiting:
@@ -161,7 +178,11 @@ def register_source_manifest(session: Session, manifest: dict | SourceRegistrati
                 'received_at': datetime.now(UTC).isoformat(),
                 'attestation': spec.attestation.model_dump(), 'source_assertions': {}},
             'identity': {'matching_enabled': False, 'frame_mining_enabled': False,
-                         'outlier_enabled': False}}
+                         'outlier_enabled': False},
+            'media': {'video_frame_materialization': spec.media_policy.video_frame_materialization,
+                      'allowed_video_extensions': list(VIDEO_EXTENSIONS),
+                      'basis': 'operator_attestation', 'generative_derivatives': False,
+                      'repair_and_mask_materialization': False}}
         dataset = CurationDataset(name=spec.name, subject_id=spec.subject_id,
             policy_version=PRODUCTION_POLICY_VERSION,
             source_root=spec.source_root, source_device=source_stat.st_dev,
