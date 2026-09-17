@@ -1,5 +1,4 @@
 """Descriptor-anchored, bounded still reads and deterministic fixture transforms."""
-import io
 import json
 import os
 import stat
@@ -8,19 +7,27 @@ from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 import PIL
-from PIL import Image, ImageOps, UnidentifiedImageError, features
+from PIL import features
 
 from app.services.curation_policy import digest, fail
 
 MAX_BYTES = 16 * 1024 * 1024
 MAX_PIXELS = 16_000_000
 MAX_ARTIFACT_BYTES = 2 * 1024 * 1024
-TRANSFORM = {'version': 'rgb-png-v1', 'formats': ['JPEG', 'PNG', 'WEBP'],
-             'orientation': 'exif-transpose-once', 'color': 'untagged-rgb-assumed-srgb',
-             'alpha': 'reject', 'icc': 'reject', 'resize': 'none',
+# v2 widens the accepted input set (ICC, 16-bit, palette, opaque alpha, CMYK,
+# HEIF, explicitly requested frames) without changing how an already supported
+# untagged RGB/grayscale still is encoded: those artifacts keep their exact
+# bytes. The version and the media-module digest are part of the cache key, so
+# re-materializing a v1 source yields a new cache entry with identical bytes.
+TRANSFORM = {'version': 'rgb-png-v2', 'formats': ['JPEG', 'PNG', 'WEBP', 'HEIF'],
+             'frame_indexed_formats': ['GIF', 'TIFF'],
+             'orientation': 'exif-transpose-once', 'color': 'declared-per-artifact',
+             'alpha': 'reject-unless-fully-opaque', 'icc': 'convert-to-srgb-perceptual',
+             'bit_depth': 'uint16-reduced-to-uint8-disclosed', 'resize': 'none',
              'encoder': 'PNG', 'compress_level': 9, 'optimize': False,
              'pillow': PIL.__version__,
              'code_sha256': digest(Path(__file__).read_bytes()),
+             'media_code_sha256': digest((Path(__file__).parent / 'curation_media.py').read_bytes()),
              'codec_versions': {name: features.version(name) for name in ('jpg', 'zlib', 'webp')}}
 
 
@@ -137,36 +144,14 @@ def source_bytes(dataset, source, hook=None):
     return data
 
 
-def normalized(data: bytes):
-    try:
-        with Image.open(io.BytesIO(data)) as opened:
-            if opened.format not in TRANSFORM['formats']:
-                fail('unsupported_format')
-            if opened.width * opened.height > MAX_PIXELS:
-                fail('decoded_image_too_large')
-            if getattr(opened, 'n_frames', 1) != 1:
-                fail('unsupported_animation')
-            if opened.info.get('icc_profile'):
-                fail('unsupported_icc')
-            if opened.mode not in {'RGB', 'L'} or 'transparency' in opened.info:
-                fail('unsupported_color_or_alpha')
-            original_size = list(opened.size)
-            orientation = opened.getexif().get(274, 1)
-            output = ImageOps.exif_transpose(opened).convert('RGB')
-            output.info.clear()
-            stream = io.BytesIO()
-            output.save(stream, format='PNG', compress_level=9, optimize=False)
-            encoded = stream.getvalue()
-            if len(encoded) > MAX_ARTIFACT_BYTES:
-                fail('artifact_too_large')
-            pixels = canonical({'width': output.width, 'height': output.height, 'mode': 'RGB'}) + output.tobytes()
-            return encoded, digest(pixels), output.width, output.height, {
-                'transform': TRANSFORM, 'source_dimensions': original_size,
-                'output_dimensions': list(output.size), 'source_exif_orientation': orientation,
-                'uncertainties': ['Untagged RGB is assumed sRGB; no color accuracy claim.'],
-            }
-    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
-        fail('corrupt_or_unsupported_image')
+def normalized(data: bytes, frame=None):
+    """Normalize one still. Format/colour/frame handling lives in curation_media.
+
+    Imported lazily so the media module can depend on this module's bounded read
+    and publication primitives without an import cycle.
+    """
+    from app.services.curation_media import normalize_still
+    return normalize_still(data, frame)
 
 
 def ensure_directory(parent_fd: int, name: str) -> int:
