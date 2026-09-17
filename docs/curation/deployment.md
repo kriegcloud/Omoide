@@ -16,6 +16,7 @@ host does.
 | Compose passes `OMOIDE_CURATION_MODE`, `OMOIDE_CURATION_RP_ID`, `OMOIDE_CURATION_ORIGIN` from `.env`, defaulting to `disabled` | Production review stays off unless the operator opts in per deployment. |
 | `make backup` calls `scripts/backup_workstation_database.py` | The previous target passed one quoted string as the database filename and never produced a backup. |
 | Operator CLI gains `verify` and `reattest` | See *Runtime identity* below. |
+| Operator CLI derives the expected Alembic head instead of hard-coding it | A later additive curation migration would otherwise leave the CLI refusing a correctly migrated database. It still never migrates. |
 
 ## Origin and relying party
 
@@ -86,19 +87,33 @@ point as the container user.
 
 ## Backup, migration, restore, rollback
 
-Both curation migrations are additive (fourteen new tables, no existing table
+All three curation migrations are additive (fourteen new tables, plus five
+nullable or defaulted columns on `curation_operation`; no existing column is
 altered) and applied in well under a second on the rehearsal copy. SQLite DDL is
 non-transactional, so the backup is the rollback:
 
 1. Stop the container: `docker compose down` (in-process tasks end; the `stop_grace_period` is two minutes).
 2. Back up: `make backup` (or `python3 scripts/backup_workstation_database.py --data-dir "$HOST_DATA_DIR"`). It opens the source read-only, uses the SQLite backup API (WAL-safe), runs `quick_check`, fsyncs and prints the backup path. Record its SHA-256.
-3. Build and start the new image: `docker compose up -d --build`. The container's command runs `alembic upgrade head`, then the application lifespan re-runs it idempotently. `GET /api/health` reports `"migrations": "60718293a4b5"` when done.
-4. Verify: `PRAGMA quick_check` on the live file, `SELECT count(*) FROM media` unchanged, `alembic_version` = `60718293a4b5`.
+3. Build and start the new image: `docker compose up -d --build`. The container's command runs `alembic upgrade head`, then the application lifespan re-runs it idempotently. `GET /api/health` reports `"migrations": "718293a4b5c6"` when done.
+4. Verify: `PRAGMA quick_check` on the live file, `SELECT count(*) FROM media` unchanged, `alembic_version` = `718293a4b5c6` (confirm with `alembic heads`, which must print exactly one head).
 5. Rollback: `docker compose down`, copy the backup over `database/omoide.db` (remove any stale `-wal`/`-shm` next to it), start the previous image tag. The previous image does not know the new revision and fails loudly on a migrated database, which is why the file restore is the rollback rather than `alembic downgrade` (the downgrade refuses populated tables).
 
 The frontend is served from `$HOST_DATA_DIR/static`, which shadows the copy in
 the image; run `scripts/deploy-frontend.sh` once the container is up so the
 curation pages exist on disk.
+
+## Watching and recovering curation jobs
+
+Materialize and export execution is a shared `ProcessingTask`
+(`curation_materialize` / `curation_export`, `params.operation_id`), so admitted
+operations appear in `GET /api/tasks/` with progress, and
+`POST /api/tasks/{id}/cancel` stops one that has not published yet. After an
+unclean container stop, startup reconciles uncertain operations before the
+generic stale-task cleanup: an export whose directory already verifies is marked
+succeeded and never re-run, anything else becomes resumable. With
+`scan.auto_resume_interrupted_tasks` on (it is, on this workstation) those resume
+automatically; otherwise use `POST /api/tasks/{id}/resume`. Full behaviour:
+[task-execution.md](task-execution.md).
 
 ## Legacy review stamping while production authority is active
 

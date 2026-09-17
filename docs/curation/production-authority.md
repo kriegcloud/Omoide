@@ -134,7 +134,9 @@ revocation without rewriting the earlier bytes or receipt.
 The new migration is `60718293a4b5`, descending from fixture head `5f60718293a4`.
 It adds public credential/challenge records and review presence evidence. Empty
 upgrade/downgrade is supported; populated authority/evidence downgrade is refused.
-Disabling the feature retains all history and output.
+Disabling the feature retains all history and output. A later additive migration,
+`718293a4b5c6`, adds the operation task link and worker lease described in
+[task-execution.md](task-execution.md); it changes no authority rule.
 
 ## Scoped verification
 
