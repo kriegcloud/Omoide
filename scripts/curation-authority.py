@@ -7,7 +7,25 @@ from pathlib import Path
 import stat
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+
+def expected_head() -> str:
+    """The single Alembic head this checkout ships, read from the script directory.
+
+    Derived rather than hard-coded so a later additive curation migration does
+    not silently leave this CLI refusing a correctly migrated database.
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config(str(ROOT / 'alembic.ini'))
+    config.set_main_option('script_location', str(ROOT / 'alembic'))
+    heads = ScriptDirectory.from_config(config).get_heads()
+    if len(heads) != 1:
+        raise RuntimeError('This checkout does not have exactly one Alembic head.')
+    return heads[0]
 
 
 def main():
@@ -53,10 +71,12 @@ def main():
     engine = create_engine(URL.create('sqlite', database=database.as_uri(),
                                      query={'mode': 'rw', 'uri': 'true'}))
     try:
+        head = expected_head()
         with engine.connect() as connection:
             heads = connection.execute(text('SELECT version_num FROM alembic_version')).scalars().all()
-            if heads != ['60718293a4b5']:
-                parser.error('The database must have the reviewed curation authority migration; this CLI never migrates it.')
+            if heads != [head]:
+                parser.error('The database must be migrated to this checkout\'s single curation head '
+                             '(' + head + '); this CLI never migrates it.')
         with Session(engine) as session:
             if args.command == 'register':
                 from app.services.curation_registration import register_source_manifest
