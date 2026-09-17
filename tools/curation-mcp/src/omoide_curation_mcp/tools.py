@@ -263,35 +263,21 @@ async def materialize(api: CurationApi, args: MaterializeInput) -> Outcome:
 
 
 async def caption_propose(api: CurationApi, args: CaptionProposeInput) -> Outcome:
-    body = {'artifact_id': args.artifact_id, 'text': args.text, 'expected_revision': args.expected_revision}
-    request_digest = digest({'dataset_id': args.dataset_id, **body})
-    replay = api_caption_replay(api, args.dataset_id, args.idempotency_key, request_digest)
-    if replay is not None:
-        return Outcome({**replay, 'idempotency': {**replay['idempotency'], 'replayed': True}})
+    body = {'artifact_id': args.artifact_id, 'text': args.text, 'expected_revision': args.expected_revision,
+            'idempotency_key': args.idempotency_key}
     detail = expect_dict(await api.request_json(
         'POST', f'/api/curation/datasets/{segment(args.dataset_id)}/captions', body=body))
     row = item_for(detail, artifact_id=args.artifact_id)
-    structured = {
+    # Omoide records the key with a caption operation: a replay returns the
+    # draft unchanged (no new revision); a different payload is refused upstream.
+    replayed = detail.get('replayed') is True
+    return Outcome({
         **dataset_summary(detail),
         'item': item_view(row) if row else None,
         'caption_sha256': hashlib.sha256(args.text.encode()).hexdigest(),
-        'idempotency': {'key': args.idempotency_key, 'scope': 'adapter-process', 'durable': False,
-                        'replayed': False,
-                        'note': 'The caption route carries no server-side idempotency key, so replay '
-                                'protection here is process-local. A duplicate submission after an '
-                                'adapter restart is refused by the application as revision_conflict.'},
-    }
-    api.caption_replays[(args.dataset_id, args.idempotency_key)] = (request_digest, structured)
-    return Outcome(structured)
-
-
-def api_caption_replay(api: CurationApi, dataset_id: str, key: str, request_digest: str) -> dict | None:
-    stored = api.caption_replays.get((dataset_id, key))
-    if stored is None:
-        return None
-    if stored[0] != request_digest:
-        raise CurationError('idempotency_conflict')
-    return stored[1]
+        'idempotency': {'key': args.idempotency_key, 'scope': 'omoide-operation', 'durable': True,
+                        'replayed': replayed},
+    })
 
 
 async def export_admit(api: CurationApi, args: ExportAdmitInput) -> Outcome:

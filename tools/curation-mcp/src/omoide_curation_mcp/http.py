@@ -26,7 +26,6 @@ class CurationApi:
         self._token: str | None = None
         # Process-local replay map for the one mutating route that takes no
         # server-side idempotency key. Never a substitute for durable admission.
-        self.caption_replays: dict[tuple[str, str], tuple[str, dict]] = {}
         self._client = httpx.AsyncClient(
             base_url=config.base_url,
             timeout=httpx.Timeout(config.timeout_seconds, connect=10.0),

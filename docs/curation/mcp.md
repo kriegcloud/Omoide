@@ -74,15 +74,13 @@ inputs, exactly as in the HTTP contract.
 ### Semantics
 
 - **Idempotency keys** are required on every mutating tool, 8–128 characters of
-  `[A-Za-z0-9_-]`. `materialize` and `export_admit` forward the key to Omoide,
-  where admission is durable: the same key with the same payload replays the
-  same operation and the same receipt, and the same key with a different
-  payload is `idempotency_conflict`. The caption route takes no key, so
-  `caption_propose` enforces replay **inside the adapter process** and says so
-  in its receipt (`idempotency.durable: false`); after an adapter restart a
-  duplicate submission is refused by the application as `revision_conflict`
-  instead. Closing that gap properly means an idempotency key on the caption
-  route, which is an application change, not an adapter change.
+  `[A-Za-z0-9_-]`. `materialize`, `caption_propose` and `export_admit` forward the
+  key to Omoide, where admission is durable: the same key with the same payload
+  replays the same operation and the same receipt, and the same key with a
+  different payload is `idempotency_conflict`. The caption route records a
+  `caption` operation for the key (optional in the API so the browser keeps
+  its behaviour), so a replay creates no new caption revision even after an
+  adapter restart.
 - **Cancellation** at the protocol level cancels the in-flight HTTP call only.
   Omoide operations are durable and outlive the adapter: a cancelled
   `materialize` or `export_admit` may still have committed. Recovery is

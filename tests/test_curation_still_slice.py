@@ -169,6 +169,33 @@ class StillSliceTests(unittest.TestCase):
             self.expect_code('review_required', admit_export, session, self.agent, self.dataset_id,
                 ExportInput(expected_revision=new['revision'], idempotency_key='blocked-export'))
 
+    def test_caption_idempotency_key_replays_and_conflicts_durably(self):
+        state = self.prepare(False)
+        artifact_id = state['items'][0]['artifact_id']
+        with Session(self.engine) as session:
+            first = add_caption(session, self.agent, self.dataset_id, CaptionInput(artifact_id=artifact_id,
+                text='Keyed caption', expected_revision=state['revision'], idempotency_key='caption-key-1'))
+            replay = add_caption(session, self.agent, self.dataset_id, CaptionInput(artifact_id=artifact_id,
+                text='Keyed caption', expected_revision=state['revision'], idempotency_key='caption-key-1'))
+            self.assertEqual(replay['revision'], first['revision'], 'a replay creates no revision')
+            self.assertEqual((first['replayed'], replay['replayed']), (False, True))
+            self.assertEqual(session.exec(select(CurationCaption).where(CurationCaption.text == 'Keyed caption')).all().__len__(), 1)
+            operation = session.exec(select(CurationOperation).where(CurationOperation.kind == 'caption')).one()
+            self.assertEqual((operation.status, operation.idempotency_key, operation.snapshot['caption_sha256']),
+                             ('succeeded', 'caption-key-1', digest(b'Keyed caption')))
+            self.expect_code('idempotency_conflict', add_caption, session, self.agent, self.dataset_id,
+                CaptionInput(artifact_id=artifact_id, text='Different text', expected_revision=first['revision'],
+                             idempotency_key='caption-key-1'))
+            # A stale expected revision under a fresh key is still a conflict; without a key, behaviour is unchanged.
+            self.expect_code('revision_conflict', add_caption, session, self.agent, self.dataset_id,
+                CaptionInput(artifact_id=artifact_id, text='Late', expected_revision=state['revision'],
+                             idempotency_key='caption-key-2'))
+            second = add_caption(session, self.agent, self.dataset_id, CaptionInput(artifact_id=artifact_id,
+                text='Unkeyed caption', expected_revision=first['revision']))
+            self.assertEqual(second['revision'], first['revision'] + 1)
+            self.assertNotIn('replayed', second, 'unkeyed callers see the unchanged contract')
+            self.assertEqual(len(session.exec(select(CurationOperation).where(CurationOperation.kind == 'caption')).all()), 1)
+
     def test_reject_and_defer_are_not_acceptance(self):
         state = self.prepare(False)
         with Session(self.engine) as session:

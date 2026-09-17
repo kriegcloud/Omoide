@@ -347,14 +347,14 @@ class CurationFlowTests(unittest.TestCase):
             self.assertIsNone(tail['next_cursor'])
             stale_cursor = page['next_cursor']
 
-            # --- captions: proposals only, with process-local replay protection
+            # --- captions: proposals only, with a durable application idempotency key
             artifacts = seen
             state = structured(await call('dataset_get', {'dataset_id': SERVER.dataset_id, 'limit': 100}))
             captioned = structured(await call('caption_propose', {
                 'dataset_id': SERVER.dataset_id, 'artifact_id': artifacts[0],
                 'text': 'Generated geometry fixture, blue ellipse on parchment.',
                 'expected_revision': state['revision'], 'idempotency_key': 'caption-key-one'}))
-            self.assertFalse(captioned['idempotency']['durable'])
+            self.assertTrue(captioned['idempotency']['durable'])
             self.assertFalse(captioned['idempotency']['replayed'])
             self.assertIn('review_required', captioned['item']['blockers'])
             caption_replay = structured(await call('caption_propose', {

@@ -101,6 +101,10 @@ class MaterializeInput(RevisionInput):
 class CaptionInput(RevisionInput):
     artifact_id: str = Field(min_length=1, max_length=64)
     text: str = Field(min_length=1, max_length=8192)
+    # Optional so the browser keeps its exact behaviour; agents supply one so a
+    # retried proposal replays the recorded operation instead of a new revision.
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=128,
+                                        pattern=r'^[a-zA-Z0-9_-]+$')
 
 
 class PresenceInput(Closed):

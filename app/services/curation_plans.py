@@ -258,18 +258,36 @@ def record_failure(session, operation_id, exc):
 def add_caption(session, token, dataset_id, request):
     with transaction(session):
         dataset, grant = dataset_for(session, token, dataset_id, 'caption')
-        require_revision(dataset, request.expected_revision)
-        artifact = artifact_for(session, dataset, request.artifact_id)
-        if not request.text.strip() or '\x00' in request.text:
-            fail('invalid_caption', 422)
-        # Exact UTF-8 bytes, no implicit trimming or newline insertion.
-        caption = CurationCaption(dataset_id=dataset_id, artifact_id=artifact.id,
-            revision=dataset.revision + 1, text=request.text, sha256=digest(request.text.encode()),
-            actor_id=grant.actor_id, actor_kind=grant.actor_kind)
-        session.add(caption)
-        dataset.revision += 1
-        session.add(dataset)
-    return detail(session, token, dataset_id)
+        previous = None
+        if request.idempotency_key is not None:
+            # A retried proposal replays its recorded operation; the same key with
+            # a different payload is a conflict, never a second caption revision.
+            previous, request_hash = admitted(session, grant, 'caption', request.idempotency_key,
+                                              request.model_dump())
+        if previous is None:
+            require_revision(dataset, request.expected_revision)
+            artifact = artifact_for(session, dataset, request.artifact_id)
+            if not request.text.strip() or '\x00' in request.text:
+                fail('invalid_caption', 422)
+            # Exact UTF-8 bytes, no implicit trimming or newline insertion.
+            caption = CurationCaption(dataset_id=dataset_id, artifact_id=artifact.id,
+                revision=dataset.revision + 1, text=request.text, sha256=digest(request.text.encode()),
+                actor_id=grant.actor_id, actor_kind=grant.actor_kind)
+            session.add(caption)
+            dataset.revision += 1
+            session.add(dataset)
+            if request.idempotency_key is not None:
+                session.flush()
+                session.add(CurationOperation(dataset_id=dataset_id, grant_id=grant.id, kind='caption',
+                    idempotency_key=request.idempotency_key, request_sha256=request_hash,
+                    status='succeeded', snapshot_revision=dataset.revision, item_count=1, attempts=1,
+                    snapshot={'caption_id': caption.id, 'artifact_id': artifact.id,
+                              'caption_sha256': caption.sha256, 'policy_version': dataset.policy_version}))
+    result = detail(session, token, dataset_id)
+    if request.idempotency_key is not None:
+        # Keyed callers learn whether this call recorded a new revision or replayed one.
+        result['replayed'] = previous is not None
+    return result
 
 
 def review(session, token, dataset_id, request):
