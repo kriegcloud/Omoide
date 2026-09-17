@@ -8,6 +8,7 @@ from app.curation_models import (CurationArtifact, CurationCaption, CurationData
     CurationEvent, CurationGrant, CurationOperation, CurationReview, CurationSource)
 from app.services.curation_artifacts import (TRANSFORM, artifact_bytes, canonical,
     normalized, publish_artifact, source_bytes)
+from app.services.curation_media import materialize_media
 from app.services.curation_policy import (PRODUCTION_POLICY_VERSION, authorize, dataset_for,
     digest, fail, mode, require_revision)
 
@@ -168,9 +169,13 @@ def materialize(session: Session, token: str, dataset_id: str, request):
                 fail('generative_disabled', 403)
             if source.split != 'train':
                 fail('holdout_materialization_disabled', 403)
+            if request.frame is not None and request.frame.kind == 'repair_evidence':
+                fail('generative_disabled', 403)
+            frame = request.frame.model_dump() if request.frame is not None else None
             op = CurationOperation(dataset_id=dataset_id, grant_id=grant.id, kind='materialize',
                 idempotency_key=request.idempotency_key, request_sha256=request_hash,
                 snapshot_revision=dataset.revision, snapshot={'source_id': source.id, 'sha256': source.sha256,
+                                                             'frame': frame,
                                                              'policy_version': dataset.policy_version})
             session.add(op)
             session.flush()
@@ -189,10 +194,17 @@ def materialize(session: Session, token: str, dataset_id: str, request):
                     fail('source_changed')
                 op.attempts += 1
                 data = source_bytes(dataset, source)
-                encoded, pixel_hash, width, height, provenance = normalized(data)
-                cache_key = digest(canonical({'source_sha256': source.sha256, 'transform': TRANSFORM}))
+                frame = op.snapshot.get('frame')
+                encoded, pixel_hash, width, height, provenance = materialize_media(dataset, source, data, frame)
+                # The selected frame and any external decoder identity are part of
+                # the cache key: two frames of one source are two artifacts, and a
+                # decoder upgrade cannot silently reuse another decoder's entry.
+                cache_key = digest(canonical({'source_sha256': source.sha256, 'transform': TRANSFORM,
+                    'frame': frame, 'decoder': provenance.get('decoder_identity')}))
                 artifact = session.exec(select(CurationArtifact).where(CurationArtifact.dataset_id == dataset_id,
                     CurationArtifact.source_id == source.id, CurationArtifact.cache_key == cache_key)).first()
+                if artifact and artifact.sha256 != digest(encoded):
+                    fail('cache_key_collision')
                 publish_artifact(dataset, encoded)
                 if not artifact:
                     artifact = CurationArtifact(dataset_id=dataset_id, source_id=source.id,

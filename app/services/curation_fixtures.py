@@ -13,12 +13,13 @@ from sqlmodel import Session
 from app.config import FaceRecognitionSettings
 from app.curation_models import CurationDataset, CurationGrant, CurationSource
 from app.services.curation_artifacts import directory, read_at
+from app.services.curation_media import VIDEO_EXTENSIONS
 from app.services.curation_policy import POLICY_VERSION, digest, fail
 
 
 def create_fixture_dataset(session: Session, *, source_root: Path, store_root: Path,
                            files: list[dict], name: str = 'Rights-clear still fixtures',
-                           face_settings=None) -> dict:
+                           face_settings=None, video_frame_materialization: bool = False) -> dict:
     """files: {relative_path,label?,group_id,split?,lineage_known?,generative?}."""
     source_root = Path(os.path.abspath(source_root))
     store_root = Path(os.path.abspath(store_root))
@@ -47,6 +48,13 @@ def create_fixture_dataset(session: Session, *, source_root: Path, store_root: P
                     'frame_mining_enabled': False, 'frame_mining_gate': None,
                     'outlier_enabled': False, 'outlier_gate': None},
                 'lineage_basis': 'trusted fixture registration; no inferred private-media ancestry',
+                # Off unless the fixture owner explicitly opts in; no HTTP route
+                # can raise this flag after the dataset exists.
+                'media': {'video_frame_materialization': video_frame_materialization,
+                          'allowed_video_extensions': list(VIDEO_EXTENSIONS),
+                          'basis': 'trusted_fixture_registration',
+                          'generative_derivatives': False,
+                          'repair_and_mask_materialization': False},
                 'max_items': 20})
         session.add(dataset)
         session.flush()
