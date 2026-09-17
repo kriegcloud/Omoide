@@ -19,6 +19,18 @@ ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'scripts' / 'curation-authority.py'
 
 
+def alembic_head() -> str:
+    """The single head this checkout ships; the CLI derives the same value."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config(str(ROOT / 'alembic.ini'))
+    config.set_main_option('script_location', str(ROOT / 'alembic'))
+    heads = ScriptDirectory.from_config(config).get_heads()
+    assert len(heads) == 1, heads
+    return heads[0]
+
+
 class OperatorCliTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -33,11 +45,12 @@ class OperatorCliTests(unittest.TestCase):
         self.store.mkdir()
         Image.new('RGB', (16, 12), '#123456').save(self.sources / 'one.png')
         self.database = self.root / 'omoide.db'
+        self.head = alembic_head()
         engine = create_engine('sqlite:///' + str(self.database))
         SQLModel.metadata.create_all(engine)
         with engine.begin() as connection:
             connection.execute(text('CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)'))
-            connection.execute(text("INSERT INTO alembic_version VALUES ('60718293a4b5')"))
+            connection.execute(text('INSERT INTO alembic_version VALUES (:head)'), {'head': self.head})
         engine.dispose()
         manifest = {'schema_version': 'omoide.source-registration/v1', 'name': 'CLI fixture',
             'subject_id': 'cli-subject', 'source_root': str(self.sources), 'store_root': str(self.store),
@@ -94,6 +107,9 @@ class OperatorCliTests(unittest.TestCase):
     def test_refuses_without_production_mode_or_migrated_database(self):
         code, _ = self.run_cli('verify', '--dataset-id', 'x', mode='fixture')
         self.assertNotEqual(code, 0)
+        # Any revision other than the derived head, including an earlier
+        # curation migration, is refused rather than migrated.
+        self.assertNotEqual(self.head, '5f60718293a4')
         engine = create_engine('sqlite:///' + str(self.database))
         with engine.begin() as connection:
             connection.execute(text("UPDATE alembic_version SET version_num = '5f60718293a4'"))
