@@ -24,7 +24,8 @@ from app.services.curation_auth import review_authority_error
 
 
 IMPLEMENTATION = {name: digest((Path(__file__).parent / name).read_bytes())
-                  for name in ('curation_artifacts.py', 'curation_policy.py', 'curation_auth.py', 'curation_plans.py', 'frozen_exports.py')}
+                  for name in ('curation_artifacts.py', 'curation_media.py', 'curation_policy.py',
+                               'curation_auth.py', 'curation_plans.py', 'frozen_exports.py')}
 
 def _check_splits(session, dataset, members):
     sources = session.exec(select(CurationSource).where(CurationSource.dataset_id == dataset.id)).all()
