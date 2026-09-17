@@ -63,6 +63,29 @@ def _resume_duplicates(params: dict) -> Callable[[str], None]:
     return lambda task_id: run_duplicate_detection(task_id, threshold)
 
 
+def _resume_curation(params: dict, kind: str) -> Callable[[str], None]:
+    """Re-execute one admitted curation operation from its immutable snapshot.
+
+    The successor carries the same `operation_id`, so resume never creates a new
+    plan: it replays the version that was admitted, under a fresh worker lease.
+    The import is deferred so the task registry stays importable independently
+    of the curation services.
+    """
+    operation_id = params.get("operation_id")
+    if not isinstance(operation_id, str) or not operation_id:
+        raise ValueError("Missing operation_id")
+
+    def run(task_id: str) -> None:
+        from app.services import curation_jobs
+
+        if kind == "export":
+            curation_jobs.run_curation_export(task_id)
+        else:
+            curation_jobs.run_curation_materialize(task_id)
+
+    return run
+
+
 RESUMABLE_TASK_TYPES: dict[str, Callable[[dict], Callable[[str], None]]] = {
     "scan": lambda params: run_scan_and_chain if params.get("chain") else run_scan,
     "process_media": lambda params: run_media_processing_and_chain if params.get("chain") else run_media_processing,
@@ -77,6 +100,8 @@ RESUMABLE_TASK_TYPES: dict[str, Callable[[dict], Callable[[str], None]]] = {
     "backfill_demographics": lambda params: run_backfill_demographics,
     "backfill_face_timestamps": lambda params: run_backfill_face_timestamps,
     "backfill_face_quality": lambda params: run_backfill_face_quality,
+    "curation_export": lambda params: _resume_curation(params, "export"),
+    "curation_materialize": lambda params: _resume_curation(params, "materialize"),
 }
 
 
@@ -148,13 +173,23 @@ def resume_task(session: Session, task: ProcessingTask) -> ProcessingTask:
             raise HTTPException(status_code=400, detail="Task cannot be resumed")
         if (task.result or {}).get("resumed_by"):
             raise HTTPException(status_code=409, detail="Task has already been resumed")
-        existing = session.exec(
+        active = session.exec(
             select(ProcessingTask).where(
                 ProcessingTask.task_type == task.task_type,
                 ProcessingTask.status.in_(("pending", "running")),
             )
-        ).first()
-        if existing:
+        ).all()
+        # Types whose params name one immutable job (curation operations) are
+        # serialized per job, not per type: two different admitted operations are
+        # independent, but one operation never gets two live executions.
+        operation_id = (task.params or {}).get("operation_id")
+        if operation_id is not None:
+            active = [
+                other
+                for other in active
+                if (other.params or {}).get("operation_id") == operation_id
+            ]
+        if active:
             raise HTTPException(status_code=409, detail="A task of this type is already active")
 
         callable_task = build_resume_callable(task)
