@@ -15,6 +15,7 @@ from sqlmodel import Session, select
 
 from app.curation_models import (CurationArtifact, CurationEvent, CurationOperation,
     CurationReview, CurationGrant, CurationSource)
+from app.services import curation_jobs as jobs
 from app.services.curation_artifacts import (MAX_ARTIFACT_BYTES, artifact_bytes,
     canonical, directory, ensure_directory, normalized, read_at, source_bytes, write_once, verify_child_directory)
 from app.services.curation_plans import (admitted, artifact_for, generative_ancestry,
@@ -23,9 +24,11 @@ from app.services.curation_policy import PRODUCTION_POLICY_VERSION, dataset_for,
 from app.services.curation_auth import review_authority_error
 
 
+# The manifest pins every loaded module that decides what gets published,
+# including the job layer that fences workers and honours cancellation.
 IMPLEMENTATION = {name: digest((Path(__file__).parent / name).read_bytes())
                   for name in ('curation_artifacts.py', 'curation_media.py', 'curation_policy.py',
-                               'curation_auth.py', 'curation_plans.py', 'frozen_exports.py')}
+                               'curation_auth.py', 'curation_jobs.py', 'curation_plans.py', 'frozen_exports.py')}
 
 def _check_splits(session, dataset, members):
     sources = session.exec(select(CurationSource).where(CurationSource.dataset_id == dataset.id)).all()
@@ -98,6 +101,9 @@ def admit_export(session, token, dataset_id, request):
                 snapshot_revision=dataset.revision, snapshot=snapshot, item_count=len(snapshot['members']))
             session.add(op)
             session.flush()
+            # The shared task row commits with the admission, so an admitted
+            # export is visible and cancellable even before a worker starts it.
+            jobs.attach_task(session, op, total=len(snapshot['members']))
             session.add(CurationEvent(operation_id=op.id, event='admitted', attempt=0))
         op_id = op.id
     return op_id
@@ -230,7 +236,7 @@ def _verify(directory_fd, snapshot):
     return digest(manifest)
 
 
-def execute_export(session: Session, token: str, operation_id: str, *, checkpoint=None):
+def execute_export(session: Session, token, operation_id: str, *, checkpoint=None):
     """Replay the same immutable version. Checkpoints are test crash injection only."""
     get_export(session, token, operation_id)
     op = session.get(CurationOperation, operation_id)
@@ -243,18 +249,29 @@ def execute_export(session: Session, token: str, operation_id: str, *, checkpoin
     with directory(dataset.store_root, (dataset.store_device, dataset.store_inode)) as root:
         exports = ensure_directory(root, 'exports')
         lock = None
+        attempt_id = jobs.new_attempt_id()
+        leased = False
         try:
             lock = os.open('.' + operation_id + '.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600, dir_fd=exports)
             fcntl.flock(lock, fcntl.LOCK_EX)
+            # The advisory lock orders peers on this store; the database lease is
+            # the durable fence that survives a crashed or partitioned worker.
+            jobs.acquire_lease(session, operation_id, attempt_id)
+            leased = True
             with transaction(session):
                 op = session.get(CurationOperation, operation_id, populate_existing=True)
+                # Before any source read: an operator cancellation stops here.
+                jobs.checkpoint_cancellation(session, op)
+                jobs.require_lease(op, attempt_id)
                 dataset = _revalidate(session, token, op)
                 already_done = op.status == 'succeeded'
                 if not already_done:
                     op.attempts += 1
                     op.status = 'running'
                     op.error_code = None
+                    op.progress_done = 0
                     session.add(op)
+                    jobs.mark_task(session, op, 'running', processed=0)
                     session.add(CurationEvent(operation_id=op.id, event='attempt_started', attempt=op.attempts))
                 snapshot = json.loads(canonical(op.snapshot))
                 attempt = op.attempts
@@ -273,7 +290,7 @@ def execute_export(session: Session, token: str, operation_id: str, *, checkpoin
                 try:
                     if checkpoint:
                         checkpoint('after_staging_directory')
-                    for member in snapshot['members']:
+                    for written, member in enumerate(snapshot['members'], start=1):
                         artifact = session.get(CurationArtifact, member['artifact_id'])
                         data = artifact_bytes(dataset, artifact)
                         if digest(data) != member['asset_sha256']:
@@ -281,14 +298,22 @@ def execute_export(session: Session, token: str, operation_id: str, *, checkpoin
                         write_once(stage, member['image_name'], data)
                         # Immutable captured bytes, never read latest_caption here.
                         write_once(stage, member['caption_name'], member['caption_text'].encode())
+                        jobs.checkpoint_progress(session, operation_id, attempt_id, written,
+                                                 step='writing', item=member['image_name'])
                     manifest = canonical(published_manifest(snapshot))
                     write_once(stage, 'manifest.json', manifest)
                     write_once(stage, 'SUCCESS.json', canonical({'manifest_sha256': digest(manifest), 'item_count': len(snapshot['members'])}))
                     _verify(stage, snapshot)
+                    jobs.checkpoint_progress(session, operation_id, attempt_id, len(snapshot['members']),
+                                             step='staged')
                     if checkpoint:
                         checkpoint('before_publication')
                     with transaction(session):
                         op = session.get(CurationOperation, operation_id, populate_existing=True)
+                        # Last point at which cancellation can still stop this
+                        # export; after the rename the bytes exist forever.
+                        jobs.checkpoint_cancellation(session, op)
+                        jobs.require_lease(op, attempt_id)
                         dataset = _revalidate(session, token, op)
                         # Reopen root to fence rename/root substitution during copy.
                         with directory(dataset.store_root, (dataset.store_device, dataset.store_inode)) as current_root:
@@ -320,13 +345,19 @@ def execute_export(session: Session, token: str, operation_id: str, *, checkpoin
                 op.status = 'succeeded'
                 op.manifest_sha256 = manifest_hash
                 op.error_code = None
+                op.progress_done = op.item_count
                 session.add(op)
+                # Publication already happened, so success is unconditional here:
+                # a cancellation that raced it cannot un-publish these bytes.
+                jobs.mark_task(session, op, 'completed', processed=op.item_count)
                 session.add(CurationEvent(operation_id=op.id, event='publication_verified', attempt=op.attempts))
             return get_export(session, token, operation_id)
         except Exception as exc:
             record_failure(session, operation_id, exc)
             raise
         finally:
+            if leased:
+                jobs.release_lease(session, operation_id, attempt_id)
             if lock is not None:
                 os.close(lock)
             os.close(exports)

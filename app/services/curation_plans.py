@@ -1,30 +1,14 @@
 """Guarded bounded synchronous operations with durable admission and receipts."""
-from contextlib import contextmanager
-
-from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.curation_models import (CurationArtifact, CurationCaption, CurationDataset,
     CurationEvent, CurationGrant, CurationOperation, CurationReview, CurationSource)
+from app.services import curation_jobs as jobs
 from app.services.curation_artifacts import (TRANSFORM, artifact_bytes, canonical,
     publish_artifact, source_bytes)
 from app.services.curation_media import materialize_media
 from app.services.curation_policy import (PRODUCTION_POLICY_VERSION, authorize, dataset_for,
-    digest, fail, mode, require_revision)
-
-
-@contextmanager
-def transaction(session: Session):
-    # Services own their session transaction; commit before yielding responses.
-    # SQLite IMMEDIATE serializes admission/revisions, including cross-process.
-    session.rollback()
-    session.exec(text('BEGIN IMMEDIATE'))
-    try:
-        yield
-        session.commit()
-    except BaseException:
-        session.rollback()
-        raise
+    digest, fail, mode, require_revision, transaction)
 
 
 def source_for(session, dataset, source_id):
@@ -157,6 +141,13 @@ def admitted(session, grant, kind, key, payload):
 
 
 def materialize(session: Session, token: str, dataset_id: str, request):
+    operation_id = admit_materialize(session, token, dataset_id, request)
+    execute_materialize(session, token, operation_id)
+    return detail(session, token, dataset_id)
+
+
+def admit_materialize(session: Session, token: str, dataset_id: str, request) -> str:
+    """Commit one idempotent operation plus its shared task row, then return its id."""
     with transaction(session):
         dataset, grant = dataset_for(session, token, dataset_id, 'materialize')
         op, request_hash = admitted(session, grant, 'materialize', request.idempotency_key, request.model_dump())
@@ -174,18 +165,34 @@ def materialize(session: Session, token: str, dataset_id: str, request):
             frame = request.frame.model_dump() if request.frame is not None else None
             op = CurationOperation(dataset_id=dataset_id, grant_id=grant.id, kind='materialize',
                 idempotency_key=request.idempotency_key, request_sha256=request_hash,
-                snapshot_revision=dataset.revision, snapshot={'source_id': source.id, 'sha256': source.sha256,
-                                                             'frame': frame,
-                                                             'policy_version': dataset.policy_version})
+                snapshot_revision=dataset.revision, item_count=1,
+                snapshot={'source_id': source.id, 'sha256': source.sha256,
+                          'frame': frame,
+                          'policy_version': dataset.policy_version})
             session.add(op)
             session.flush()
+            jobs.attach_task(session, op, total=1)
             session.add(CurationEvent(operation_id=op.id, event='admitted', attempt=0))
         operation_id = op.id
+    return operation_id
+
+
+def execute_materialize(session: Session, principal, operation_id: str):
+    """Execute the admitted snapshot under a worker lease, never the latest rows."""
+    attempt_id = jobs.new_attempt_id()
+    jobs.acquire_lease(session, operation_id, attempt_id)
     try:
         with transaction(session):
-            dataset, grant = dataset_for(session, token, dataset_id, 'materialize')
             op = session.get(CurationOperation, operation_id, populate_existing=True)
+            if op is None or op.kind != 'materialize':
+                fail('not_found', 404)
+            dataset, grant = dataset_for(session, principal, op.dataset_id, 'materialize')
+            if grant.id != op.grant_id:
+                fail('operation_owner_required', 403)
             if op.status != 'succeeded':
+                # Before any source read: an operator cancellation stops here.
+                jobs.checkpoint_cancellation(session, op)
+                jobs.require_lease(op, attempt_id)
                 require_revision(dataset, op.snapshot_revision)
                 source = source_for(session, dataset, op.snapshot['source_id'])
                 if source.generative or not source.lineage_known:
@@ -201,13 +208,13 @@ def materialize(session: Session, token: str, dataset_id: str, request):
                 # decoder upgrade cannot silently reuse another decoder's entry.
                 cache_key = digest(canonical({'source_sha256': source.sha256, 'transform': TRANSFORM,
                     'frame': frame, 'decoder': provenance.get('decoder_identity')}))
-                artifact = session.exec(select(CurationArtifact).where(CurationArtifact.dataset_id == dataset_id,
+                artifact = session.exec(select(CurationArtifact).where(CurationArtifact.dataset_id == op.dataset_id,
                     CurationArtifact.source_id == source.id, CurationArtifact.cache_key == cache_key)).first()
                 if artifact and artifact.sha256 != digest(encoded):
                     fail('cache_key_collision')
                 publish_artifact(dataset, encoded)
                 if not artifact:
-                    artifact = CurationArtifact(dataset_id=dataset_id, source_id=source.id,
+                    artifact = CurationArtifact(dataset_id=op.dataset_id, source_id=source.id,
                         sha256=digest(encoded), pixel_sha256=pixel_hash, cache_key=cache_key,
                         size=len(encoded), width=width, height=height, provenance=provenance)
                     session.add(artifact)
@@ -216,24 +223,36 @@ def materialize(session: Session, token: str, dataset_id: str, request):
                 op.status = 'succeeded'
                 op.error_code = None
                 op.item_count = 1
+                op.progress_done = 1
                 session.add(op)
                 session.add(CurationEvent(operation_id=op.id, event='succeeded', attempt=op.attempts))
+            jobs.mark_task(session, op, 'completed', processed=1)
     except Exception as exc:
         record_failure(session, operation_id, exc)
         raise
-    return detail(session, token, dataset_id)
+    finally:
+        jobs.release_lease(session, operation_id, attempt_id)
 
 
 def record_failure(session, operation_id, exc):
     from fastapi import HTTPException
     code = exc.detail.get('code', 'operation_failed') if isinstance(exc, HTTPException) and isinstance(exc.detail, dict) else 'operation_failed'
+    if code in ('operation_lease_held', 'operation_lease_lost'):
+        # Being fenced out says nothing about the operation: another worker owns
+        # it. Leave its status and journal untouched for that worker to finish.
+        return
+    cancelled = code == 'operation_cancelled'
     with transaction(session):
         op = session.get(CurationOperation, operation_id, populate_existing=True)
-        if op and op.status != 'succeeded':
-            op.status = 'blocked'
+        # A cancelled operation keeps its cancellation; a published one is final.
+        if op and op.status not in ('succeeded', 'cancelled'):
+            op.status = 'cancelled' if cancelled else 'blocked'
             op.error_code = code
             session.add(op)
-            session.add(CurationEvent(operation_id=op.id, event=code, attempt=op.attempts))
+            session.add(CurationEvent(operation_id=op.id,
+                                      event='cancelled' if cancelled else code, attempt=op.attempts))
+            jobs.mark_task(session, op, 'cancelled' if cancelled else 'failed',
+                           error=None if cancelled else code)
 
 
 def add_caption(session, token, dataset_id, request):
