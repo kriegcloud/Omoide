@@ -586,6 +586,18 @@ async def lifespan(app: FastAPI):
     # of the lifespan, causing uvicorn to set should_exit=True immediately
     # after binding the port — the server shuts down before serving any
     # requests and the webview window stays stuck on the loading screen.
+    logger.info("lifespan: reconciling curation operations...")
+    try:
+        # Runs before the generic cleanup so an uncertain export is resolved (or
+        # made resumable) before pending rows are pruned. It never starts a
+        # worker itself; the ordinary resume path is the single execution.
+        from app.services.curation_jobs import reconcile_curation_operations
+
+        with Session(db.engine) as session:
+            reconcile_curation_operations(session)
+        logger.info("lifespan: curation operation reconciliation done")
+    except Exception as e:
+        logger.warning("Curation operation reconciliation failed: %s", e)
     logger.info("lifespan: cleaning up stale tasks...")
     accept_resumed_tasks()
     try:
