@@ -3,9 +3,11 @@ import hashlib
 import json
 import os
 import re
+from contextlib import contextmanager
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
+from sqlalchemy import text
 from starlette.responses import JSONResponse
 from sqlmodel import Session, select
 
@@ -39,16 +41,43 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def authorize(session: Session, token: str, dataset_id: str | None = None,
+@contextmanager
+def transaction(session: Session):
+    # Services own their session transaction; commit before yielding responses.
+    # SQLite IMMEDIATE serializes admission/revisions, including cross-process.
+    session.rollback()
+    session.exec(text('BEGIN IMMEDIATE'))
+    try:
+        yield
+        session.commit()
+    except BaseException:
+        session.rollback()
+        raise
+
+
+def authorize(session: Session, token, dataset_id: str | None = None,
               operation: str = 'read') -> CurationGrant:
+    """Authorize a bearer token, or re-authorize an already-resolved grant.
+
+    A background worker executing an operation that was already admitted has no
+    bearer to present: the credential proved possession at admission and callers
+    keep it only in memory. Passing the admitted operation's own grant re-runs
+    every other condition — mode, dataset policy, revocation, expiry, operation
+    set, reviewer kind, disclosure and presentation mode — on a freshly loaded
+    row, so revoking or expiring a grant still stops execution. It never lets a
+    new actor admit work; only the token path can reach admission.
+    """
     active_mode = mode()
     if active_mode == 'disabled':
         fail('not_found', 404)
-    if not isinstance(token, str) or not 16 <= len(token) <= 256:
-        fail('unauthorized', 401)
-    grant = session.exec(select(CurationGrant).where(
-        CurationGrant.token_sha256 == digest(token.encode())
-    ).execution_options(populate_existing=True)).first()
+    if isinstance(token, CurationGrant):
+        grant = session.get(CurationGrant, token.id, populate_existing=True)
+    else:
+        if not isinstance(token, str) or not 16 <= len(token) <= 256:
+            fail('unauthorized', 401)
+        grant = session.exec(select(CurationGrant).where(
+            CurationGrant.token_sha256 == digest(token.encode())
+        ).execution_options(populate_existing=True)).first()
     if grant is None or grant.revoked or grant.expires_at <= datetime.now(UTC).replace(tzinfo=None):
         fail('unauthorized', 401)
     allowed_kinds = {'human', 'agent'} if active_mode == 'production' else {'fixture_human', 'agent'}
@@ -70,7 +99,7 @@ def authorize(session: Session, token: str, dataset_id: str | None = None,
     return grant
 
 
-def dataset_for(session: Session, token: str, dataset_id: str,
+def dataset_for(session: Session, token, dataset_id: str,
                 operation: str = 'read') -> tuple[CurationDataset, CurationGrant]:
     grant = authorize(session, token, dataset_id, operation)
     dataset = session.get(CurationDataset, dataset_id, populate_existing=True)
