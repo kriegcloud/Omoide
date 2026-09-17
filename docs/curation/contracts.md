@@ -6,6 +6,14 @@ and [source-registration.md](source-registration.md). Production authority never
 inherits fixture acceptance. See the AI hub's implementation handoff for current
 verification and deployment limits.
 
+Execution of admitted operations is now a shared `ProcessingTask` job with a
+worker lease, cancellation checkpoints and startup reconciliation; that
+supersedes the "no generic ProcessingTask resume factories" sentence in *Durable
+execution and frozen export* below and is specified in
+[task-execution.md](task-execution.md). Nothing else in this contract changes:
+admission, authority, review semantics, export membership and published bytes are
+untouched.
+
 ---
 
 # Fixture still curation contract — v1
