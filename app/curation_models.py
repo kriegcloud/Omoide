@@ -157,6 +157,15 @@ class CurationOperation(SQLModel, table=True):
     error_code: str | None = None
     item_count: int = 0
     attempts: int = 0
+    # Execution control. The snapshot above stays immutable; these fields only
+    # record who is currently allowed to execute it and how far they got.
+    # `task_id` is the shared ProcessingTask row; no FK, so the generic task
+    # lifecycle can never delete or block curation provenance.
+    task_id: str | None = None
+    lease_worker: str | None = None
+    lease_attempt: str | None = None
+    lease_expires_at: datetime | None = None
+    progress_done: int = 0
     created_at: datetime = Field(default_factory=now)
 
 
