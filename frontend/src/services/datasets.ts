@@ -33,10 +33,35 @@ import type { EditOp, FilerobotDesignState } from "../utils/editorOps";
 
 type DatasetInput = Partial<Omit<TrainingDataset, "id" | "created_at" | "updated_at" | "item_count" | "included_count">> & { name: string };
 
+// Server-side authority denials arrive as `{ detail: { code } }`; readable text
+// keeps them from rendering as "[object Object]" in page error banners.
+const DETAIL_MESSAGES: Record<string, string> = {
+  legacy_human_authority_unavailable:
+    "Legacy review stamping is disabled while production curation authority is active. "
+    + "Review this item in Curation and confirm with your passkey instead.",
+  request_too_large: "Request body is too large.",
+};
+
+export function describeApiDetail(detail: unknown, status: number): string {
+  if (typeof detail === "string" && detail.length > 0) return detail;
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    const { code, message } = detail as { code?: unknown; message?: unknown };
+    if (typeof code === "string") return DETAIL_MESSAGES[code] ?? `Request failed (${code})`;
+    if (typeof message === "string" && message.length > 0) return message;
+  }
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((entry) => (entry && typeof entry === "object" ? (entry as { msg?: unknown }).msg : undefined))
+      .filter((msg): msg is string => typeof msg === "string");
+    if (messages.length > 0) return messages.join("; ");
+  }
+  return `Request failed (${status})`;
+}
+
 async function json<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => null);
-    throw new Error(body?.detail ?? `Request failed (${response.status})`);
+    throw new Error(describeApiDetail(body?.detail, response.status));
   }
   return response.json();
 }
