@@ -13,7 +13,10 @@ from app.services.curation_policy import digest, fail
 
 MAX_BYTES = 16 * 1024 * 1024
 MAX_PIXELS = 16_000_000
-MAX_ARTIFACT_BYTES = 2 * 1024 * 1024
+# A lossless RGB PNG of the pixel bound cannot exceed the raw sample size by more
+# than PNG filter bytes and zlib framing; 4 MiB of headroom covers that. Real
+# photographs routinely exceed the old fixture-sized 2 MiB once re-encoded losslessly.
+MAX_ARTIFACT_BYTES = 3 * MAX_PIXELS + 4 * 1024 * 1024
 # v2 widens the accepted input set (ICC, 16-bit, palette, opaque alpha, CMYK,
 # HEIF, explicitly requested frames) without changing how an already supported
 # untagged RGB/grayscale still is encoded: those artifacts keep their exact

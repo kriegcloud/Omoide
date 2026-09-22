@@ -121,6 +121,20 @@ class StillFormatAndColourTests(RefusalMixin, unittest.TestCase):
         self.assertEqual(result[4]['color']['method'], 'untagged-assumed-srgb')
         self.assertIn('Untagged RGB is assumed sRGB; no color accuracy claim.', result[4]['uncertainties'])
 
+    def test_photograph_sized_stills_are_accepted_and_bounded_by_the_pixel_limit(self):
+        from app.services.curation_artifacts import MAX_ARTIFACT_BYTES, MAX_PIXELS
+        # A lossless PNG of a real photograph is far larger than the old 2 MiB fixture cap.
+        noise = np.random.default_rng(7).integers(0, 256, size=(1500, 2000, 3), dtype=np.uint8)
+        stream = io.BytesIO()
+        Image.fromarray(noise, 'RGB').save(stream, format='JPEG', quality=95)
+        result = self.accepted(stream.getvalue())
+        self.assertGreater(len(result[0]), 2 * 1024 * 1024)
+        self.assertLessEqual(len(result[0]), MAX_ARTIFACT_BYTES)
+        self.assertGreaterEqual(MAX_ARTIFACT_BYTES, 3 * MAX_PIXELS, 'every in-bound RGB still must fit')
+        with patch.object(media, 'MAX_ARTIFACT_BYTES', 1024), self.assertRaises(HTTPException) as raised:
+            normalized(stream.getvalue())
+        self.assertEqual(raised.exception.detail['code'], 'artifact_too_large')
+
     def test_grayscale_and_palette_declare_their_expansion(self):
         grayscale = self.accepted(encoded('L', 'PNG'))
         self.assertEqual(grayscale[4]['color']['input_mode'], 'L')
