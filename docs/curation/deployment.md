@@ -49,6 +49,10 @@ docker compose exec -e OMOIDE_CURATION_MODE=production omoide \
 ```
 
 Paths in the manifest are container paths (`/app/data/...`, `/app/media/T7/...`).
+Both `source_root` and `store_root` must already exist as directories the
+container user can open (registration walks them with `O_NOFOLLOW` and fails
+closed with `storage_unavailable` otherwise); create the store root on the data
+volume as uid 1000 before registering.
 `expected_filesystem_uuid` is the value `findmnt -n -o UUID --target <path>`
 prints inside the container; `expected_mountpoint` is the bind target.
 
