@@ -15,7 +15,8 @@ from app.services.curation_artifacts import (canonical, directory, probe_store_c
 from app.services.curation_media import VIDEO_EXTENSIONS
 from app.services.curation_policy import digest, fail
 from app.services.source_locations import (PRODUCTION_POLICY_VERSION, compare_source_volume, ensure_disjoint_roots,
-    observe_source_volume, registered_source_volume, verify_source_descriptor, verify_source_volume)
+    observe_source_volume, registered_source_volume, root_identity_record, source_root_identity,
+    verify_source_descriptor, verify_source_volume)
 
 Text = Annotated[str, StringConstraints(strip_whitespace=False, min_length=1, max_length=2048)]
 Identifier = Annotated[str, StringConstraints(pattern=r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$')]
@@ -172,6 +173,7 @@ def register_source_manifest(session: Session, manifest: dict | SourceRegistrati
             'generative_enabled': False, 'human_presence_verified': False,
             'max_items': 100, 'source_access': 'read-only', 'egress': 'local-review-only',
             'source_volume': observed,
+            'root_identity': root_identity_record(observed),
             'authorization_manifest_sha256': digest(canonical(spec.model_dump())),
             'registration': {'basis': 'operator_attestation',
                 'assertions_are_independently_verified': False,
@@ -237,8 +239,13 @@ def _observe_registered_roots(dataset: CurationDataset, expected: dict):
     """Fresh observation of both roots in this runtime; identity failures raise."""
     with directory(dataset.source_root) as source_fd, directory(dataset.store_root) as store_fd:
         source_stat, store_stat = os.fstat(source_fd), os.fstat(store_fd)
-        # A replaced directory is a different root even on the same volume.
-        if source_stat.st_ino != dataset.source_inode or store_stat.st_ino != dataset.store_inode:
+        # A replaced directory is a different root even on the same volume. On a
+        # filesystem without persistent inode numbers the source inode is not
+        # comparable and the file hashes re-verified below carry that fence.
+        source_device, source_inode = source_root_identity(dataset)
+        if (source_stat.st_dev != source_device
+                or (source_inode is not None and source_stat.st_ino != source_inode)
+                or store_stat.st_ino != dataset.store_inode):
             fail('root_identity_changed')
         ensure_disjoint_roots(dataset.source_root, source_fd, dataset.store_root, store_fd)
         observed = observe_source_volume(dataset.source_root, opened_fd=source_fd)
@@ -266,7 +273,7 @@ def _verify_registered_files(session: Session, candidate: CurationDataset) -> in
         fail('not_found', 404)
     for source in sources:
         verify_source_volume(candidate, source.relative_path)
-        with directory(candidate.source_root, (candidate.source_device, candidate.source_inode)) as fd:
+        with directory(candidate.source_root, source_root_identity(candidate)) as fd:
             read_at(fd, source.relative_path, source.sha256,
                     descriptor_guard=lambda fd: verify_source_descriptor(candidate, fd))
         verify_source_volume(candidate, source.relative_path)
@@ -313,13 +320,17 @@ def reattest_source_volume(session: Session, dataset_id: str, attestation: dict)
         'previous_revision': dataset.revision, 'files_verified': verified,
         'runtime_drift': comparison['runtime_drift'],
         'previous_source_volume': expected, 'observed_source_volume': observed,
-        'previous_source_device': dataset.source_device, 'previous_store_device': dataset.store_device}
+        'previous_source_device': dataset.source_device, 'previous_store_device': dataset.store_device,
+        'previous_source_inode': dataset.source_inode}
     policy = dict(dataset.policy)
     policy['source_volume'] = observed
     policy['reattestations'] = [*policy.get('reattestations', []), record]
     dataset.policy = policy
     dataset.source_device = source_stat.st_dev
     dataset.store_device = store_stat.st_dev
+    if source_root_identity(dataset)[1] is None:
+        # Informational only on such filesystems; keep it current for the audit trail.
+        dataset.source_inode = source_stat.st_ino
     dataset.revision += 1
     try:
         session.add(dataset)

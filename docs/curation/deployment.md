@@ -81,6 +81,13 @@ the store for exclusive creation, an enforced `0400` mode and hard links and
 refuses `store_root_unsupported_filesystem` otherwise (exFAT media drives fail
 this on purpose).
 
+Source roots may be on exFAT or FAT media. Those drivers do not keep directory
+inode numbers, so registration records that and the source-root inode is not
+part of the identity check for such datasets; the remaining fences and the
+per-file hash re-verification still apply. A dataset registered on such media
+before this record existed keeps the strict inode fence and will report
+`root_identity_changed` after a remount; re-register it.
+
 ## Data directory ownership
 
 The container runs as `1000:1000` and the compose file adds nested read-only

@@ -94,8 +94,15 @@ from `/proc/self/fdinfo`. The supplied expected UUID and mountpoint are only
 constraints compared with these observations. They never substitute for them.
 
 The persisted dataset policy pins those mount fields and namespace identity;
-the dataset also pins source-root and store-root device/inode identities. Each
-source path is verified before and after reads. `read_at` invokes
+the dataset also pins source-root and store-root device/inode identities. On
+filesystems whose Linux drivers do not keep inode numbers across cache eviction
+or a remount (`exfat`, `vfat`, `msdos`; they assign numbers with `iunique()`),
+registration records `policy.root_identity.source_inode_persistent = false` from
+the observed filesystem type and the source-root inode is not compared; the
+UUID, filesystem root, mountpoint, device, pinned relative paths and per-file
+SHA-256 checks carry that fence instead. The record must agree with the pinned
+filesystem type, so it cannot relax the fence elsewhere, and the store-root
+inode is always compared. Each source path is verified before and after reads. `read_at` invokes
 `verify_source_descriptor(dataset, fd)` before and after byte capture. This
 detects nested mounts and same-device bind mounts that a device-only check would
 miss, as well as mount substitutions while a descriptor is held. Existing

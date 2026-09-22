@@ -46,8 +46,12 @@ def safe_parts(path: str) -> tuple[str, ...]:
 
 
 @contextmanager
-def directory(path: str, identity: tuple[int, int] | None = None):
-    """Walk from / with O_NOFOLLOW on every component, then verify root identity."""
+def directory(path: str, identity: tuple[int, int | None] | None = None):
+    """Walk from / with O_NOFOLLOW on every component, then verify root identity.
+
+    ``identity`` is ``(device, inode)``; an inode of ``None`` means the pinned
+    filesystem does not keep inode numbers and only the device is compared.
+    """
     absolute = Path(path)
     if not absolute.is_absolute():
         fail('unsafe_root')
@@ -60,7 +64,8 @@ def directory(path: str, identity: tuple[int, int] | None = None):
             os.close(fd)
             fd = nxt
         info = os.fstat(fd)
-        if identity and (info.st_dev, info.st_ino) != identity:
+        if identity and (info.st_dev != identity[0]
+                         or (identity[1] is not None and info.st_ino != identity[1])):
             fail('root_identity_changed')
         yield fd
     except OSError:
@@ -133,14 +138,16 @@ def read_at(root_fd: int, relative: str, expected: str | None = None,
 
 
 def source_bytes(dataset, source, hook=None):
-    from app.services.source_locations import verify_source_descriptor, verify_source_volume
+    from app.services.source_locations import (source_root_identity, verify_source_descriptor,
+                                               verify_source_volume)
     verify_source_volume(dataset, source.relative_path)
     def guard(fd):
         verify_source_descriptor(dataset, fd)
-    with directory(dataset.source_root, (dataset.source_device, dataset.source_inode)) as fd:
+    root_identity = source_root_identity(dataset)
+    with directory(dataset.source_root, root_identity) as fd:
         data = read_at(fd, source.relative_path, source.sha256, hook=hook, descriptor_guard=guard)
     # Rewalk after read: reject ancestor/root substitution during the operation.
-    with directory(dataset.source_root, (dataset.source_device, dataset.source_inode)) as fd:
+    with directory(dataset.source_root, root_identity) as fd:
         if digest(read_at(fd, source.relative_path, source.sha256, descriptor_guard=guard)) != digest(data):
             fail('source_changed')
     verify_source_volume(dataset, source.relative_path)

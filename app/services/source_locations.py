@@ -156,6 +156,42 @@ PERSISTENT_VOLUME_FIELDS = ('uuid', 'filesystem_type', 'filesystem_root', 'mount
 # every read; they may only be re-pinned by an explicit, audited operator
 # re-attestation that re-verifies every registered file.
 RUNTIME_VOLUME_FIELDS = ('mount_id', 'device', 'source', 'namespace_device', 'namespace_inode')
+# Filesystems whose Linux drivers assign inode numbers with iunique() when an
+# inode is instantiated (fs/exfat/inode.c, fs/fat/inode.c). The number changes
+# after cache eviction or a remount, so it cannot identify a directory across
+# reads. Registration records this and the source-root inode fence is then
+# carried by the volume UUID, filesystem root, mountpoint, the pinned relative
+# paths and the per-file hashes instead; every other fence is unchanged. The
+# derivative store is never on such a filesystem (the capability probe refuses
+# it), so its inode fence always applies.
+NON_PERSISTENT_INODE_FILESYSTEMS = frozenset({'exfat', 'vfat', 'msdos'})
+_ROOT_IDENTITY_FIELDS = {'basis', 'filesystem_type', 'source_inode_persistent', 'store_inode_persistent'}
+
+
+def root_identity_record(volume: dict) -> dict:
+    """What registration records about whether root inode numbers can be trusted."""
+    return {'basis': 'filesystem_type', 'filesystem_type': volume['filesystem_type'],
+            'source_inode_persistent': volume['filesystem_type'] not in NON_PERSISTENT_INODE_FILESYSTEMS,
+            'store_inode_persistent': True}
+
+
+def source_root_identity(dataset) -> tuple[int, int | None]:
+    """Device and, when the filesystem keeps them, inode of the pinned source root.
+
+    Datasets registered before the record existed keep the strict inode fence.
+    A record that disagrees with the pinned filesystem type is invalid: the
+    fence may not be relaxed by editing policy.
+    """
+    expected = _volume_policy(dataset)
+    record = dataset.policy.get('root_identity') if expected is not None else None
+    if record is None:
+        return dataset.source_device, dataset.source_inode
+    if (not isinstance(record, dict) or set(record) != _ROOT_IDENTITY_FIELDS
+            or record != root_identity_record(expected)):
+        fail('source_volume_policy_required')
+    if record['source_inode_persistent']:
+        return dataset.source_device, dataset.source_inode
+    return dataset.source_device, None
 
 
 def registered_source_volume(dataset) -> dict:
@@ -196,7 +232,7 @@ def verify_source_volume(dataset, relative_path: str | None = None) -> dict | No
     expected = _volume_policy(dataset)
     if expected is None:
         return None
-    with directory(dataset.source_root, (dataset.source_device, dataset.source_inode)) as fd:
+    with directory(dataset.source_root, source_root_identity(dataset)) as fd:
         observed = observe_source_volume(dataset.source_root, opened_fd=fd)
         if observed != expected:
             fail('source_volume_changed')
