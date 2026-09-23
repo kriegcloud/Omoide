@@ -107,7 +107,7 @@ class MissingMaintenanceTests(unittest.TestCase):
         task = self.run_task()
         self.assertEqual(task.result, {
             "flagged": 1, "recovered": 1, "removed": 0, "awaiting_review": 2,
-            "skipped_unmounted_roots": [],
+            "skipped_unmounted_roots": [], "unreadable": 0,
         })
         self.assertIsNone(self.session.get(Media, recovered_id).missing_since)
         self.assertEqual(task.processed, 3)

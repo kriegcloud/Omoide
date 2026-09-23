@@ -61,6 +61,9 @@ def summarize_task(task: ProcessingTask) -> str:
             skipped = _count(result.get("skipped")) or 0
             if skipped > 0:
                 summary += f", {skipped} skipped"
+            unreadable = _count(result.get("unreadable_dirs")) or 0
+            if unreadable > 0:
+                summary += ", " + _plural(unreadable, "unreadable directory", "unreadable directories")
             return summary
         return _plural(task.processed, "new file")
 
@@ -88,14 +91,16 @@ def summarize_task(task: ProcessingTask) -> str:
         return _plural(task.processed, "face") + " clustered"
 
     if task_type == "clean_missing_files":
+        unreadable = _count(result.get("unreadable")) or 0
+        suffix = f" · {unreadable} unreadable (I/O error)" if unreadable > 0 else ""
         awaiting_review = _count(result.get("awaiting_review")) or 0
         if awaiting_review > 0:
             flagged = _count(result.get("flagged")) or 0
-            return f"Flagged {flagged} missing · {awaiting_review} awaiting review in Missing Files"
+            return f"Flagged {flagged} missing · {awaiting_review} awaiting review in Missing Files" + suffix
         removed = _count(result.get("removed"))
         if removed is not None:
-            return "No missing records" if removed == 0 else _plural(removed, "record") + " removed"
-        return "Checked " + _plural(task.processed, "record")
+            return ("No missing records" if removed == 0 else _plural(removed, "record") + " removed") + suffix
+        return "Checked " + _plural(task.processed, "record") + suffix
 
     if task_type == "find_duplicates":
         groups = _count(result.get("groups"))

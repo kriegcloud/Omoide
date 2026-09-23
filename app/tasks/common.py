@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import BackgroundTasks, HTTPException
@@ -17,7 +18,27 @@ from app.models import ProcessingTask
 
 from .state import clear_task_progress
 
-__all__ = ["create_and_run_task"]
+__all__ = ["create_and_run_task", "describe_error", "probe_path"]
+
+
+def describe_error(exc: BaseException) -> str:
+    """One line for ``ProcessingTask.result["error"]``; the task feed shows it verbatim."""
+    return f"{type(exc).__name__}: {exc}"
+
+
+def probe_path(path: Path) -> bool | OSError:
+    """
+    ``Path.exists`` that distinguishes "gone" from "cannot tell".
+
+    Returns the ``OSError`` when the stat itself fails (EIO from a stale
+    mount, EACCES, ...). Callers must not treat that as missing: flagging or
+    deleting a record because the drive is unreadable is how a hiccup becomes
+    data loss.
+    """
+    try:
+        return path.exists()
+    except OSError as exc:
+        return exc
 
 
 def _start_task(session: Session, task: ProcessingTask) -> bool:
@@ -68,7 +89,7 @@ def _run_task_guarded(callable_task: Callable[[str], None], task_id: str) -> Non
     """
     try:
         callable_task(task_id)
-    except Exception:
+    except Exception as exc:
         logger.exception(
             "Background task %s crashed with an unhandled exception", task_id
         )
@@ -78,6 +99,7 @@ def _run_task_guarded(callable_task: Callable[[str], None], task_id: str) -> Non
                 if task and task.status in ("pending", "running"):
                     task.status = "failed"
                     task.finished_at = datetime.now(timezone.utc)
+                    task.result = {**(task.result or {}), "error": describe_error(exc)}
                     session.add(task)
                     safe_commit(session)
         except Exception:

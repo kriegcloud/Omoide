@@ -168,8 +168,13 @@ Create `.env` beside the Compose file and set absolute host paths:
 
 ```dotenv
 PORT=8123
-HOST_MEDIA_DIR_T7=/absolute/path/to/first-media-root
-HOST_MEDIA_DIR_T7XFER=/absolute/path/to/second-media-root
+# Parent directory udisks mounts removable drives under; bind-mounted as
+# /app/media with rslave propagation so re-attached drives are picked up live.
+HOST_MEDIA_MOUNT_ROOT=/run/media/<user>
+# Per-drive host paths (must live under HOST_MEDIA_MOUNT_ROOT); used to map
+# container paths back to host paths in exports.
+HOST_MEDIA_DIR_T7=/run/media/<user>/T7
+HOST_MEDIA_DIR_T7XFER=/run/media/<user>/T7XFER
 HOST_DATA_DIR=/absolute/path/to/omoide-data
 ENV_FILE=omoide.env
 
