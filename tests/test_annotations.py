@@ -66,6 +66,9 @@ class AnnotationPersistenceTests(unittest.TestCase):
             poolclass=StaticPool,
         )
         SQLModel.metadata.create_all(self.engine)
+        # Acknowledgement opens its own session after the route transaction.
+        # Keep that session on this test's database as well as the caller's.
+        self.enterContext(patch("app.annotation_tasks.db.engine", self.engine))
         with Session(self.engine) as session:
             session.add(
                 Media(

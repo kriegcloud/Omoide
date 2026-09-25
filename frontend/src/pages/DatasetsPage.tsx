@@ -17,6 +17,7 @@ import { Link } from "react-router-dom";
 import { API } from "../config";
 import { EmptyState } from "../components/EmptyState";
 import NewDatasetDialog from "../components/NewDatasetDialog";
+import CurationEntryLink from "../components/CurationEntryLink";
 import { getDatasets } from "../services/datasets";
 import type { TrainingDataset } from "../types";
 import { encodeFilePath } from "../urlUtils";
@@ -38,7 +39,7 @@ export default function DatasetsPage() {
           <DatasetIcon color="primary" />
           <Typography variant="h5" component="h1" fontWeight={700}>Training datasets</Typography>
         </Box>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => setNewOpen(true)}>New dataset</Button>
+        <Box display="flex" gap={1} flexWrap="wrap"><CurationEntryLink /><Button variant="contained" startIcon={<AddIcon />} onClick={() => setNewOpen(true)}>New dataset</Button></Box>
       </Box>
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
       {loading ? (

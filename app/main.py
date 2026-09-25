@@ -106,6 +106,8 @@ from app.api import (
     tasks,
     untagged,
 )
+from app.api import curation as curation_api
+from app.services.curation_policy import install_curation_guard
 from app.api.person import merge_queue_router
 from app.api.processors import router as proc_router
 from app.config import require_mutation_allowed, get_clip_bundle, get_os_app_config_dir, settings
@@ -584,6 +586,18 @@ async def lifespan(app: FastAPI):
     # of the lifespan, causing uvicorn to set should_exit=True immediately
     # after binding the port — the server shuts down before serving any
     # requests and the webview window stays stuck on the loading screen.
+    logger.info("lifespan: reconciling curation operations...")
+    try:
+        # Runs before the generic cleanup so an uncertain export is resolved (or
+        # made resumable) before pending rows are pruned. It never starts a
+        # worker itself; the ordinary resume path is the single execution.
+        from app.services.curation_jobs import reconcile_curation_operations
+
+        with Session(db.engine) as session:
+            reconcile_curation_operations(session)
+        logger.info("lifespan: curation operation reconciliation done")
+    except Exception as e:
+        logger.warning("Curation operation reconciliation failed: %s", e)
     logger.info("lifespan: cleaning up stale tasks...")
     accept_resumed_tasks()
     try:
@@ -640,6 +654,7 @@ except Exception:
     pass
 
 app = FastAPI(lifespan=lifespan, redoc_url=None, dependencies=[Depends(require_mutation_allowed)])
+install_curation_guard(app)
 origins = [os.environ.get("DOMAIN", ""), "http://localhost:5173"]
 app.add_middleware(
     CORSMiddleware,
@@ -665,6 +680,7 @@ if _workstation_browser_hardening_enabled():
 #     return response
 
 
+app.include_router(curation_api.router, prefix="/api/curation", tags=["curation-fixtures"])
 app.include_router(proc_router, prefix="/api", tags=["processors"])
 app.include_router(media, prefix="/api/media", tags=["media"])
 app.include_router(merge_queue_router, prefix="/api/persons", tags=["person"])

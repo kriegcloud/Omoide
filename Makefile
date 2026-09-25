@@ -48,7 +48,7 @@ docker-down:
 	PUID=$(shell id -u) PGID=$(shell id -g) docker compose down
 
 backup:
-	sqlite3 ".backup ${HOST_DATA_DIR}/omoide.db '${HOST_MEDIA_DIR}/db.backup'"
+	python3 scripts/backup_workstation_database.py --data-dir "$(HOST_DATA_DIR)"
 
 build-image:
 	docker buildx build \

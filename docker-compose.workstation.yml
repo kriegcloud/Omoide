@@ -40,6 +40,11 @@ services:
       OMOIDE_SCAN__AUTO_CLEAN_ON_SCAN: "false"
       OMOIDE_SCAN__AUTO_CLEANUP_WITHOUT_REVIEW: "false"
       OMOIDE_WORKSTATION_BROWSER_HARDENING: "true"
+      # Production still curation is disabled unless .env opts in. RP_ID and
+      # ORIGIN must be the exact browser origin (http only for localhost).
+      OMOIDE_CURATION_MODE: "${OMOIDE_CURATION_MODE:-disabled}"
+      OMOIDE_CURATION_RP_ID: "${OMOIDE_CURATION_RP_ID:-}"
+      OMOIDE_CURATION_ORIGIN: "${OMOIDE_CURATION_ORIGIN:-}"
       PYTHONDONTWRITEBYTECODE: "1"
       TMPDIR: /tmp
       XDG_CACHE_HOME: /app/data/.cache
@@ -71,6 +76,15 @@ services:
         source: "${HOST_MEDIA_DIR_T7XFER:?HOST_MEDIA_DIR_T7XFER must be set}"
         target: /app/media/T7XFER
         read_only: false
+        bind:
+          create_host_path: false
+      # Read-only udev device database. findmnt resolves a bind-mounted
+      # source's filesystem UUID through it; without it curation registration
+      # refuses every source (UUID unobservable). No device nodes are exposed.
+      - type: bind
+        source: /run/udev
+        target: /run/udev
+        read_only: true
         bind:
           create_host_path: false
       - type: bind
