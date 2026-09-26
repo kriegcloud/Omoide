@@ -15,7 +15,7 @@ readonly ML_SOCKET="/home/elpresidank/.local/share/omoide-portal/run/omoide-ml.s
 readonly COMFY_BRIDGE_SERVICE="omoide-comfy-bridge.service"
 readonly COMFY_BRIDGE_SOCKET="/home/elpresidank/.local/share/omoide-portal/run/omoide-comfy.sock"
 readonly ML_PYTHON="/home/elpresidank/.cache/omoide/photo-face/venv-rocm72/bin/python"
-readonly ML_LIBRARY_PATH="/home/elpresidank/.cache/beep/photo-face/rocm-libs/hipsparselt-7.2.4-1.1/opt/rocm/lib:/opt/rocm/lib"
+readonly ML_LIBRARY_PATH="/home/elpresidank/.local/share/omoide-portal/rocm-libs/hipsparselt-7.2.4-1.1/opt/rocm/lib:/opt/rocm/lib"
 
 show_error() {
   local message="$1"
