@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 import time
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -81,6 +81,17 @@ def _looks_like_thumbnail(path: Path) -> bool:
     return False
 
 
+# Directories a library scan must never descend into: Omoide's own data
+# folder, the freedesktop trash on removable media (.Trash-<uid>, .Trash/<uid>)
+# and Windows recycle/system folders. Files a user moved to the trash were
+# being re-indexed as "new" and then flagged missing at their old path.
+_SKIPPED_DIR_NAMES = frozenset({".omoide", ".Trash", "$RECYCLE.BIN", "System Volume Information"})
+
+
+def _is_skipped_dir(name: str) -> bool:
+    return name in _SKIPPED_DIR_NAMES or name.startswith(".Trash-")
+
+
 def _scan_path_key(value: str | Path) -> str:
     try:
         return os.path.normcase(os.path.abspath(os.fspath(value)))
@@ -93,11 +104,14 @@ def _walk_media_candidates(
     allowed_suffixes: frozenset[str],
     *,
     skip_thumbnails: bool,
+    on_error: Callable[[OSError], None] | None = None,
 ) -> Iterator[Path]:
     def on_walk_error(err: OSError) -> None:
         logger.warning(
             "Scan walk error in %s: %s", err.filename or "unknown", err
         )
+        if on_error is not None:
+            on_error(err)
 
     for media_dir in media_dirs:
         for root, dirs, files in os.walk(
@@ -109,7 +123,7 @@ def _walk_media_candidates(
             root_path = Path(root)
             safe_dirs: list[str] = []
             for dirname in dirs:
-                if dirname == ".omoide":
+                if _is_skipped_dir(dirname):
                     continue
                 try:
                     if (root_path / dirname).is_symlink():
@@ -209,10 +223,20 @@ def run_scan(task_id: str) -> None:
         since_update = 0
         next_total_update = time.monotonic() + discovery_update_interval
         recovered_ids: set[int] = set()
+        unreadable_dirs: list[str] = []
+
+        def on_unreadable_dir(err: OSError) -> None:
+            # A media root that answers EIO (stale mount) or EACCES walks as
+            # empty; without this the scan reports a clean "0 new files".
+            directory = err.filename or "unknown"
+            unreadable_dirs.append(os.fspath(directory))
+            record_task_failure(task_id, os.fspath(directory), str(err))
+
         for path in _walk_media_candidates(
             media_dirs,
             allowed_suffixes,
             skip_thumbnails=settings.scan.skip_thumbnails_on_scan,
+            on_error=on_unreadable_dir,
         ):
             spath = os.fspath(path)
             path_key = _scan_path_key(spath)
@@ -257,7 +281,8 @@ def run_scan(task_id: str) -> None:
             task.result = {
                 **(task.result or {}),
                 "new_files": len(new_files),
-                "skipped": get_failure_count(task_id),
+                "skipped": get_failure_count(task_id) - len(unreadable_dirs),
+                "unreadable_dirs": unreadable_dirs,
             }
             safe_commit(sess)
             _finish_task(sess, task, "completed")
@@ -406,7 +431,8 @@ def run_scan(task_id: str) -> None:
             task.result = {
                 **(task.result or {}),
                 "new_files": len(new_files),
-                "skipped": get_failure_count(task_id),
+                "skipped": get_failure_count(task_id) - len(unreadable_dirs),
+                "unreadable_dirs": unreadable_dirs,
             }
             sess.add(task)
             safe_commit(sess)

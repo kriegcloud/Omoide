@@ -66,18 +66,22 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=1g,mode=1777
     volumes:
+      # Removable media. Bind the udisks mount parent (/run/media/<user>) with
+      # rslave propagation so a drive that is unplugged and re-attached shows
+      # up in the container as a fresh mount under /app/media/<label>. Binding
+      # /run/media/<user>/T7 itself pins the old superblock: after a reconnect
+      # every stat under it returns EIO until the container is recreated
+      # (2026-09-23: scan found 0 files, missing-file detection and media
+      # processing crashed). The per-drive export mappings below still use
+      # HOST_MEDIA_DIR_T7 / HOST_MEDIA_DIR_T7XFER, which must live under
+      # HOST_MEDIA_MOUNT_ROOT.
       - type: bind
-        source: "${HOST_MEDIA_DIR_T7:?HOST_MEDIA_DIR_T7 must be set}"
-        target: /app/media/T7
+        source: "${HOST_MEDIA_MOUNT_ROOT:?HOST_MEDIA_MOUNT_ROOT must be set (udisks mount parent, e.g. /run/media/<user>)}"
+        target: /app/media
         read_only: false
         bind:
           create_host_path: false
-      - type: bind
-        source: "${HOST_MEDIA_DIR_T7XFER:?HOST_MEDIA_DIR_T7XFER must be set}"
-        target: /app/media/T7XFER
-        read_only: false
-        bind:
-          create_host_path: false
+          propagation: rslave
       # Read-only udev device database. findmnt resolves a bind-mounted
       # source's filesystem UUID through it; without it curation registration
       # refuses every source (UUID unobservable). No device nodes are exposed.

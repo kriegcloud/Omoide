@@ -25,7 +25,7 @@ when driving the browser, and scale screenshots down (0.2–0.5) if you must tak
 ## Verify before merging
 
 ```bash
-.venv/bin/python -m unittest discover -s tests        # 582 OK as of 2026-09-10
+.venv/bin/python -m unittest discover -s tests        # 687 OK as of 2026-09-23
 cd frontend && npm run build                          # must be green
 cd frontend && npx eslint src --ext .ts,.tsx          # baseline 54 problems; add none
 .venv/bin/alembic heads                               # exactly one head (3d4e5f607182)

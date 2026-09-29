@@ -18,8 +18,8 @@ from app.models import Face, Media, ProcessingTask, Status
 from app.processor_registry import load_processors, processors
 from app.services.face_matching import match_faces_to_persons, matching_thresholds
 from app.utils import split_video
-from .state import clear_task_progress, set_task_progress
-from .common import _start_task, _finish_task
+from .state import clear_task_progress, record_task_failure, set_task_progress
+from .common import _start_task, _finish_task, describe_error, probe_path
 
 __all__ = [
     "run_media_processing",
@@ -298,12 +298,14 @@ def run_media_processing(task_id: str, *, clustering_chained: bool = False) -> N
     apply_pillow_limits(settings.scan.max_image_pixels)
     try:
         _run_media_processing(task_id, clustering_chained=clustering_chained)
-    except Exception:
+    except Exception as exc:
         logger.exception("Unhandled error in run_media_processing (task %s)", task_id)
         try:
             with Session(db.engine) as s:
                 task = s.get(ProcessingTask, task_id)
                 if task:
+                    task.result = {**(task.result or {}), "error": describe_error(exc)}
+                    s.add(task)
                     _finish_task(s, task, "failed")
         except Exception:
             logger.exception("Failed to mark task %s as failed", task_id)
@@ -395,8 +397,14 @@ def _run_media_processing(task_id: str, *, clustering_chained: bool = False) -> 
                     last_media_id = max(last_media_id, media.id)
                     retry_ids.discard(media.id)
                     media_path = Path(media.path) if media.path else None
+                    exists = probe_path(media_path) if media_path is not None else False
 
-                    if media_path is None or not media_path.exists():
+                    if isinstance(exists, OSError):
+                        # Unreadable, not absent: leave the row alone and move on.
+                        logger.warning("Skipping unreadable media %s: %s", media_path, exists)
+                        record_task_failure(task_id, os.fspath(media_path), str(exists))
+                        continue
+                    if not exists:
                         if not media.missing_since:
                             media.missing_since = datetime.now(timezone.utc)
                             session.add(media)

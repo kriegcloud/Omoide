@@ -27,6 +27,9 @@ from app.models import (
 )
 from app.services.face_provenance import face_assignment_values
 
+from .common import probe_path
+from .state import record_task_failure
+
 __all__ = [
     "clean_missing_files",
     "reset_clustering",
@@ -144,6 +147,7 @@ def clean_missing_files(task_id: str) -> None:
         flagged = 0
         recovered = 0
         auto_deleted = 0
+        unreadable = 0
         batch_size = 200
         last_id = 0
 
@@ -171,6 +175,7 @@ def clean_missing_files(task_id: str) -> None:
                 "removed": auto_deleted,
                 "awaiting_review": awaiting_review,
                 "skipped_unmounted_roots": [str(root) for root in skipped_roots],
+                "unreadable": unreadable,
             }
             session.commit()
 
@@ -202,7 +207,14 @@ def clean_missing_files(task_id: str) -> None:
                         continue
                     current_time = _naive_utc(datetime.now(timezone.utc))
 
-                    if not media_path.exists():
+                    exists = probe_path(media_path)
+                    if isinstance(exists, OSError):
+                        # EIO from a stale mount or EACCES: the file may well be
+                        # there, so never flag or delete on its account.
+                        unreadable += 1
+                        record_task_failure(task_id, str(media_path), str(exists))
+                        continue
+                    if not exists:
                         if media.missing_since is None:
                             media.missing_since = current_time
                             flagged += 1
