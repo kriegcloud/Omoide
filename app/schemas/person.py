@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.schemas.face import FaceRead
 from sqlmodel import SQLModel
 
+from app.schemas.face import FaceRead
+
 
 class ProfileFace(BaseModel):
     id: int
@@ -76,6 +78,11 @@ class PersonUpdate(BaseModel):
     name: str | None = None
     profile_face_id: int | None = None
     gender: Literal["female", "male"] | None = None
+
+
+class PersonMediaExportRequest(BaseModel):
+    destination_path: str
+    mode: Literal["copy", "move"]
 
 
 class PersonMedia(SQLModel):

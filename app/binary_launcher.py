@@ -8,9 +8,11 @@ Only `webview` and the Python standard library are imported before
 `webview.create_window()` is called.  Everything else is deferred to
 `_boot_and_switch()`, which runs while the spinner is already visible.
 """
+
 from __future__ import annotations
 
 import logging
+import multiprocessing
 import os
 import socket
 import sys
@@ -18,10 +20,17 @@ import threading
 import time
 from pathlib import Path
 
+# Windows multiprocessing re-launches the frozen executable for worker
+# processes. Without this guard, a worker starts this GUI entry point again,
+# creating a second Uvicorn/WebView instance and leaving the original window
+# blank or attached to the wrong server.
+multiprocessing.freeze_support()
+
 
 # ---------------------------------------------------------------------------
 # Helpers — pure stdlib, no heavy imports
 # ---------------------------------------------------------------------------
+
 
 def _env_truthy(value: str | None) -> bool:
     if value is None:
@@ -34,11 +43,15 @@ def _resolve_webview2_runtime_dir() -> Path | None:
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         candidates.append(Path(sys._MEIPASS) / "webview2runtime")
     try:
-        candidates.append(Path(sys.executable).resolve().parent / "webview2runtime")
+        candidates.append(
+            Path(sys.executable).resolve().parent / "webview2runtime"
+        )
     except Exception:
         pass
     try:
-        candidates.append(Path(__file__).resolve().parent.parent / "webview2runtime")
+        candidates.append(
+            Path(__file__).resolve().parent.parent / "webview2runtime"
+        )
     except Exception:
         pass
     for c in candidates:
@@ -61,7 +74,9 @@ def _webview_storage_dir() -> Path:
     is created.
     """
     if sys.platform == "win32":
-        base = Path(os.getenv("APPDATA") or Path.home() / "AppData" / "Roaming")
+        base = Path(
+            os.getenv("APPDATA") or Path.home() / "AppData" / "Roaming"
+        )
     elif sys.platform == "darwin":
         base = Path(
             os.getenv("XDG_CONFIG_HOME")
@@ -75,7 +90,11 @@ def _webview_storage_dir() -> Path:
 
 
 def _boot_log_path() -> Path:
-    return _webview_storage_dir().parent / "boot.log"
+    # Keep early native-launch diagnostics alongside the normal application
+    # log, rather than in the application-data root.
+    log_dir = _webview_storage_dir().parent / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir / "boot.log"
 
 
 def _boot_log(msg: str) -> None:
@@ -110,8 +129,10 @@ try:
             os.environ["SQLITE_VEC_PATH"] = str(_vec_candidates[0])
         else:
             _vec_name = (
-                "vec0.dll" if sys.platform in ("win32", "cygwin")
-                else "vec0.dylib" if sys.platform == "darwin"
+                "vec0.dll"
+                if sys.platform in ("win32", "cygwin")
+                else "vec0.dylib"
+                if sys.platform == "darwin"
                 else "vec0.so"
             )
             os.environ["SQLITE_VEC_PATH"] = str(_base / _vec_name)
@@ -126,35 +147,47 @@ _boot_log("launcher: starting (frozen=%s)" % getattr(sys, "frozen", False))
 
 os.environ["QT_API"] = "pyside6"
 _webview_gui_override = os.environ.get("OMOIDE_WEBVIEW_GUI")
+_webview2_runtime_path: str | None = None
 if sys.platform.startswith("win"):
     _gui_choice = (_webview_gui_override or "edgechromium").strip().lower()
-    if _gui_choice == "edgechromium":
+    if _gui_choice == "edgechromium" and _env_truthy(
+        os.environ.get("OMOIDE_USE_BUNDLED_WEBVIEW2")
+    ):
         _wv2_dir = _resolve_webview2_runtime_dir()
         if _wv2_dir:
-            os.environ.setdefault(
-                "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", str(_wv2_dir)
+            # An explicitly requested fixed runtime is configured through
+            # pywebview's supported EdgeChromium setting. By default the
+            # packaged app uses the system Evergreen runtime, matching local
+            # builds and avoiding CI's fixed-runtime incompatibilities.
+            _webview2_runtime_path = str(_wv2_dir)
+            _boot_log(
+                f"launcher: using bundled WebView2 runtime at {_wv2_dir}"
             )
-            _boot_log(f"launcher: using bundled WebView2 runtime at {_wv2_dir}")
         else:
             _boot_log(
                 "launcher: no bundled WebView2 runtime found, "
                 "falling back to the system-installed Evergreen runtime"
             )
+    elif _gui_choice == "edgechromium":
+        _boot_log("launcher: using system-installed Evergreen WebView2 runtime")
     _disable_gpu_raw = os.environ.get("OMOIDE_WEBVIEW_DISABLE_GPU")
     _disable_gpu = _disable_gpu_raw is None or _env_truthy(_disable_gpu_raw)
     if _gui_choice == "qt" and _disable_gpu:
         _flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
-        _extra = (
-            "--disable-gpu --disable-gpu-compositing --disable-gpu-rasterization"
-        )
+        _extra = "--disable-gpu --disable-gpu-compositing --disable-gpu-rasterization"
         if _extra not in _flags:
-            os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = f"{_flags} {_extra}".strip()
+            os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+                f"{_flags} {_extra}".strip()
+            )
 
 # ---------------------------------------------------------------------------
 # Now import webview — fast, no ML or ORM involved
 # ---------------------------------------------------------------------------
 
-import webview  # noqa: E402
+import webview
+
+if _webview2_runtime_path:
+    webview.settings["WEBVIEW2_RUNTIME_PATH"] = _webview2_runtime_path
 
 # pywebview logs its own errors (e.g. a WebView2/CoreWebView2 init failure)
 # via logging.getLogger('pywebview'), which by default has no handler and no
@@ -162,7 +195,9 @@ import webview  # noqa: E402
 # vanish. Route it into the same boot.log so a native init failure/hang is
 # still visible.
 try:
-    _pywebview_handler = logging.FileHandler(_boot_log_path(), encoding="utf-8")
+    _pywebview_handler = logging.FileHandler(
+        _boot_log_path(), encoding="utf-8"
+    )
     _pywebview_handler.setFormatter(
         logging.Formatter("%(asctime)s pywebview %(levelname)s %(message)s")
     )
@@ -212,7 +247,10 @@ def _preferred_webview_gui() -> str | None:
 def _resolve_window_icon() -> str | None:
     base = _bundle_base()
     if sys.platform.startswith("win"):
-        candidates = ["dist/brand/favicon.ico", "frontend/public/brand/favicon.ico"]
+        candidates = [
+            "dist/brand/favicon.ico",
+            "frontend/public/brand/favicon.ico",
+        ]
     elif sys.platform == "darwin":
         candidates = [
             "dist/brand/favicon.icns",
@@ -266,8 +304,11 @@ def _boot_and_switch() -> None:
 
     # This single import triggers the full app initialisation:
     # FastAPI, SQLAlchemy, all routers, settings load, etc.
-    _boot_log("boot: importing app.main (FastAPI, SQLAlchemy, routers, settings)...")
-    import app.main as _main  # noqa: F401
+    _boot_log(
+        "boot: importing app.main (FastAPI, SQLAlchemy, routers, settings)..."
+    )
+    import app.main as _main
+
     _boot_log("boot: app.main imported")
 
     _boot_log("boot: running database migrations...")
@@ -295,7 +336,9 @@ def _boot_and_switch() -> None:
             time.sleep(0.25)
 
     if connected:
-        _boot_log(f"boot: {host}:{port} answered after {time.time() - start:.1f}s")
+        _boot_log(
+            f"boot: {host}:{port} answered after {time.time() - start:.1f}s"
+        )
     else:
         _boot_log(
             f"boot: gave up waiting for {host}:{port} after "
@@ -341,6 +384,7 @@ except RuntimeError as exc:
     _boot_log(f"launcher: webview.start() raised RuntimeError: {exc}")
     if sys.platform.startswith("win"):
         import ctypes
+
         ctypes.windll.user32.MessageBoxW(
             0,
             (

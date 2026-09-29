@@ -33,8 +33,11 @@ interface PersonHeroProps {
   onRefreshSimilar: () => void;
   onAutoSelectProfile: () => void;
   onHideToggle: () => void;
+  onExportMedia: () => void;
   saving: boolean;
   autoSelectingProfile: boolean;
+  canExportMedia: boolean;
+  exportingMedia: boolean;
 }
 
 export function PersonHero({
@@ -46,8 +49,11 @@ export function PersonHero({
   onRefreshSimilar,
   onAutoSelectProfile,
   onHideToggle,
+  onExportMedia,
   saving,
   autoSelectingProfile,
+  canExportMedia,
+  exportingMedia,
 }: PersonHeroProps) {
   const theme = useTheme();
   const navigate = useNavigate();
@@ -181,6 +187,19 @@ export function PersonHero({
                   "Auto Profile"
                 )}
               </Button>
+              {canExportMedia && (
+                <Button
+                  variant="outlined"
+                  onClick={onExportMedia}
+                  disabled={saving || exportingMedia}
+                >
+                  {exportingMedia ? (
+                    <CircularProgress size={18} thickness={5} />
+                  ) : (
+                    "Export / Copy media…"
+                  )}
+                </Button>
+              )}
               <Button
                 variant="outlined"
                 startIcon={<DatasetIcon />}

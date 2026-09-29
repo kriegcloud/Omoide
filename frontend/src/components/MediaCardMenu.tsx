@@ -18,6 +18,7 @@ import DriveFileRenameOutlineIcon from "@mui/icons-material/DriveFileRenameOutli
 import DriveFileMoveIcon from "@mui/icons-material/DriveFileMove";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import PersonAddIcon from "@mui/icons-material/PersonAdd";
+import LinkOffIcon from "@mui/icons-material/LinkOff";
 import DatasetIcon from "@mui/icons-material/Dataset";
 import DeleteIcon from "@mui/icons-material/Delete";
 import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
@@ -48,6 +49,9 @@ const ImageEditorDialog = lazy(() => import("./ImageEditorDialog"));
 
 export interface MediaPersonContext {
   personId: number;
+  // Detach this item from the person (undoable through the page's handler).
+  onUnmatch?: () => void | Promise<void>;
+  unmatchLabel?: string;
 }
 
 interface MediaCardMenuProps {
@@ -292,6 +296,12 @@ export default function MediaCardMenu({
           <ListItemIcon><PersonAddIcon /></ListItemIcon>
           Assign to person…
         </MenuItem>
+        {personContext?.onUnmatch && (
+          <MenuItem onClick={() => { closeMenu(); void personContext.onUnmatch?.(); }}>
+            <ListItemIcon><LinkOffIcon /></ListItemIcon>
+            {personContext.unmatchLabel ?? "Unmatch from person"}
+          </MenuItem>
+        )}
         <MenuItem onClick={() => openDialog("dataset")}>
           <ListItemIcon><DatasetIcon /></ListItemIcon>
           Add to dataset…

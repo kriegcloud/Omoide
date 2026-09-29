@@ -7,7 +7,9 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  Typography,
 } from "@mui/material";
+import { useState } from "react";
 import Alert from "@mui/material/Alert";
 import Snackbar from "@mui/material/Snackbar";
 import { PersonContentTabs } from "../components/PersonContentTabs";
@@ -15,8 +17,13 @@ import { PersonHero } from "../components/PersonHero";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { usePersonDetailPage } from "../hooks/usePersonDetailPage";
 import PersonPicker from "../components/PersonPicker";
+import { pickDirectory } from "../services/config";
+import { exportPersonMedia } from "../services/personActions";
 
 export default function PersonDetailPage() {
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportDestination, setExportDestination] = useState<string | null>(null);
+  const [exportingMedia, setExportingMedia] = useState(false);
   const {
     person,
     loading,
@@ -30,6 +37,7 @@ export default function PersonDetailPage() {
     similarPersons,
     suggestedFaces,
     relationshipGraph,
+    canExportMedia,
     relationshipDepth,
     isLoadingRelationships,
     hasLoadedRelationships,
@@ -75,6 +83,55 @@ export default function PersonDetailPage() {
     fetchFacesForMedia,
   } = usePersonDetailPage();
 
+  const selectExportDestination = async () => {
+    try {
+      const selectedDirectory = await pickDirectory();
+      if (!selectedDirectory) return;
+      setExportDestination(selectedDirectory);
+      setExportDialogOpen(true);
+    } catch (error) {
+      console.error("Failed to select export folder:", error);
+      setSnackbar({
+        open: true,
+        message: "Failed to select an export folder",
+        severity: "error",
+      });
+    }
+  };
+
+  const exportMedia = async (mode: "copy" | "move") => {
+    if (!exportDestination) return;
+    setExportingMedia(true);
+    try {
+      const result = await exportPersonMedia(
+        person?.id ?? 0,
+        exportDestination,
+        mode,
+      );
+      const action = mode === "copy" ? "Copied" : "Moved";
+      const skipped = result.skipped.length;
+      setSnackbar({
+        open: true,
+        message: `${action} ${result.completed} media file${result.completed === 1 ? "" : "s"}${
+          skipped ? `; skipped ${skipped}` : ""
+        }.`,
+        severity: skipped && result.completed === 0 ? "error" : "success",
+      });
+      setExportDialogOpen(false);
+      setExportDestination(null);
+    } catch (error) {
+      console.error(`Failed to ${mode} person media:`, error);
+      setSnackbar({
+        open: true,
+        message:
+          error instanceof Error ? error.message : `Failed to ${mode} media`,
+        severity: "error",
+      });
+    } finally {
+      setExportingMedia(false);
+    }
+  };
+
   if (!loading && (loadError || !person)) {
     return (
       <Container sx={{ py: 4 }}>
@@ -113,6 +170,9 @@ export default function PersonDetailPage() {
         onAutoSelectProfile={handleAutoSelectProfileFace}
         onHideToggle={handleHideToggle}
         autoSelectingProfile={isAutoSelectingProfile}
+        onExportMedia={selectExportDestination}
+        canExportMedia={canExportMedia}
+        exportingMedia={exportingMedia}
       />
 
       <PersonContentTabs
@@ -183,6 +243,58 @@ export default function PersonDetailPage() {
         message={`Are you sure you want to merge "${person.name}" into "${mergeTarget?.name}"? This action cannot be undone.`}
         confirmLabel="Confirm Merge" confirmColor="primary" loading={saving}
         onConfirm={handleConfirmMerge} onClose={() => setMergeTarget(null)} />
+
+      <Dialog
+        open={exportDialogOpen}
+        onClose={exportingMedia ? undefined : () => setExportDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Export media to folder</DialogTitle>
+        <DialogContent>
+          <Typography>
+            {person.appearance_count} media file
+            {person.appearance_count === 1 ? "" : "s"} containing this
+            person will be exported to:
+          </Typography>
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ mt: 1, overflowWrap: "anywhere" }}
+          >
+            {exportDestination}
+          </Typography>
+          <Typography color="text.secondary" sx={{ mt: 2 }}>
+            Copy keeps the originals in their current folders. Move relocates
+            them and updates their paths in your library. Existing files are
+            never overwritten.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => setExportDialogOpen(false)}
+            disabled={exportingMedia}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="outlined"
+            onClick={() => exportMedia("copy")}
+            disabled={exportingMedia}
+          >
+            Copy
+          </Button>
+          <Button
+            color="warning"
+            variant="contained"
+            onClick={() => exportMedia("move")}
+            disabled={exportingMedia}
+            startIcon={exportingMedia ? <CircularProgress size={16} /> : undefined}
+          >
+            Move
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Merge Dialog */}
       <Dialog open={mergeOpen} onClose={() => setMergeOpen(false)} fullWidth maxWidth="sm">

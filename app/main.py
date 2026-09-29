@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import mimetypes
+import multiprocessing
 import os
 import sys
 import threading
@@ -12,6 +13,11 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
+
+# Keep the alternate PyInstaller entry point safe as well. On Windows a
+# multiprocessing worker re-executes the frozen application; this must happen
+# before importing Torch/OpenCLIP or creating a webview window.
+multiprocessing.freeze_support()
 
 from app.version import get_app_version
 
@@ -46,14 +52,17 @@ def _resolve_webview2_runtime_dir() -> Path | None:
 
 os.environ["QT_API"] = "pyside6"
 _webview_gui_override = os.environ.get("OMOIDE_WEBVIEW_GUI")
+_webview2_runtime_path: str | None = None
 if sys.platform.startswith("win"):
     gui_choice = (_webview_gui_override or "edgechromium").strip().lower()
-    if gui_choice == "edgechromium":
+    if gui_choice == "edgechromium" and _env_truthy(
+        os.environ.get("OMOIDE_USE_BUNDLED_WEBVIEW2")
+    ):
         runtime_dir = _resolve_webview2_runtime_dir()
         if runtime_dir:
-            os.environ.setdefault(
-                "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", str(runtime_dir)
-            )
+            # pywebview reads this through webview.settings after import;
+            # only use a fixed runtime when explicitly requested.
+            _webview2_runtime_path = str(runtime_dir)
     disable_gpu_raw = os.environ.get("OMOIDE_WEBVIEW_DISABLE_GPU")
     disable_gpu = disable_gpu_raw is None or _env_truthy(disable_gpu_raw)
     if gui_choice == "qt" and disable_gpu:
@@ -68,6 +77,10 @@ import socket
 import pillow_heif
 import uvicorn
 import webview
+
+if _webview2_runtime_path:
+    webview.settings["WEBVIEW2_RUNTIME_PATH"] = _webview2_runtime_path
+
 from anyio import to_thread
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -115,7 +128,7 @@ from app.image_limits import apply_pillow_limits
 from app.database import ensure_vec_tables
 from app.ffmpeg import ensure_ffmpeg_available
 from app.logger import configure_file_logging, logger
-from app.models import ProcessingTask
+from app.models import Media, ProcessingTask
 from app.processor_registry import load_processors
 from app.services.releases import get_latest_release_info
 from app.tasks.resume import is_resumable, resume_task
@@ -778,7 +791,16 @@ async def serve_original_media(file_path: str):
         if not any(
             _is_within(normalized, media_dir) for media_dir in media_dirs
         ):
-            continue
+            # A person-media move can deliberately relocate an existing item
+            # outside the configured scan roots. Allow only paths that are
+            # already recorded in the local library; never expose arbitrary
+            # filesystem paths from this endpoint.
+            with Session(db.engine) as session:
+                known_media = session.exec(
+                    select(Media.id).where(Media.path == str(normalized))
+                ).first()
+            if not known_media:
+                continue
 
         if not normalized.is_file():
             continue
@@ -927,7 +949,10 @@ async def spa_catch_all(full_path: str):
 def run_server():
     """Runs the Uvicorn server."""
     global server
-    logger.info("run_server: starting uvicorn on 127.0.0.1:8123...")
+    logger.info(
+        "run_server: starting uvicorn on 127.0.0.1:8123... (pid=%s)",
+        os.getpid(),
+    )
     config = uvicorn.Config(app, host="127.0.0.1", port=8123)
     server = uvicorn.Server(config)
     server.run()

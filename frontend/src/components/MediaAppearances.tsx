@@ -14,6 +14,7 @@ import { searchTags } from "../services/search";
 import { useSelection } from "../context/SelectionContext";
 import { useGridSelection } from "../hooks/useMarqueeSelection";
 import MarqueeSelectionBox from "./MarqueeSelectionBox";
+import config from "../config";
 
 const breakpointColumnsObj = {
   default: 6,
@@ -31,6 +32,7 @@ interface MediaAppearancesProps {
   filterTags: Tag[];
   onFilterTagsChange: (tags: Tag[]) => void;
   mediaListKey: string;
+  onUnmatch?: (mediaId: number) => Promise<void>;
 }
 export default function MediaAppearances({
   person,
@@ -39,6 +41,7 @@ export default function MediaAppearances({
   filterTags,
   onFilterTagsChange,
   mediaListKey,
+  onUnmatch,
 }: MediaAppearancesProps) {
   const [personOptions, setPersonOptions] = useState<PersonReadSimple[]>([]);
   const [tagOptions, setTagOptions] = useState<Tag[]>([]);
@@ -190,7 +193,14 @@ export default function MediaAppearances({
                 <MediaCard
                   media={media}
                   mediaListKey={mediaListKey}
-                  personContext={{ personId: person.id }}
+                  personContext={{
+                    personId: person.id,
+                    onUnmatch:
+                      !config.PRESENTATION_MODE && onUnmatch
+                        ? () => onUnmatch(media.id)
+                        : undefined,
+                    unmatchLabel: `Unmatch from ${person.name || `Person ${person.id}`}`,
+                  }}
                   onSelectionClick={onItemClick}
                 />
               </div>
