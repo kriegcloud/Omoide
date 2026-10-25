@@ -38,11 +38,11 @@ import { encodeFilePath } from "../urlUtils";
 import {
   designStateToOps,
   editorCanvasOutput,
-  refitEditorCrop,
   type EditOp,
   type FilerobotDesignState,
 } from "../utils/editorOps";
 import ConfirmDialog from "./ConfirmDialog";
+import { observeEditorFits } from "../utils/editorFitObserver";
 
 interface LazyEditorProps {
   source: string;
@@ -66,6 +66,8 @@ type FilerobotUpdateState = (
 ) => void;
 
 interface FilerobotStoreState {
+  pastDesignStates?: FilerobotDesignState[];
+  futureDesignStates?: FilerobotDesignState[];
   adjustments?: FilerobotDesignState["adjustments"];
   resize?: FilerobotDesignState["resize"];
   finetunesProps?: FilerobotDesignState["finetunesProps"];
@@ -216,7 +218,6 @@ export default function ImageEditorDialog({
   );
   const updateStateRef = useRef<FilerobotUpdateState | undefined>(undefined);
   const editorHostRef = useRef<HTMLDivElement>(null);
-  const cropSpaceRef = useRef<FilerobotDesignState | null>(null);
   const [faceGuides, setFaceGuides] = useState(false);
   const [aspectGuides, setAspectGuides] = useState(false);
   const [compareHeld, setCompareHeld] = useState(false);
@@ -280,28 +281,19 @@ export default function ImageEditorDialog({
   // render. Apply only to the snapshot read, so an intervening edit wins.
   // Stop the observer with the dialog/editor lifecycle.
   useEffect(() => {
-    cropSpaceRef.current = null;
     if (!open || !entered) return;
-    let frame: number;
-    let active = true;
-    const observe = async () => {
-      const state = await captureStoreState();
-      if (!active) return;
-      if (state) {
-        const snapshot = { adjustments: state.adjustments, shownImageDimensions: state.shownImageDimensions };
-        const adjustments = refitEditorCrop(cropSpaceRef.current, snapshot);
-        cropSpaceRef.current = { ...snapshot, adjustments: adjustments ?? snapshot.adjustments };
-        if (adjustments) {
-          updateStateRef.current?.(current =>
-            current.adjustments === state.adjustments && current.shownImageDimensions === state.shownImageDimensions
-              ? { adjustments } : null
-          );
-        }
-      }
-      frame = window.requestAnimationFrame(() => { void observe(); });
-    };
-    frame = window.requestAnimationFrame(() => { void observe(); });
-    return () => { active = false; window.cancelAnimationFrame(frame); };
+    return observeEditorFits(
+      async () => {
+        const state = await captureStoreState();
+        return state ? {
+          adjustments: state.adjustments, shownImageDimensions: state.shownImageDimensions,
+          pastDesignStates: state.pastDesignStates, futureDesignStates: state.futureDesignStates,
+        } : null;
+      },
+      update => updateStateRef.current?.(current => update({adjustments: current.adjustments, shownImageDimensions: current.shownImageDimensions, pastDesignStates: current.pastDesignStates, futureDesignStates: current.futureDesignStates}) ?? null),
+      callback => window.requestAnimationFrame(callback),
+      frame => window.cancelAnimationFrame(frame),
+    );
   }, [open, entered, media.id, captureStoreState]);
 
   useEffect(() => {

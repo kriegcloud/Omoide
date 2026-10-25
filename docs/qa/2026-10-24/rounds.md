@@ -38,3 +38,18 @@ All7round2findings are fixed without waiver. Conversion recovery explicitly reta
 Nonblocking UI backlog: a newly edited copy without an embedding shows generic Failed to load similar media because its similarity API correctly returns404 No embedding found. In this fixture the image-embedding processor is deliberately disabled. Improve the unavailable-state copy without hiding genuine network/server errors; acceptance is a no-vector response-specific UI regression. No failed editor save or HTTP500 is implied by that message.
 
 Round2 fixedCommit fields refer to the commit introducing this acceptance; the next review records its hash. Logs: `/tmp/omoide-qa-round2-backend.log`, `/tmp/omoide-qa-round2-mcp.log`; reviewer and fixer receipts use `/tmp/omoide-qa-round2-*`. Source/test changes and this ledger are durable proof.
+
+## Round 3
+
+Target `b98f386e7ade216a944a38ccf5527ed52ce0794d`. Backend reviewer ownership rotated for independent checks. Three required findings: source identity must bind before encoding; unready profile candidates must not admit normal API requests; editor fit correction must retain source geometry through Undo/Redo history. These findings have permanent failing-first regressions and bounded ownership.
+
+Editor evidence is qualified: the installed-provider forced persistent-fit/history regression failed, while the ordinary prepatch Chrome rotate/Undo/Flip/save sequence passed at the current viewport. Postfix Chrome added a persistent1000x650viewport change, then Undo/Flip/Save copy; fixture-02_edited-4.jpg is640x480 and the original remains intact. The temporary viewport override was reset. Frontend210/210, hotkeys76/76, image-edit/limit backend13/13, build and source lint passed after the editor-history fix.
+
+Final R3 QA runtime loaded after confirming no active fixture tasks. Chrome Configuration Save exercised its real save/reload sequence; before/after canonical JSON hashes are identical, Save re-enables, and health returns200 at e0f1a2b3c4d5. No configuration field or matching threshold changed.
+
+
+R3 profile acceptance additionally reproduced and repaired overlapping switches that left runtime and bootstrap on different profiles. Changes are serialized before bootstrap/filesystem mutation; busy config reads return503 and competing writes409. Candidate preparation accepts explicit URL/model/dimensions, including a real768-dimensional fresh migration while active runtime stays unchanged. A newly running task before publication aborts the switch. Same-database migration/vector failure stays degraded; a later admission conflict after successful preparation restores prior readiness. These are bounded interleaving proofs, not a claim of atomic isolation for every already-inflight request or arbitrary admission between the final check and publication.
+
+The first R3 full-suite attempt was intentionally interrupted for the final phase-distinction regression; exit130 is not a pass. The final complete run is logged separately at `/tmp/omoide-qa-round3-backend-final.log`. Final MCP9/9 passed in15.364seconds at `/tmp/omoide-qa-round3-mcp-final.log`.
+
+Final R3 gate: 930/930 backend tests passed in566.513seconds; frontend210/210, hotkeys76/76, realstdio MCP9/9, strict build and canonical source lint passed. Alembic has one head, e0f1a2b3c4d5. The final fixture read probe covered58routes:54HTTP200,2expected401,2expected400,zero500. Protected annotation files and matching thresholds remain unchanged. Source/test fixes are introduced by the round3 commit; its hash is recorded by the subsequent review.

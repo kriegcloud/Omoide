@@ -1,8 +1,11 @@
 import logging
+import inspect
+import threading
+from functools import wraps
 from copy import deepcopy
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -17,9 +20,42 @@ from app.tasks import schedule_custom_auto_tagging
 from app.records import delete_record
 
 
+_profile_change_lock = threading.Lock()
+
+
+def _ensure_profile_router_ready(request: Request) -> None:
+    if _profile_change_lock.locked():
+        status = 503 if request.method in {"GET", "HEAD", "OPTIONS"} else 409
+        raise HTTPException(status_code=status, detail="A profile/configuration change is in progress.")
+
+
+def _exclusive_profile_change(function):
+    """Reject overlapping changes before bootstrap/config filesystem mutation."""
+    def acquire():
+        if not _profile_change_lock.acquire(blocking=False):
+            raise HTTPException(status_code=409, detail="A profile/configuration change is in progress.")
+    if inspect.iscoroutinefunction(function):
+        @wraps(function)
+        async def async_guard(*args, **kwargs):
+            acquire()
+            try:
+                return await function(*args, **kwargs)
+            finally:
+                _profile_change_lock.release()
+        return async_guard
+    @wraps(function)
+    def guard(*args, **kwargs):
+        acquire()
+        try:
+            return function(*args, **kwargs)
+        finally:
+            _profile_change_lock.release()
+    return guard
+
+
 # Even reading the configuration exposes filesystem paths, so the whole
 # router is closed in presentation mode, not just its writes.
-router = APIRouter(dependencies=[Depends(ensure_writable)])
+router = APIRouter(dependencies=[Depends(ensure_writable), Depends(_ensure_profile_router_ready)])
 logger = logging.getLogger(__name__)
 
 
@@ -77,7 +113,7 @@ class SaveSettingsRequest(BaseModel):
 
 def _reload_and_reconfigure():
     try:
-        reload_settings()
+        reload_settings(before_publish=_assert_no_active_tasks)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     # Local import avoids the application/router bootstrap cycle.
@@ -87,6 +123,7 @@ def _reload_and_reconfigure():
 
 
 @router.post("/reload", status_code=204)
+@_exclusive_profile_change
 async def reload_settings_endpoint():
     """Reload settings and apply the active profile's scheduling policy."""
     _reload_and_reconfigure()
@@ -99,6 +136,7 @@ async def get_settings():
 
 
 @router.post("/", response_model=AppSettings)
+@_exclusive_profile_change
 async def save_settings_endpoint(
     payload: SaveSettingsRequest | AppSettings,
 ):
@@ -309,6 +347,7 @@ def _sanitize_profile_path(p: Path) -> Path:
 
 
 @router.post("/profiles/switch", status_code=204)
+@_exclusive_profile_change
 def switch_profile(req: SwitchProfileRequest):
     if settings.general.is_docker:
         raise HTTPException(
@@ -372,6 +411,7 @@ class CreateProfileRequest(BaseModel):
 
 
 @router.post("/profiles/create", status_code=204)
+@_exclusive_profile_change
 def create_profile(req: CreateProfileRequest):
     if settings.general.is_docker:
         raise HTTPException(
@@ -454,6 +494,7 @@ class RemoveProfileRequest(BaseModel):
 
 
 @router.post("/profiles/remove", status_code=204)
+@_exclusive_profile_change
 def remove_profile(req: RemoveProfileRequest):
     if settings.general.is_docker:
         raise HTTPException(
@@ -491,6 +532,7 @@ class AddProfileRequest(BaseModel):
 
 
 @router.post("/profiles/add", status_code=204)
+@_exclusive_profile_change
 def add_profile(req: AddProfileRequest):
     """Register an existing profile directory without switching to it.
 

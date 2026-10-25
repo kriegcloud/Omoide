@@ -381,7 +381,7 @@ Baseline items precede reviewer round 1. No blockers are implicitly waived.
 - `testsNeeded`:Failing-first permanent tests for target migration and vector/schema failures, prior settings/bootstrap/engine retention, skipped target scheduling/model release on failure, unchanged successful switch/create/reload behavior and controlled API failure responses.
 - `dependencies`:none.
 - `status`: fixed
-- `fixedCommit`: round2 commit (see rounds.md)
+- `fixedCommit`: b98f386e7ade216a944a38ccf5527ed52ce0794d
 
 One required finding. Protected annotation mutation guards and curation fixture/production legacy-authority guards were inspected read-only; no additional reproduced blocker is claimed there. Genuine passkey/inference/training and production profile activation remain outside this review's execution proof. Source coverage/history and green907backend/199frontend/76hotkey/9MCP gates are accepted from the orchestrator; this review does not reclassify coverage limitations as passes.
 
@@ -405,7 +405,7 @@ One required finding. Protected annotation mutation guards and curation fixture/
 - `testsNeeded`: Runtime atomic source replacement after commit and before rollback, unchanged-source successful cleanup, original/encoded recovery retention, and no foreign-inode unlink/replace.
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: round2 commit (see rounds.md)
+- `fixedCommit`: b98f386e7ade216a944a38ccf5527ed52ce0794d
 
 ### R2-RUNTIME-02: Repair completion overwrites cancellation accepted during thumbnail finalization
 
@@ -426,7 +426,7 @@ One required finding. Protected annotation mutation guards and curation fixture/
 - `testsNeeded`: Runtime accepted cancellation during metadata/thumbnail finalization, no follow-up when CAS loses, original bytes unchanged, no dangling provisional output rows, and normal success/error behavior.
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: round2 commit (see rounds.md)
+- `fixedCommit`: b98f386e7ade216a944a38ccf5527ed52ce0794d
 
 No additional confirmed training admission, durable counter/feed, curation lease/authority or streaming failure was reproduced in this bounded round. External codec/training/Comfy/passkey/platform limits remain as recorded in coverage.md; they are not implied passes.
 
@@ -450,7 +450,7 @@ No additional confirmed training admission, durable counter/feed, curation lease
 - `testsNeeded`: Out-of-order filters, dataset identity changes, concurrent polling, stale errors, pagination failure, and no API polling/state writes after unmount
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: round2 commit (see rounds.md)
+- `fixedCommit`: b98f386e7ade216a944a38ccf5527ed52ce0794d
 
 ### UI-R2-002: Dataset export creation completion contaminates the next dataset's history
 
@@ -471,7 +471,7 @@ No additional confirmed training admission, durable counter/feed, curation lease
 - `testsNeeded`: Export success/error after route change, old membership completion with media shared by both datasets, stale selection cleanup, and late operation completion after unmount
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: round2 commit (see rounds.md)
+- `fixedCommit`: b98f386e7ade216a944a38ccf5527ed52ce0794d
 
 ### UI-R2-003: Right-angle image rotation cannot save because output validation reads unrotated metadata
 
@@ -492,7 +492,7 @@ No additional confirmed training admission, durable counter/feed, curation lease
 - `testsNeeded`: Actual canvas vs metadata disagreement, right-angle rotations, cropped rotations, resize, pixel ratio and genuine output mismatch rejection
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: round2 commit (see rounds.md)
+- `fixedCommit`: b98f386e7ade216a944a38ccf5527ed52ce0794d
 
 ### UI-R2-004: Video preview is keyboard-focusable but has no accessible role or name
 
@@ -513,6 +513,73 @@ No additional confirmed training admission, durable counter/feed, curation lease
 - `testsNeeded`: Accessible role/name, exactly one intended tab stop, Enter and Space activation, pointer activation, and unchanged post-activation playback
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: round2 commit (see rounds.md)
+- `fixedCommit`: b98f386e7ade216a944a38ccf5527ed52ce0794d
 
 No source or test file was edited during this review. Temporary synthetic harnesses intercepted all services; no HTTP, private media, or production state was touched.
+
+### R3-API-01: Replacement conversion adopts a source version changed during encoding and deletes it
+
+- `round`: 3
+- `reviewer`: API/domain architecture reviewer, rotated independent runtime identity/CAS review
+- `label`: issue
+- `blockingStatus`: blocking
+- `severity`: P0-critical
+- `doctrineBucket`: not-doctrine
+- `sourceRefs`: `AGENTS.md` — failing-test-first audit rule; `docs/qa/2026-10-24/rounds.md` — R2 source identity/recovery preservation; `app/conversion.py:199` — independent recovery and identity contract; synthetic command/log below.
+- `affectedFiles`: `app/conversion.py:209`, `app/conversion.py:351`, `app/conversion.py:367`, `app/tasks/conversion.py:235`, `app/tasks/conversion.py:380`; corresponding conversion regression tests.
+- `evidence`: `PYTHONPATH=. .venv/bin/python /tmp/omoide-qa-round3-source-change-probe.py` failed both `.mp4` same-path and `.avi` extension-changing replacement subcases. The fake encoder reads the initial source, produces encoded bytes, then writes a distinguishable newer version to the source before returning. Real `convert_media(..., 'replace_original')` finishes successfully, leaving exactly `[b'encoded-original-before-encode']`; `b'newer-user-version-during-encode'` is absent from every remaining file. Assertions fail at temporary probe line 31. Full output: `/tmp/omoide-qa-round3-source-change-probe.log`. Encoding occurs at line 351, while the first source identity is only captured inside `publish_replacement` at line 209. Consequently the new source version is copied to a backup, treated as the approved source, overwritten/deleted, and its backup then deleted by lines 303–317. The legacy task caller likewise starts FFmpeg without carrying its pre-encoding source identity into publication.
+- `impact`: Confirmed loss of a newer source version in isolated synthetic fixtures when a source is edited or replaced during conversion. Long video encodes make this an extended conflict window. No production loss is claimed. This is separate from the documented narrow final-stat-to-filesystem-mutation race: the edit is fully complete before the first publication identity snapshot.
+- `suggestedFix`: Capture an expected source identity before encoding/probing starts in both replacement callers; require publication to validate against that expected identity rather than adopting the current source as its baseline. Reject a mismatch before publication/catalog commit, preserve the newer source, retain/report encoded recovery as appropriate, and leave the catalog pointing to the original source. Preserve the documented narrow portable stat/mutation limitation without claiming external atomic locks.
+- `recommendedSkillOrAgent`: Runtime/conversion fixer agent
+- `fixerGroup`: `app/conversion.py`, `app/tasks/conversion.py`, focused conversion transaction/lifecycle tests
+- `acceptanceCommands`: `PYTHONPATH=. .venv/bin/python /tmp/omoide-qa-round3-source-change-probe.py`; `TMPDIR=/tmp .venv/bin/python -m unittest discover -s tests -p 'test_runtime_transaction_safety.py' -v`; `TMPDIR=/tmp .venv/bin/python -m unittest discover -s tests -p 'test_round6_safety_conversion_lifecycle.py' -v`; permanent new focused source-version tests chosen by fixer, followed by root full suite.
+- `testsNeeded`: Permanent failing-first regressions for source edits during encoding for same-path and extension-changing replacement, covering shared `convert_media` and legacy `_run_conversion` entry points; assert newer bytes survive, no stale catalog publication/completed task, and usable encoded recovery is retained/reported. Include both in-place edits and inode replacements where practical; preserve successful ordinary conversion coverage.
+- `dependencies`: none
+- `status`: fixed
+- `fixedCommit`: pending
+
+### R3-RUNTIME-01: Unprepared profile globals admit ordinary requests before activation succeeds
+
+- `round`: 3
+- `reviewer`: Quality/runtime — readiness and transactional activation isolation
+- `label`: issue
+- `blockingStatus`: blocking
+- `severity`: P1-high
+- `doctrineBucket`: not-doctrine
+- `sourceRefs`: R2 profile activation rollback contract in inventory/rounds; docs/qa/2026-10-24/plan.md readiness and existing-feature scope; app/config/__init__.py:348-361 preparation-before-retiring-old-engine intent; app/database.py:get_session; AGENTS.md health readiness
+- `affectedFiles`: app/config/__init__.py:355-361; app/database.py:get_session; shared API/readiness boundary if preparation cannot be made explicit; alembic/env.py:_prepare_config currently forces global settings URL
+- `evidence`: reload_settings mutates global settings and db.engine before run_migrations/ensure_vec_tables. During mocked migration callback, ordinary GET /api/tags/ goes from200 before activation to500 while candidate schema is absent and back to200 after switch409 restores old runtime. A second real HTTP fixture creates partial candidate tables, POST /api/tags/ succeeds201 with candidate-only-tag while activation is still preparing, then migration fails409; restored active catalog remains empty. Health's migration-state check does not gate normal request/session admission. Existing8 tests assert final rollback identity but do not exercise concurrent request admission during preparation.
+- `impact`: Requests can fail on an unfinished schema or successfully write into a profile that is then rejected, leaving user actions in the wrong/inactive catalog despite the profile switch failing. Retaining/restoring old engine afterward cannot compensate those requests.
+- `suggestedFix`: Prepare the candidate against explicit engine/config arguments without exposing global settings/engine until readiness succeeds. Alembic environment must honor an explicit target while retaining active-profile CLI defaults; initial vector dimension migration must use candidate dimensions. If globals must temporarily change, gate all ordinary read/write/session admissions with controlled503 and serialize activation, not just the health endpoint. Preserve same-physical-database failed-schema degraded state and rollback/disposal contracts.
+- `recommendedSkillOrAgent`: profile/runtime activation fixer
+- `fixerGroup`: configuration/database/Alembic preparation and focused activation/request tests
+- `acceptanceCommands`: Failing concurrent GET and POST TestClient regressions during migration and vector preparation; rejected candidate receives no ordinary writes, active catalog stays usable or controlled503; test_profile_activation_transaction.py, pipeline_profile, migration_health, migration index tests, full canonical backend suite.
+- `testsNeeded`: Runtime interleaving at migration and vector stages, successful/rejected candidate reads/writes, explicit migration URL/dimensions, same-db failure degradation and preserved old runtime/pools; CLI migration backward compatibility.
+- `dependencies`: none
+- `status`: fixed
+- `fixedCommit`: pending
+
+No additional evidence-backed protected-file/quality gate blocker was identified. Existing warning/platform/external-inference limits remain as recorded; no warning suppression or implied external acceptance.
+
+### UI-R3-001: Viewport fit leaves Undo/Redo crop history in obsolete coordinates
+
+- `round`: 3
+- `reviewer`: UI/contracts
+- `label`: issue
+- `blockingStatus`: blocking
+- `severity`: P1-high
+- `doctrineBucket`: not-doctrine
+- `sourceRefs`: `docs/qa/2026-10-24/plan.md` every-feature correctness and failing-test-first requirements; `docs/qa/2026-10-24/rounds.md` Round2 geometry closure; installed Filerobot4.9.1 `actions/undo.js`, `actions/redo.js`, `utils/extractCurrentDesignState.js`
+- `affectedFiles`: `frontend/src/components/ImageEditorDialog.tsx:282`, `frontend/src/utils/editorOps.ts:119`, `frontend/tests/round2-ui.test.cjs`
+- `evidence`: `/tmp/omoide-r3-editor-history.cjs` executes installed undo.js and useTransformedImgData through the existing geometry harness. Fit updates live full crop568.3×426.225 to503.4967805989583×377.6225854492187, but pastDesignStates still contains the old crop. Undo restores568.3×426.225 while shown dimensions remain503.4967805989583×377.6225854492187. refitEditorCrop returns undefined because dimensions no longer change and the crop differs. Provider canvas becomes722×542; serializer throws `The editor expects a 722×542 result but the replay would produce 640×480`. A subsequent Flip or finetune remains a real edit but cannot save. Future history has the same coordinate ownership problem.
+- `impact`: Normal editor Undo/Redo after rotation-induced viewport fit can restore an oversized/wrong crop and block saving. Partial crops can also replay the wrong source region. The safe mismatch guard prevents an incorrect write but does not complete the workflow.
+- `suggestedFix`: Whenever live shown coordinates are refitted, transform crop coordinates in pastDesignStates and futureDesignStates into that same space alongside the live crop. Preserve each history entry's rotation/flips/resize and all unrelated fields. Ensure automatic bookkeeping does not create undo entries. Retain the output guard, pure reducer callbacks and cleanup/current-snapshot checks.
+- `recommendedSkillOrAgent`: frontend editor/provider integration fixer
+- `fixerGroup`: frontend image-editor geometry adapter and focused tests
+- `acceptanceCommands`: Permanent installed-provider Undo/Redo regression first; `node --test-isolation=none --test frontend/tests/*.test.cjs`; every hotkey test; strict build; canonical src ESLint; parent Chrome rotate→fit→Undo→Flip→Save copy with unchanged original
+- `testsNeeded`: Live and past/future full and partial crop coordinates through repeated fits; actual installed Undo/Redo reducers and export geometry; explicit resize preservation; unchanged user edits; observer lifecycle and reducer replay checks
+- `dependencies`: none
+- `status`: fixed
+- `fixedCommit`: pending
+
+Review notes/limits: current observer cleanup cancels its scheduled frame, guards a pending asynchronous capture after cleanup, and uses pure conditional correction callbacks; no additional blocker reproduced in these paths. Caption ignored-abort and unmount regressions and dataset export identity regression substantiate their specific scenarios; source inspection found no new required issue in the reviewed caption/dataset guards. Their lightweight hook harness does not simulate concurrent React scheduling. R2 wording that StrictMode callback safety is regression-covered is broader than the existing tests (they exercise the pure geometry helper, not the effect lifecycle); add direct adapter lifecycle/replay evidence with this fix or narrow that claim. Canonical src lint choice matches AGENTS and plan. Broad CJS lint scope and no-embedding Similar wording remain documented tooling/UX backlog, not new blockers. Existing922backend/206frontend/76hotkey/9MCP gates were not redundantly rerun for read-only review.

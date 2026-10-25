@@ -195,10 +195,13 @@ def _file_identity(path: Path) -> tuple[int, ...] | None:
 def publish_replacement(
     session: Session, media: Media, encoded: Path, destination: Path,
     *, commit: Callable[[], object] | None = None,
+    expected_source_identity: tuple[int, ...] | None = None,
 ) -> Path:
     """Keep independent recovery versions until catalog commit and owned cleanup.
 
-    Identity checks protect against observed replacements and in-place edits.
+    Encoding callers supply the identity observed before reading the source, so
+    publication rejects replacements and in-place edits made during encoding.
+    Direct publication callers may bind the source at publication entry instead.
     Portable filesystems provide no compare-and-unlink/replace primitive: external
     writes between the last identity check and mutation remain a narrow TOCTOU
     limit. Recovery copies are independent inodes, so newer writes cannot mutate
@@ -206,12 +209,15 @@ def publish_replacement(
     """
     source = Path(media.path)
     original = (media.path, media.filename, media.size)
-    source_identity = _file_identity(source)
+    source_identity = (expected_source_identity if expected_source_identity is not None
+                       else _file_identity(source))
     backup: Path | None = None
     swap: Path | None = None
     published = False
     published_identity = None
     try:
+        if source_identity is None or _file_identity(source) != source_identity:
+            raise ConversionError("Source identity changed during encoding")
         descriptor, name = tempfile.mkstemp(prefix=".omoide-original-", suffix=".backup", dir=source.parent)
         os.close(descriptor)
         backup = Path(name)
@@ -344,6 +350,9 @@ def convert_media(
         return target
 
     settings.general.ensure_media_path_writable(source)
+    source_identity = _file_identity(source)
+    if source_identity is None:
+        raise ConversionError(f"File not found: {source}")
     descriptor, staging_name = tempfile.mkstemp(prefix=".omoide-replace-", suffix=".mp4", dir=source.parent)
     os.close(descriptor)
     staging = Path(staging_name)
@@ -364,7 +373,9 @@ def convert_media(
     except Exception:
         staging.unlink(missing_ok=True)
         raise
-    result = publish_replacement(session, media, staging, final)
+    result = publish_replacement(
+        session, media, staging, final, expected_source_identity=source_identity,
+    )
     try:
         converted_copy_path(media.id).unlink(missing_ok=True)
     except OSError as exc:

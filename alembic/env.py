@@ -19,7 +19,8 @@ def _prepare_config():
     to point at the currently active profile.
     """
     cfg = context.config
-    cfg.set_main_option("sqlalchemy.url", settings.general.database_url)
+    # Explicit candidate preparation must not read/publish runtime globals.
+    cfg.set_main_option("sqlalchemy.url", cfg.attributes.get("database_url", settings.general.database_url))
 
     # Interpret the config file for Python logging (idempotent).
     if cfg.config_file_name is not None and not getattr(

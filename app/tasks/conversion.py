@@ -22,6 +22,7 @@ from app.config import settings
 from app.conversion import (
     ConversionError,
     ConversionMode,
+    _file_identity,
     convert_media,
     existing_converted_copy,
     is_browser_playable,
@@ -209,6 +210,9 @@ def _run_conversion(task_id: str, media_path: str, media_id: int):
 
         try:
             settings.general.ensure_media_path_writable(media_path_obj)
+            source_identity = _file_identity(media_path_obj)
+            if source_identity is None:
+                raise ConversionError(f"File not found: {media_path_obj}")
             # Reserve both files exclusively in the source filesystem. FFmpeg may
             # overwrite only these task-owned files, never a guessed sibling name.
             descriptor, filename = tempfile.mkstemp(
@@ -380,6 +384,7 @@ def _run_conversion(task_id: str, media_path: str, media_id: int):
             publish_replacement(
                 session, media, temp_output_path, destination,
                 commit=lambda: _finish_task(session, task, "completed"),
+                expected_source_identity=source_identity,
             )
             preserve_output = False
         except Exception as e:

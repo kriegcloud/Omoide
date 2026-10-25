@@ -18,6 +18,7 @@ from app import config, database  # noqa: E402
 
 api = importlib.import_module("app.api.config")
 main = importlib.import_module("app.main")
+_real_assert_no_active_tasks = api._assert_no_active_tasks
 
 
 class ProfileActivationTransactionTests(unittest.TestCase):
@@ -116,13 +117,17 @@ class ProfileActivationTransactionTests(unittest.TestCase):
     def test_successful_switch_retains_old_engine_until_schema_is_ready(self):
         events = []
         with patch.object(self.engine, "dispose", wraps=self.engine.dispose) as dispose:
-            def migrate():
+            def migrate(**kwargs):
                 self.assertFalse(dispose.called)
-                self.assertIsNot(database.engine, self.engine)
+                self.assertIs(database.engine, self.engine)
+                self.assertEqual(config.settings.general.data_dir, self.active)
+                self.assertEqual(kwargs["database_url"], self.incoming.general.database_url)
                 database._set_migration_state(database.MigrationState.APPLIED)
                 events.append("migrate")
-            def vectors():
+            def vectors(**kwargs):
                 self.assertFalse(dispose.called)
+                self.assertIs(database.engine, self.engine)
+                self.assertIsNot(kwargs["target_engine"], self.engine)
                 events.append("vectors")
             with patch.object(database, "run_migrations", side_effect=migrate), \
                  patch.object(database, "ensure_vec_tables", side_effect=vectors):
@@ -138,7 +143,7 @@ class ProfileActivationTransactionTests(unittest.TestCase):
 
     def test_successful_same_profile_reload_keeps_public_return_contract(self):
         self.incoming.general.data_dir = self.active
-        with patch.object(database, "run_migrations", side_effect=lambda:
+        with patch.object(database, "run_migrations", side_effect=lambda **kwargs:
                           database._set_migration_state(database.MigrationState.APPLIED)),              patch.object(database, "ensure_vec_tables"):
             self.assertIsNone(config.reload_settings())
         self.assertEqual(config.settings.general.data_dir, self.active)
@@ -148,6 +153,127 @@ class ProfileActivationTransactionTests(unittest.TestCase):
         self.processors.assert_called_once_with()
         self.onnx.assert_called_once_with()
 
+
+    def test_ordinary_requests_never_observe_preparing_or_rejected_candidate(self):
+        from fastapi.testclient import TestClient
+        from sqlmodel import SQLModel
+        SQLModel.metadata.create_all(self.engine)
+        for stage in ("migration", "vectors"):
+            with self.subTest(stage=stage):
+                observed = []
+                def preparing(**kwargs):
+                    candidate = kwargs.get("target_engine")
+                    owned = candidate is None and "database_url" in kwargs
+                    if owned:
+                        candidate = database._make_engine(kwargs["database_url"])
+                    if candidate is None:
+                        candidate = database.engine
+                    try:
+                        SQLModel.metadata.create_all(candidate)
+                        client = TestClient(main.app, raise_server_exceptions=False, base_url="http://localhost")
+                        try:
+                            read = client.get("/api/tags/")
+                            write = client.post("/api/tags/", json={"name": "during-" + stage})
+                            config_read = client.get("/api/config/")
+                            config_write = client.post("/api/config/reload")
+                        finally:
+                            client.close()
+                        with self.engine.connect() as connection:
+                            active_count = connection.exec_driver_sql("SELECT COUNT(*) FROM tag WHERE name=?", ("during-" + stage,)).scalar_one()
+                        with candidate.connect() as connection:
+                            candidate_count = connection.exec_driver_sql("SELECT COUNT(*) FROM tag WHERE name=?", ("during-" + stage,)).scalar_one()
+                        observed.append((read.status_code, write.status_code, active_count, candidate_count,
+                                         config.settings.general.data_dir, database.engine is self.engine,
+                                         config_read.status_code, config_write.status_code))
+                    finally:
+                        if owned:
+                            candidate.dispose()
+                    raise RuntimeError("fixture preparation failure")
+                with patch.object(database, "run_migrations", side_effect=preparing if stage == "migration" else None), patch.object(database, "ensure_vec_tables", side_effect=preparing if stage == "vectors" else None):
+                    with self.assertRaises(HTTPException):
+                        api.switch_profile(api.SwitchProfileRequest(path=str(self.target)))
+                self.assertEqual(observed, [(200, 201, 1, 0, self.active, True, 503, 409)])
+
+    def test_same_database_preparation_marks_health_unavailable_until_ready(self):
+        self.incoming.general.data_dir = self.active
+        observed = []
+        def migrate(**kwargs):
+            health = asyncio.run(main.get_health())
+            observed.append(getattr(health, "status_code", 200))
+            raise RuntimeError("fixture migration refusal")
+        with patch.object(main.app.state, "ready", True, create=True), patch.object(main.app.state, "migration_head", "fixture-head", create=True), patch.object(database, "run_migrations", side_effect=migrate), patch.object(database, "ensure_vec_tables"):
+            with self.assertRaises(HTTPException):
+                api._reload_and_reconfigure()
+        self.assertEqual(observed, [503])
+        self.assert_retained(schema_ready=False)
+
+    def test_overlapping_switch_is_refused_before_bootstrap_mutation(self):
+        nested = False
+        secondary_status = []
+        def migrate(**kwargs):
+            nonlocal nested
+            if not nested:
+                nested = True
+                try:
+                    api.switch_profile(api.SwitchProfileRequest(path=str(self.root / "candidate-b")))
+                except HTTPException as exc:
+                    secondary_status.append(exc.status_code)
+        with patch.object(config, "load_settings", side_effect=lambda: self.before.model_copy(deep=True)), patch.object(database, "run_migrations", side_effect=migrate), patch.object(database, "ensure_vec_tables"):
+            api.switch_profile(api.SwitchProfileRequest(path=str(self.target)))
+        self.assertEqual(secondary_status, [409])
+        self.assertEqual(config.settings.general.data_dir, self.target)
+        self.assertEqual(self.bootstrap["active_profile"], str(self.target))
+        self.writes.assert_called_once()
+        self.assertFalse((self.root / "candidate-b").exists())
+
+    def test_new_running_task_during_preparation_aborts_profile_publication(self):
+        from sqlmodel import SQLModel, Session
+        from app.models import ProcessingTask
+        SQLModel.metadata.create_all(self.engine)
+        def migrate(**kwargs):
+            with Session(self.engine) as session:
+                session.add(ProcessingTask(task_type="scan", status="running"))
+                session.commit()
+        with patch.object(api, "_assert_no_active_tasks", side_effect=_real_assert_no_active_tasks), patch.object(database, "run_migrations", side_effect=migrate), patch.object(database, "ensure_vec_tables"):
+            with self.assertRaises(HTTPException) as failure:
+                api.switch_profile(api.SwitchProfileRequest(path=str(self.target)))
+            self.assertEqual(failure.exception.status_code, 409)
+        self.assert_retained()
+
+    def test_same_database_admission_conflict_keeps_successfully_prepared_schema_ready(self):
+        self.incoming.general.data_dir = self.active
+        from sqlmodel import SQLModel, Session
+        from app.models import ProcessingTask
+        SQLModel.metadata.create_all(self.engine)
+        def migrate(**kwargs):
+            with Session(self.engine) as session:
+                session.add(ProcessingTask(task_type="scan", status="running"))
+                session.commit()
+        with patch.object(api, "_assert_no_active_tasks", side_effect=_real_assert_no_active_tasks), patch.object(database, "run_migrations", side_effect=migrate), patch.object(database, "ensure_vec_tables"):
+            with self.assertRaises(HTTPException) as failure:
+                asyncio.run(api.reload_settings_endpoint())
+            self.assertEqual(failure.exception.status_code, 409)
+        self.assert_retained(schema_ready=True)
+
+    def test_real_candidate_migration_uses_explicit_url_and_vector_dimensions(self):
+        self.incoming.general.database_dir.mkdir(parents=True, exist_ok=True)
+        candidate = database._make_engine(self.incoming.general.database_url)
+        self.addCleanup(candidate.dispose)
+        model = config.ClipModel.VIT_L_14
+        database.run_migrations(database_url=self.incoming.general.database_url,
+                                clip_embedding_size=model.embedding_size, track_state=False)
+        database.ensure_vec_tables(target_engine=candidate, clip_model=model)
+        with candidate.connect() as connection:
+            self.assertEqual(connection.exec_driver_sql("SELECT COUNT(*) FROM media").scalar_one(), 0)
+            for table in ("media_embeddings", "scene_embeddings"):
+                definition = connection.exec_driver_sql("SELECT sql FROM sqlite_master WHERE name=?", (table,)).scalar_one()
+                self.assertIn("float[768]", definition)
+        self.assertIs(database.engine, self.engine)
+        self.assertEqual(config.settings.model_dump(), self.before.model_dump())
+        self.assertEqual(database.get_migration_state(), database.MigrationState.APPLIED)
+        with self.engine.connect() as connection:
+            self.assertIsNone(connection.exec_driver_sql("SELECT name FROM sqlite_master WHERE name='media'").first())
+            self.assertEqual(connection.exec_driver_sql("SELECT value FROM retained_catalog").scalar_one(), 17)
 
     def test_candidate_disposal_failure_does_not_mask_controlled_activation_failure(self):
         candidate = Mock(url=self.engine.url.set(database=str(self.target / "database" / "omoide.db")))

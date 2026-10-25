@@ -324,7 +324,7 @@ def _apply_runtime_settings(values):
             setattr(section, key, value)
 
 
-def reload_settings():
+def reload_settings(*, before_publish=None):
     """Activate ready settings, retaining the previous runtime on preparation failure."""
     from app import database as db
 
@@ -352,21 +352,33 @@ def reload_settings():
         candidate_file = candidate_engine.url.database
         if previous_file not in (None, "", ":memory:") and candidate_file not in (None, "", ":memory:"):
             same_database = Path(previous_file).resolve() == Path(candidate_file).resolve()
+        preparing_database = True
+        if same_database:
+            # Retaining an engine cannot isolate DDL on the same physical DB.
+            db._set_migration_state(db.MigrationState.NOT_ATTEMPTED)
+        db.run_migrations(
+            database_url=new_settings.general.database_url,
+            clip_embedding_size=new_settings.ai.clip_model_embedding_size,
+            track_state=False,
+        )
+        db.ensure_vec_tables(target_engine=candidate_engine, clip_model=new_settings.ai.clip_model)
+        preparing_database = False
+        if before_publish is not None:
+            before_publish()
+        # Ordinary requests retain the old runtime throughout preparation.
+        # Publish only an already migrated, vector-compatible candidate.
         settings_changed = True
         _apply_runtime_settings(new_settings)
         db.engine = candidate_engine
-        db._set_migration_state(db.MigrationState.NOT_ATTEMPTED)
-        preparing_database = True
-        db.run_migrations()
-        db.ensure_vec_tables()
+        db._set_migration_state(db.MigrationState.APPLIED)
     except Exception as exc:
         if settings_changed:
             _apply_runtime_settings(previous_settings)
             db.engine = previous_engine
-            # A failed migration may have changed the same physical database.
-            # Retaining its old engine does not prove that schema is still ready.
-            db._set_migration_state(db.MigrationState.FAILED if same_database and preparing_database
-                                    else previous_migration_state)
+        # A failed migration may have changed the same physical database.
+        # Retaining its old engine does not prove that schema is still ready.
+        db._set_migration_state(db.MigrationState.FAILED if same_database and preparing_database
+                                else previous_migration_state)
         if candidate_engine is not None:
             try:
                 candidate_engine.dispose()

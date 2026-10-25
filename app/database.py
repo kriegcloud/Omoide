@@ -230,7 +230,7 @@ def reset_engine(new_url: str):
     _set_migration_state(MigrationState.NOT_ATTEMPTED)
 
 
-def run_migrations():
+def run_migrations(*, database_url=None, clip_embedding_size=None, track_state=True):
     """Apply the authoritative Alembic schema or fail explicitly.
 
     ``SQLModel.metadata.create_all`` is not a safe migration fallback: it cannot
@@ -258,27 +258,35 @@ def run_migrations():
             alembic_cfg = Config()
 
         alembic_cfg.set_main_option("script_location", str(scripts_path))
-        alembic_cfg.set_main_option("sqlalchemy.url", settings.general.database_url)
+        target_url = database_url or settings.general.database_url
+        alembic_cfg.set_main_option("sqlalchemy.url", target_url)
+        alembic_cfg.attributes["database_url"] = target_url
+        alembic_cfg.attributes["clip_embedding_size"] = (
+            clip_embedding_size if clip_embedding_size is not None else settings.ai.clip_model_embedding_size
+        )
         alembic_cfg.attributes["configure_logger"] = False
 
         command.upgrade(alembic_cfg, "head")
     except Exception as e:
-        _set_migration_state(MigrationState.FAILED)
+        if track_state:
+            _set_migration_state(MigrationState.FAILED)
         logger.error("Alembic migration failed; schema is unavailable: %s", e)
         raise
 
-    _set_migration_state(MigrationState.APPLIED)
+    if track_state:
+        _set_migration_state(MigrationState.APPLIED)
     logger.info("Alembic migrations applied successfully.")
 
 
-def validate_clip_vector_space(model, *, previous_model=None, database_url=None):
+def validate_clip_vector_space(model, *, previous_model=None, database_url=None, target_engine=None):
     """Validate existing CLIP vectors without recreating or deleting them.
 
     Different models can have equal dimensions but incompatible vector spaces.
     A deliberate vector rebuild must remove the old tables/vectors before such
     a change is accepted. Inspect inactive profiles without creating a database.
     """
-    target = engine
+    target = target_engine if target_engine is not None else engine
+    owns_target = False
     active_path = target.url.database
     if database_url is None and active_path not in (None, "", ":memory:") and not Path(active_path).is_file():
         return
@@ -287,6 +295,7 @@ def validate_clip_vector_space(model, *, previous_model=None, database_url=None)
         if not url.database or not Path(url.database).is_file():
             return
         target = create_engine(url)
+        owns_target = True
         _attach_engine_listeners(target)
     try:
         with target.connect() as connection:
@@ -310,17 +319,19 @@ def validate_clip_vector_space(model, *, previous_model=None, database_url=None)
                         "vector tables before changing the model. Existing vectors were preserved."
                     )
     finally:
-        if target is not engine:
+        if owns_target:
             target.dispose()
 
 
-def ensure_vec_tables():
+def ensure_vec_tables(*, target_engine=None, clip_model=None):
     """Ensure vec0 virtual tables exist (idempotent)."""
     _default_frozen_vec_path()
 
-    dim_media = settings.ai.clip_model_embedding_size
-    validate_clip_vector_space(settings.ai.clip_model)
-    with engine.begin() as conn:
+    target = target_engine if target_engine is not None else engine
+    model = clip_model if clip_model is not None else settings.ai.clip_model
+    dim_media = model.embedding_size
+    validate_clip_vector_space(model, target_engine=target)
+    with target.begin() as conn:
         conn.exec_driver_sql(
             f"""
             CREATE VIRTUAL TABLE IF NOT EXISTS media_embeddings

@@ -128,6 +128,32 @@ export function refitEditorCrop(previous: FilerobotDesignState | null, current: 
   } };
 }
 
+export interface FilerobotFitState extends FilerobotDesignState {
+  pastDesignStates?: FilerobotDesignState[];
+  futureDesignStates?: FilerobotDesignState[];
+}
+
+/** Keep every undo/redo entry in the current display coordinate space. */
+export function refitEditorState(previous: FilerobotDesignState | null, current: FilerobotFitState): Partial<FilerobotFitState> | undefined {
+  const before = previous?.shownImageDimensions;
+  const after = current.shownImageDimensions;
+  if (!before?.width || !before.height || !after?.width || !after.height ||
+      (before.width === after.width && before.height === after.height)) return undefined;
+  const history = (entries: FilerobotDesignState[]) => entries.map(entry => {
+    const adjustments = refitEditorCrop(
+      { ...entry, shownImageDimensions: before },
+      { ...entry, shownImageDimensions: after },
+    );
+    return adjustments ? { ...entry, adjustments } : entry;
+  });
+  const adjustments = refitEditorCrop(previous, current);
+  return {
+    ...(adjustments ? { adjustments } : {}),
+    ...(current.pastDesignStates ? { pastDesignStates: history(current.pastDesignStates) } : {}),
+    ...(current.futureDesignStates ? { futureDesignStates: history(current.futureDesignStates) } : {}),
+  };
+}
+
 export class EditorOutputMismatchError extends Error {
   constructor(expected: { width: number; height: number }, actual: { width: number; height: number }) {
     super(
