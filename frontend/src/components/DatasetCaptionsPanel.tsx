@@ -1,3 +1,4 @@
+import { useVisiblePolling } from "../hooks/useVisiblePolling";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -71,126 +72,133 @@ export default function DatasetCaptionsPanel({
     [],
   );
 
+  const identity = `${datasetId}:${filter}`;
+  const currentIdentity = useRef(identity); currentIdentity.current = identity;
+  const generation = useRef(0);
+  const readGeneration = useRef(0);
+  const readController = useRef<AbortController | null>(null);
+  const regeneration = useRef<AbortController | null>(null);
+  const pendingMutation = useRef<symbol | null>(null);
+  const morePending = useRef(false);
+  const isCurrent = useCallback((version: number) => generation.current === version && currentIdentity.current === identity, [identity]);
+
   const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+    const version = generation.current;
+    if (!isCurrent(version)) return;
+    const revision = ++readGeneration.current;
+    readController.current?.abort();
+    const controller = new AbortController(); readController.current = controller;
+    const current = () => isCurrent(version) && readGeneration.current === revision && !controller.signal.aborted;
+    setLoading(true); setLoadingMore(false); morePending.current = false; setError(null);
     try {
-      const page = await getDatasetCaptions(datasetId, filter);
-      setRows(page.items);
-      setNextCursor(page.next_cursor ?? null);
-      setDrafts(
-        Object.fromEntries(page.items.map((row) => [row.item_id, row.caption])),
-      );
+      const page = await getDatasetCaptions(datasetId, filter, undefined, controller.signal);
+      if (!current()) return;
+      setRows(page.items); setNextCursor(page.next_cursor ?? null);
+      setDrafts(Object.fromEntries(page.items.map(row => [row.item_id, row.caption])));
     } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "Failed to load captions",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [datasetId, filter]);
+      if (current()) setError(reason instanceof Error ? reason.message : "Failed to load captions");
+    } finally { if (current()) setLoading(false); }
+  }, [datasetId, filter, isCurrent]);
 
   useEffect(() => {
+    setTask(null);
+  }, [datasetId]);
+  useEffect(() => {
+    generation.current += 1;
+    setRows([]); setDrafts({}); setNextCursor(null); setBusyItem(null);
+    pendingMutation.current = null; morePending.current = false;
     void load();
+    return () => {
+      generation.current += 1; readGeneration.current += 1;
+      readController.current?.abort(); regeneration.current?.abort();
+    };
   }, [load]);
 
-  useEffect(() => {
-    if (!task || !["pending", "running"].includes(task.status)) return;
-    const timer = window.setInterval(() => {
-      void getTask(task.id)
-        .then((nextTask) => {
-          setTask(nextTask);
-          if (!["pending", "running"].includes(nextTask.status)) void load();
-        })
-        .catch((reason) =>
-          setError(
-            reason instanceof Error
-              ? reason.message
-              : "Failed to refresh caption generation",
-          ),
-        );
-    }, 1500);
-    return () => window.clearInterval(timer);
-  }, [task, load]);
-
-  const save = async (row: DatasetCaption) => {
-    setBusyItem(row.item_id);
+  const pollTask = useCallback(async (visible: () => boolean) => {
+    const version = generation.current;
+    if (!task?.id || !isCurrent(version)) return;
     try {
-      await updateDatasetCaption(
-        datasetId,
-        row.item_id,
-        drafts[row.item_id] ?? row.caption,
-      );
-      await load();
+      const next = await getTask(task.id);
+      if (!visible() || !isCurrent(version)) return;
+      setTask(next);
+      if (!["pending", "running"].includes(next.status)) await load();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Failed to save caption");
-    } finally {
-      setBusyItem(null);
+      if (visible() && isCurrent(version)) setError(reason instanceof Error ? reason.message : "Failed to refresh caption generation");
+    }
+  }, [task?.id, load, isCurrent]);
+  useVisiblePolling(pollTask, 1500, Boolean(task && ["pending", "running"].includes(task.status)));
+
+  const mutate = async (itemId: number, operation: (current: () => boolean) => Promise<void>, fallback: string) => {
+    const version = generation.current;
+    if (pendingMutation.current || !isCurrent(version)) return;
+    const token = Symbol(); pendingMutation.current = token;
+    const current = () => isCurrent(version) && pendingMutation.current === token;
+    setBusyItem(itemId); setError(null);
+    try { await operation(current); }
+    catch (reason) { if (current()) setError(reason instanceof Error ? reason.message : fallback); }
+    finally {
+      if (current()) {pendingMutation.current = null; setBusyItem(null);}
     }
   };
-
+  const save = async (row: DatasetCaption) => {
+    const draft = drafts[row.item_id] ?? row.caption;
+    await mutate(row.item_id, async current => {
+      await updateDatasetCaption(datasetId, row.item_id, draft);
+      if (current()) await load();
+    }, "Failed to save caption");
+  };
   const approve = async (row: DatasetCaption) => {
     if (!row.annotation_id || row.review_status !== "candidate") return;
-    setBusyItem(row.item_id);
-    try {
-      await approveAnnotation(row.annotation_id);
+    await mutate(row.item_id, async current => {
+      await approveAnnotation(row.annotation_id!);
+      if (!current()) return;
       await getMediaAnnotations(row.media_id);
+      if (!current()) return;
       await markDatasetCaptionReviewed(datasetId, row.item_id);
-      await load();
-    } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "Failed to approve caption",
-      );
-    } finally {
-      setBusyItem(null);
-    }
+      if (current()) await load();
+    }, "Failed to approve caption");
   };
-
   const regenerate = async (row: DatasetCaption) => {
-    setBusyItem(row.item_id);
-    try {
+    await mutate(row.item_id, async current => {
+      const controller = new AbortController(); regeneration.current = controller;
       const attempt = await startAnnotation(row.media_id, "caption");
-      for (;;) {
-        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      while (current() && !controller.signal.aborted) {
+        await new Promise<void>(resolve => {
+          const finish = () => {controller.signal.removeEventListener("abort", cancel); resolve();};
+          const cancel = () => {window.clearTimeout(timer); finish();};
+          const timer = window.setTimeout(finish, 1000);
+          controller.signal.addEventListener("abort", cancel, {once: true});
+          if (controller.signal.aborted) cancel();
+        });
+        if (!current() || controller.signal.aborted) return;
         const state = await getMediaAnnotations(row.media_id);
-        const current = state.attempts.find((entry) => entry.id === attempt.id);
-        if (current && TERMINAL_ATTEMPT_STATUSES.has(current.status)) break;
+        if (!current() || controller.signal.aborted) return;
+        const next = state.attempts.find(entry => entry.id === attempt.id);
+        if (next && TERMINAL_ATTEMPT_STATUSES.has(next.status)) break;
       }
-      await load();
-    } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "Failed to regenerate caption",
-      );
-    } finally {
-      setBusyItem(null);
-    }
+      if (current()) await load();
+    }, "Failed to regenerate caption");
   };
-
   const generateMissing = async () => {
-    try {
-      setError(null);
-      setTask(await generateDatasetCaptions(datasetId, true));
-    } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "Failed to generate captions",
-      );
-    }
+    await mutate(-1, async current => {
+      const next = await generateDatasetCaptions(datasetId, true);
+      if (current()) setTask(next);
+    }, "Failed to generate captions");
   };
-
   const loadMore = async () => {
-    if (!nextCursor || loadingMore) return;
-    setLoadingMore(true);
+    const version = generation.current, revision = readGeneration.current;
+    if (!nextCursor || morePending.current || !isCurrent(version)) return;
+    const current = () => isCurrent(version) && readGeneration.current === revision;
+    morePending.current = true; setLoadingMore(true); setError(null);
     try {
-      const page = await getDatasetCaptions(datasetId, filter, nextCursor);
-      setRows((current) => [...current, ...page.items]);
-      setDrafts((current) => ({
-        ...current,
-        ...Object.fromEntries(page.items.map((row) => [row.item_id, row.caption])),
-      }));
+      const page = await getDatasetCaptions(datasetId, filter, nextCursor, readController.current?.signal);
+      if (!current()) return;
+      setRows(previous => {const seen = new Set(previous.map(row => row.item_id)); return [...previous, ...page.items.filter(row => !seen.has(row.item_id))];});
+      setDrafts(previous => ({...Object.fromEntries(page.items.map(row => [row.item_id, row.caption])), ...previous}));
       setNextCursor(page.next_cursor ?? null);
-    } finally {
-      setLoadingMore(false);
-    }
+    } catch (reason) {
+      if (current()) setError(reason instanceof Error ? reason.message : "Failed to load more captions");
+    } finally { if (current()) {morePending.current = false; setLoadingMore(false);} }
   };
 
   const taskActive = Boolean(
@@ -207,7 +215,7 @@ export default function DatasetCaptionsPanel({
       <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
         <Button
           variant="contained"
-          disabled={taskActive}
+          disabled={taskActive || busyItem !== null}
           onClick={() => void generateMissing()}
         >
           Generate missing
@@ -335,7 +343,7 @@ export default function DatasetCaptionsPanel({
                 <Stack direction="row" spacing={1}>
                   <Button
                     size="small"
-                    disabled={busyItem === row.item_id}
+                    disabled={busyItem !== null}
                     onClick={() => void save(row)}
                   >
                     Save

@@ -5,10 +5,12 @@ from __future__ import annotations
 import io
 import os
 from datetime import datetime
+from pathlib import Path
 from uuid import UUID
 
 from PIL import Image, ImageOps
 from sqlmodel import Session
+from sqlalchemy import update
 
 import app.database as db
 from app.config import settings
@@ -18,7 +20,7 @@ from app.models import ImageRepairJob, ImageRepairStatus, Media, ProcessingTask
 from app.services.comfy_annotation import ComfyAnnotationError
 from app.services.comfy_repair import ComfyRepairClient
 from app.services.image_edits import write_repaired
-from app.utils import generate_perceptual_hash, generate_thumbnail
+from app.utils import delete_record, generate_perceptual_hash, generate_thumbnail
 
 _UPSCALE_PROFILE = "omoide-upscale-v1"
 
@@ -47,6 +49,36 @@ def _finish_failure(job_id: str, code: str, message: str, retryable: bool) -> No
 # 2x restoration of a 12 MP phone photo would produce a 48 MP file through a
 # 195 MP intermediate; the profile exists for small social-media sources.
 UPSCALE_MAX_SOURCE_SIDE = 2560
+
+
+def _discard_owned_output(path: Path, identity: os.stat_result) -> None:
+    """Discard only the generated inode observed by this worker."""
+    try:
+        current = path.lstat()
+    except FileNotFoundError:
+        return
+    fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+    if any(getattr(current, field) != getattr(identity, field) for field in fields):
+        logger.warning("Cancelled repair retained newer output at %s", path)
+        return
+    path.unlink()
+
+
+def _cleanup_cancelled_output(job_id, media_id, target, target_identity,
+                              thumbnail_path, thumbnail_identity) -> None:
+    """A late metadata exception must not strand cancelled provisional output."""
+    if target is None or target_identity is None:
+        return
+    with Session(db.engine) as session:
+        job = session.get(ImageRepairJob, job_id)
+        if job is not None and job.status != ImageRepairStatus.CANCELLED:
+            return
+        media = session.get(Media, media_id) if media_id is not None else None
+        if media is not None and media.path == os.fspath(target):
+            delete_record(media_id, session)
+        _discard_owned_output(target, target_identity)
+        if thumbnail_path is not None and thumbnail_identity is not None:
+            _discard_owned_output(thumbnail_path, thumbnail_identity)
 
 
 def run_repair_job(job_id: str) -> None:
@@ -86,6 +118,8 @@ def run_repair_job(job_id: str) -> None:
         source_created_at = media.created_at
         source_path = media.path
 
+    target = target_identity = provisional_media_id = None
+    thumbnail_path = thumbnail_identity = None
     try:
         with Image.open(source_path) as opened:
             opened.load()
@@ -134,13 +168,14 @@ def run_repair_job(job_id: str) -> None:
             profile,
             media_roots=settings.general.resolved_media_dirs(),
         )
+        target_identity = target.lstat()
         with Session(db.engine) as session:
             job = session.get(ImageRepairJob, job_id)
             if job is None:
-                target.unlink(missing_ok=True)
+                _discard_owned_output(target, target_identity)
                 return
             if job.status == ImageRepairStatus.CANCELLED:
-                target.unlink(missing_ok=True)
+                _discard_owned_output(target, target_identity)
                 return
             media = Media(
                 path=os.fspath(target),
@@ -153,17 +188,40 @@ def run_repair_job(job_id: str) -> None:
             session.add(media)
             safe_commit(session)
             session.refresh(media)
+            provisional_media_id = int(media.id)
             media.phash = generate_perceptual_hash(media, type="image")
             media.thumbnail_path, thumbnail_error = generate_thumbnail(media)
             if thumbnail_error:
                 logger.warning("Repair media %s thumbnail failed: %s", media.id, thumbnail_error)
             session.add(media)
-            job.result_media_id = media.id
+            generated_thumbnail = media.thumbnail_path
+            thumbnail_path = (settings.general.thumb_dir / generated_thumbnail
+                              if generated_thumbnail else None)
+            thumbnail_identity = (thumbnail_path.lstat()
+                                  if thumbnail_path is not None and thumbnail_path.exists() else None)
+            values = {"result_media_id": media.id,
+                      "status": ImageRepairStatus.SUCCEEDED,
+                      "finished_at": datetime.utcnow()}
             if transport_metadata["downscaled"]:
-                job.params = {**dict(job.params or {}), "_transport": transport_metadata}
-            job.status = ImageRepairStatus.SUCCEEDED
-            job.finished_at = datetime.utcnow()
-            session.add(job)
+                values["params"] = {**dict(job.params or {}), "_transport": transport_metadata}
+            claimed = session.exec(
+                update(ImageRepairJob)
+                .where(ImageRepairJob.id == job_id,
+                       ImageRepairJob.status == ImageRepairStatus.RUNNING)
+                .values(**values)
+                .execution_options(synchronize_session=False)
+            ).rowcount
+            if not claimed:
+                # Thumbnail generation ran outside the cancellation claim. Its
+                # provisional catalog row and derivative files belong to this
+                # worker, while the accepted terminal job state wins.
+                media_id = int(media.id)
+                session.rollback()
+                delete_record(media_id, session)
+                _discard_owned_output(target, target_identity)
+                if thumbnail_path is not None and thumbnail_identity is not None:
+                    _discard_owned_output(thumbnail_path, thumbnail_identity)
+                return
             processor_task = ProcessingTask(
                 task_type="run_processor_for_media", total=1, processed=0
             )
@@ -200,3 +258,11 @@ def run_repair_job(job_id: str) -> None:
     except Exception as exc:  # noqa: BLE001 - durable background boundary
         logger.exception("Image repair job %s failed", job_id)
         _finish_failure(job_id, "repair-failed", str(exc), False)
+    finally:
+        try:
+            _cleanup_cancelled_output(
+                job_id, provisional_media_id, target, target_identity,
+                thumbnail_path, thumbnail_identity,
+            )
+        except Exception:
+            logger.exception("Cancelled repair %s provisional cleanup failed", job_id)

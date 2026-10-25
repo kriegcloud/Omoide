@@ -99,6 +99,35 @@ const saturationToAdjustment = (value: number | undefined) => {
 // Finetune constants are brightness -1..1, contrast -100..100, and HSV
 // saturation -2..10. Saturation is mapped piecewise so its neutral 0 stays 0.
 
+/** Filerobot 4.9.1 metadata keeps pre-rotation crop dimensions. Its rendered
+ * canvas is the output truth; normalize backing pixels by the saving ratio. */
+export function editorCanvasOutput(imageData?: {imageCanvas?: {width: number; height: number}}, pixelRatio = 1): {width: number; height: number} | undefined {
+  const canvas = imageData?.imageCanvas;
+  if (!canvas || !Number.isFinite(pixelRatio) || pixelRatio <= 0 || !Number.isFinite(canvas.width) || !Number.isFinite(canvas.height) || canvas.width <= 0 || canvas.height <= 0) return undefined;
+  return {width: Math.round(canvas.width / pixelRatio), height: Math.round(canvas.height / pixelRatio)};
+}
+
+/** Preserve a crop's source coordinates when Filerobot fits its canvas again.
+ * 4.9.1 updates shownImageDimensions without scaling an unchanged crop box.
+ * A changed crop is a new user edit already expressed in the current space. */
+export function refitEditorCrop(previous: FilerobotDesignState | null, current: FilerobotDesignState): FilerobotDesignState["adjustments"] | undefined {
+  const before = previous?.shownImageDimensions;
+  const after = current.shownImageDimensions;
+  const crop = current.adjustments?.crop;
+  const oldCrop = previous?.adjustments?.crop;
+  if (!before?.width || !before.height || !after?.width || !after.height || !crop || !oldCrop ||
+      (before.width === after.width && before.height === after.height) ||
+      (["x", "y", "width", "height"] as const).some(key => crop[key] !== oldCrop[key])) return undefined;
+  const sx = after.width / before.width;
+  const sy = after.height / before.height;
+  return { ...current.adjustments, crop: { ...crop,
+    ...(crop.x !== undefined ? { x: crop.x * sx } : {}),
+    ...(crop.y !== undefined ? { y: crop.y * sy } : {}),
+    ...(crop.width !== undefined ? { width: crop.width * sx } : {}),
+    ...(crop.height !== undefined ? { height: crop.height * sy } : {}),
+  } };
+}
+
 export class EditorOutputMismatchError extends Error {
   constructor(expected: { width: number; height: number }, actual: { width: number; height: number }) {
     super(
@@ -123,8 +152,8 @@ export class EditorOutputMismatchError extends Error {
  *   4. resize is applied to the rotated result;
  *   5. finetunes are colour-only and commute with geometry.
  *
- * `expectedOutput` is Filerobot's own idea of the final size (imageData
- * width/height from getCurrentImgData). When present the computed geometry
+ * `expectedOutput` is the rendered canvas size from getCurrentImgData
+ * (its width/height metadata ignores rotation). When present the computed geometry
  * must agree with it, otherwise we refuse rather than write a wrong file.
  */
 export function designStateToOps(

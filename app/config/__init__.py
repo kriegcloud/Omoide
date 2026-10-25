@@ -303,75 +303,88 @@ def validate_clip_settings_change(incoming, *, profile_switch=False):
     )
 
 
-def reload_settings():
-    """Reloads the settings and the model."""
-    global settings, model, preprocess, tokenizer
-    logger.info("Reloading settings...")
-    new_settings = load_settings()
-    # Always anchor data_dir to the active profile from bootstrap, ignoring
-    # any stale values that may exist in config.yaml (e.g., copied from
-    # another profile).
-    try:
-        new_settings.general.data_dir = get_user_data_path()
-    except Exception:
-        pass
-    validate_clip_settings_change(new_settings, profile_switch=True)
-    # Ensure required directories exist for the (possibly new) data_dir
-    try:
-        new_settings.general.database_dir.mkdir(parents=True, exist_ok=True)
-        new_settings.general.omoide_dir.mkdir(parents=True, exist_ok=True)
-        new_settings.general.thumb_dir.mkdir(parents=True, exist_ok=True)
-        new_settings.general.models_dir.mkdir(parents=True, exist_ok=True)
-    except Exception as e:
-        logger.warning("Could not create profile directories: %s", e)
-    # Update the existing settings object in place, skipping computed fields
-    for section_name in new_settings.model_fields:
+class SettingsActivationError(ValueError):
+    """A candidate profile could not be made ready; prior runtime was retained."""
+
+
+def _apply_runtime_settings(values):
+    """Update existing section objects so imported settings references stay valid."""
+    for section_name in type(values).model_fields:
         if not hasattr(settings, section_name):
             continue
         section = getattr(settings, section_name)
-        # Determine assignable fields on this section (exclude computed properties)
-        try:
-            assignable_keys = set(section.model_fields.keys())  # type: ignore[attr-defined]
-        except Exception:
-            # Fallback: allow all keys from dump if model_fields unavailable
-            assignable_keys = set()
-
-        section_settings = getattr(new_settings, section_name)
-        if hasattr(section_settings, "model_dump"):
-            section_dump = section_settings.model_dump()
-        else:
-            section_dump = {}
-
-        for key, value in section_dump.items():
-            if assignable_keys and key not in assignable_keys:
-                # Skip computed or non-settable attributes
+        assignable = set(type(section).model_fields)
+        incoming_section = getattr(values, section_name)
+        for key in incoming_section.model_dump():
+            if key not in assignable:
                 continue
-            value = getattr(section_settings, key, value)
+            value = getattr(incoming_section, key)
             if section_name == "ai" and key == "clip_model":
-                setattr(section, key, ClipModel(value))
-            else:
-                try:
-                    setattr(section, key, value)
-                except AttributeError:
-                    # Some attributes may be properties without setters (computed fields)
-                    continue
+                value = ClipModel(value)
+            setattr(section, key, value)
 
-    # Rebuild DB engine to reflect possible database_url changes after profile switch
+
+def reload_settings():
+    """Activate ready settings, retaining the previous runtime on preparation failure."""
+    from app import database as db
+
+    logger.info("Reloading settings...")
+    previous_settings = settings.model_copy(deep=True)
+    previous_engine = db.engine
+    previous_migration_state = db.get_migration_state()
+    candidate_engine = None
+    settings_changed = False
+    preparing_database = False
+    same_database = False
     try:
-        from app.database import (
-            ensure_vec_tables,
-            reset_engine,
-            run_migrations,
-        )
+        new_settings = load_settings()
+        # Ignore stale data_dir values copied into a profile configuration.
+        new_settings.general.data_dir = get_user_data_path()
+        validate_clip_settings_change(new_settings, profile_switch=True)
+        for directory in (new_settings.general.database_dir, new_settings.general.omoide_dir,
+                          new_settings.general.thumb_dir, new_settings.general.models_dir):
+            directory.mkdir(parents=True, exist_ok=True)
 
-        reset_engine(settings.general.database_url)
-        # Ensure schema and vector tables exist on the new DB
-        run_migrations()
-        ensure_vec_tables()
-    except Exception as e:
-        logger.warning(
-            "Could not reset database engine or run migrations: %s", e
-        )
+        # Keep the old engine/pool usable until the candidate passes migrations
+        # and vector preparation. reset_engine() would dispose it too early.
+        candidate_engine = db._make_engine(new_settings.general.database_url)
+        previous_file = previous_engine.url.database
+        candidate_file = candidate_engine.url.database
+        if previous_file not in (None, "", ":memory:") and candidate_file not in (None, "", ":memory:"):
+            same_database = Path(previous_file).resolve() == Path(candidate_file).resolve()
+        settings_changed = True
+        _apply_runtime_settings(new_settings)
+        db.engine = candidate_engine
+        db._set_migration_state(db.MigrationState.NOT_ATTEMPTED)
+        preparing_database = True
+        db.run_migrations()
+        db.ensure_vec_tables()
+    except Exception as exc:
+        if settings_changed:
+            _apply_runtime_settings(previous_settings)
+            db.engine = previous_engine
+            # A failed migration may have changed the same physical database.
+            # Retaining its old engine does not prove that schema is still ready.
+            db._set_migration_state(db.MigrationState.FAILED if same_database and preparing_database
+                                    else previous_migration_state)
+        if candidate_engine is not None:
+            try:
+                candidate_engine.dispose()
+            except Exception as cleanup_error:
+                logger.warning("Could not retire rejected profile connection pool: %s", cleanup_error)
+        if isinstance(exc, ValueError):
+            # Preserve useful existing validation errors, such as vector-space
+            # refusal, and the ValueError contract of direct reload callers.
+            raise
+        detail = ("Profile initialization failed; the active database requires schema recovery."
+                  if same_database and preparing_database else
+                  "Profile initialization failed; the previous profile remains active.")
+        raise SettingsActivationError(detail) from exc
+
+    try:
+        previous_engine.dispose()
+    except Exception as exc:
+        logger.warning("Could not retire the previous profile connection pool: %s", exc)
 
     # Invalidate CLIP bundle to reflect possible AI model changes; will reload lazily
     _reset_clip_after_settings_change()

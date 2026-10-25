@@ -182,53 +182,76 @@ def _available_name(path: Path) -> Path:
         index += 1
 
 
+def _file_identity(path: Path) -> tuple[int, ...] | None:
+    """Bind a pathname to its inode and detect in-place content/metadata edits."""
+    try:
+        stat = path.lstat()
+    except FileNotFoundError:
+        return None
+    return (stat.st_dev, stat.st_ino, stat.st_mode, stat.st_size,
+            stat.st_mtime_ns, stat.st_ctime_ns)
+
+
 def publish_replacement(
     session: Session, media: Media, encoded: Path, destination: Path,
     *, commit: Callable[[], object] | None = None,
 ) -> Path:
-    """Publish encoded bytes with rollback compensation until catalog commit.
+    """Keep independent recovery versions until catalog commit and owned cleanup.
 
-    An extension-changing conversion retains its original until commit. A
-    same-path replacement keeps a private original backup until commit. Failed
-    publication preserves the encoded file for recovery and restores the catalog
-    path and original bytes; backup restoration failures expose the backup path.
+    Identity checks protect against observed replacements and in-place edits.
+    Portable filesystems provide no compare-and-unlink/replace primitive: external
+    writes between the last identity check and mutation remain a narrow TOCTOU
+    limit. Recovery copies are independent inodes, so newer writes cannot mutate
+    the retained original or encoded version.
     """
     source = Path(media.path)
     original = (media.path, media.filename, media.size)
+    source_identity = _file_identity(source)
     backup: Path | None = None
+    swap: Path | None = None
     published = False
     published_identity = None
     try:
+        descriptor, name = tempfile.mkstemp(prefix=".omoide-original-", suffix=".backup", dir=source.parent)
+        os.close(descriptor)
+        backup = Path(name)
+        shutil.copy2(source, backup)
+        if source_identity is None or _file_identity(source) != source_identity:
+            raise ConversionError("Source identity changed while retaining original")
+        descriptor, name = tempfile.mkstemp(prefix=".omoide-publish-", suffix=".tmp", dir=source.parent)
+        os.close(descriptor)
+        swap = Path(name)
+        shutil.copy2(encoded, swap)
+        if _file_identity(source) != source_identity:
+            raise ConversionError("Source identity changed before publication")
+        swap_identity = _file_identity(swap)
         if destination == source:
-            descriptor, name = tempfile.mkstemp(prefix=".omoide-original-", suffix=".backup", dir=source.parent)
-            os.close(descriptor)
-            backup = Path(name)
-            backup.unlink()
-            try:
-                os.link(source, backup)
-            except OSError:
-                shutil.copy2(source, backup)
-            encoded.replace(destination)
+            swap.replace(destination)
+            published = True
+            published_identity = swap_identity[:2]
         else:
-            # Hard-link publication is atomic and refuses a racing destination.
-            # Encoded files are staged in the source filesystem.
             try:
-                os.link(encoded, destination)
+                os.link(swap, destination)
+                published = True
+                published_identity = swap_identity[:2]
             except OSError as exc:
                 if exc.errno == errno.EEXIST:
                     raise
-                # FAT-like media roots may not support hard links. Exclusive
-                # creation still protects an unrelated destination.
-                with destination.open("xb") as target, encoded.open("rb") as data:
+                # Unsupported hard links: exclusive creation still refuses an
+                # unrelated destination, with identity-bound partial cleanup.
+                with destination.open("xb") as target, swap.open("rb") as data:
                     stat = os.fstat(target.fileno())
                     published_identity = (stat.st_dev, stat.st_ino)
                     published = True
                     shutil.copyfileobj(data, target)
                     target.flush()
                     os.fsync(target.fileno())
+            try:
+                swap.unlink()
+            except OSError as exc:
+                logger.warning("Conversion retained publication temporary %s: %s", swap, exc)
         published = True
-        stat = destination.stat()
-        published_identity = (stat.st_dev, stat.st_ino)
+        published_identity = _file_identity(destination)
         media.path = str(destination)
         media.filename = destination.name
         media.size = destination.stat().st_size
@@ -239,36 +262,54 @@ def publish_replacement(
             raise ConversionError("Conversion task is no longer running.")
     except Exception as exc:
         session.rollback()
+        media.path, media.filename, media.size = original
         if published:
-            if backup is not None:
-                # Retain converted bytes before restoring the original inode.
-                try:
-                    if not encoded.exists():
-                        os.link(destination, encoded)
-                except OSError:
-                    try:
-                        shutil.copy2(destination, encoded)
-                    except OSError:
-                        logger.warning("Could not preserve converted output %s", encoded)
+            try:
+                identity = _file_identity(destination)
+            except OSError as identity_exc:
+                raise ConversionError(
+                    f"Cannot verify conversion publication identity; original backup: {backup}; "
+                    f"encoded recovery: {encoded}: {identity_exc}"
+                ) from exc
+            matches = (identity == published_identity if len(published_identity or ()) != 2
+                       else identity is not None and identity[:2] == published_identity)
+            if not matches:
+                raise ConversionError(
+                    f"Conversion identity conflict; newer file preserved: {destination}; "
+                    f"original backup: {backup}; encoded recovery: {encoded}"
+                ) from exc
+            if destination == source:
                 try:
                     backup.replace(source)
                 except OSError as restore_exc:
                     raise ConversionError(
-                        f"Original recovery backup: {backup}; converted output: {encoded}; "
+                        f"Original recovery backup: {backup}; encoded recovery: {encoded}; "
                         f"could not restore {source}: {restore_exc}"
                     ) from exc
-            elif destination.exists():
-                stat = destination.stat()
-                if (stat.st_dev, stat.st_ino) == published_identity:
-                    destination.unlink()
-        if backup is not None:
-            backup.unlink(missing_ok=True)
-        media.path, media.filename, media.size = original
-        raise ConversionError(f"Conversion publication failed; recovered output: {encoded}: {exc}") from exc
+            else:
+                destination.unlink()
+        # Retain independent recovery bytes on every failed publication.
+        raise ConversionError(
+            f"Conversion publication failed; original backup: {backup}; "
+            f"encoded recovery: {encoded}: {exc}"
+        ) from exc
+    finally:
+        if swap is not None:
+            try:
+                swap.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning("Conversion retained publication temporary %s: %s", swap, exc)
 
-    # Cleanup is after the durable boundary. A cleanup failure leaves a safe
-    # extra original/encoded copy, not a failed transaction with missing media.
-    for obsolete in (backup, source if destination != source else None, encoded):
+    expected = published_identity if destination == source else source_identity
+    if _file_identity(source) != expected:
+        logger.warning(
+            "Conversion identity conflict after commit; newer source preserved: %s; "
+            "original backup: %s; encoded recovery: %s", source, backup, encoded,
+        )
+        return destination
+    # Only observed-owned originals are removed. Cleanup failures retain safe
+    # extra recovery versions without reversing a durable catalog publication.
+    for obsolete in (source if destination != source else None, backup, encoded):
         if obsolete is not None:
             try:
                 obsolete.unlink(missing_ok=True)

@@ -184,6 +184,99 @@ class RuntimeTransactionSafetyTests(unittest.TestCase):
             self.assertEqual(destination.read_bytes(),b'unrelated')
             self.assertEqual(encoded.read_bytes(),b'converted')
 
+    def test_conversion_cleanup_preserves_newer_source_identity(self):
+        source=self.root/'concurrent.avi';source.write_bytes(b'original')
+        encoded=self.root/'encoded.mp4';encoded.write_bytes(b'converted')
+        with Session(self.engine) as session:
+            media=Media(path=str(source),filename=source.name,size=8)
+            session.add(media);session.commit()
+            def committed_then_changed():
+                session.commit()
+                replacement=self.root/'new-import';replacement.write_bytes(b'new user source')
+                replacement.replace(source)
+            conversion.publish_replacement(session,media,encoded,source.with_suffix('.mp4'),commit=committed_then_changed)
+            self.assertTrue(source.exists())
+            self.assertEqual(source.read_bytes(),b'new user source')
+            self.assertEqual(encoded.read_bytes(),b'converted')
+            self.assertTrue(any(p.read_bytes()==b'original' for p in self.root.glob('*.backup')))
+
+    def test_conversion_rollback_preserves_newer_edit_and_both_recovery_versions(self):
+        source=self.root/'concurrent.mp4';source.write_bytes(b'original')
+        encoded=self.root/'encoded.mp4';encoded.write_bytes(b'converted')
+        with Session(self.engine) as session:
+            media=Media(path=str(source),filename=source.name,size=8)
+            session.add(media);session.commit()
+            def edited_then_failed():
+                replacement=self.root/'new-edit';replacement.write_bytes(b'new user edit')
+                replacement.replace(source)
+                raise RuntimeError('commit fault')
+            with self.assertRaises(conversion.ConversionError):
+                conversion.publish_replacement(session,media,encoded,source,commit=edited_then_failed)
+            self.assertEqual(source.read_bytes(),b'new user edit')
+            self.assertEqual(encoded.read_bytes(),b'converted')
+            self.assertTrue(any(p.read_bytes()==b'original' for p in self.root.glob('*.backup')))
+
+    def test_inplace_source_edits_preserve_original_and_encoded_recovery(self):
+        for suffix in ('.avi','.mp4'):
+            with self.subTest(suffix=suffix),Session(self.engine) as session:
+                source=self.root/f'inplace-{suffix[1:]}{suffix}';source.write_bytes(b'original')
+                encoded=self.root/f'encoded-{suffix[1:]}.mp4';encoded.write_bytes(b'converted')
+                media=Media(path=str(source),filename=source.name,size=8)
+                session.add(media);session.commit()
+                def edit_inplace():
+                    if suffix=='.avi': session.commit()
+                    source.write_bytes(b'new user edit')
+                    if suffix=='.mp4': raise RuntimeError('commit fault')
+                if suffix=='.mp4':
+                    with self.assertRaisesRegex(conversion.ConversionError,'identity conflict'):
+                        conversion.publish_replacement(session,media,encoded,source,commit=edit_inplace)
+                else:
+                    conversion.publish_replacement(session,media,encoded,source.with_suffix('.mp4'),commit=edit_inplace)
+                self.assertEqual(source.read_bytes(),b'new user edit')
+                self.assertEqual(encoded.read_bytes(),b'converted')
+                self.assertTrue(any(p.read_bytes()==b'original' for p in self.root.glob('*.backup')))
+
+    def test_publication_temp_cleanup_failure_keeps_durable_success(self):
+        source=self.root/'cleanup.avi';source.write_bytes(b'original')
+        encoded=self.root/'cleanup-encoded.mp4';encoded.write_bytes(b'converted')
+        destination=source.with_suffix('.mp4')
+        with Session(self.engine) as session:
+            media=Media(path=str(source),filename=source.name,size=8)
+            session.add(media);session.commit()
+            original_unlink=Path.unlink
+            def fail_temp(path,*args,**kwargs):
+                if path.name.startswith('.omoide-publish-'): raise OSError('cleanup fault')
+                return original_unlink(path,*args,**kwargs)
+            with patch.object(Path,'unlink',new=fail_temp):
+                conversion.publish_replacement(session,media,encoded,destination)
+            self.assertEqual(destination.read_bytes(),b'converted')
+            self.assertEqual(media.path,str(destination))
+            self.assertFalse(source.exists())
+
+    def test_stat_fault_after_publication_restores_catalog_and_original(self):
+        source=self.root/'stat-fault.avi';source.write_bytes(b'original')
+        encoded=self.root/'stat-encoded.mp4';encoded.write_bytes(b'converted')
+        destination=source.with_suffix('.mp4')
+        with Session(self.engine) as session:
+            media=Media(path=str(source),filename=source.name,size=8)
+            session.add(media);session.commit()
+            identity=conversion._file_identity
+            failed=False
+            def fail_once(path):
+                nonlocal failed
+                if path==destination and destination.exists() and not failed:
+                    failed=True
+                    raise OSError('stat fault')
+                return identity(path)
+            with patch.object(conversion,'_file_identity',side_effect=fail_once):
+                with self.assertRaises(conversion.ConversionError):
+                    conversion.publish_replacement(session,media,encoded,destination)
+            self.assertTrue(failed)
+            self.assertEqual(source.read_bytes(),b'original')
+            self.assertEqual(media.path,str(source))
+            self.assertFalse(destination.exists())
+            self.assertEqual(encoded.read_bytes(),b'converted')
+
     def test_training_commit_failure_cannot_publish_request(self):
         with Session(self.engine) as session:
             export=session.get(DatasetExport,self.export());dataset=session.get(TrainingDataset,self.dataset_id)

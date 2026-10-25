@@ -105,7 +105,7 @@ Baseline items precede reviewer round 1. No blockers are implicitly waived.
 - `testsNeeded`:Permanent list/detail HTTP tests covering mixed visible/missing membership, counts/previews, unchanged association rows and valid pagination.
 - `dependencies`:none.
 - `status`: fixed
-- `fixedCommit`: round1 commit (see rounds.md)
+- `fixedCommit`: 879e61f24d12da94843bd4ed17b740790e07fe0c
 
 ### R1-API-02: Invalid pagination input escapes as internal server errors
 
@@ -126,7 +126,7 @@ Baseline items precede reviewer round 1. No blockers are implicitly waived.
 - `testsNeeded`:Permanent HTTP tests for zero/negative/excessive limits and invalid cursor key types/ranges, plus valid datetime/string/numeric sort round trips and tied-page traversal.
 - `dependencies`:none.
 - `status`: fixed
-- `fixedCommit`: round1 commit (see rounds.md)
+- `fixedCommit`: 879e61f24d12da94843bd4ed17b740790e07fe0c
 
 ### R1-API-03: Profile-face mutations accept a face owned by another person
 
@@ -147,7 +147,7 @@ Baseline items precede reviewer round 1. No blockers are implicitly waived.
 - `testsNeeded`:Permanent HTTP tests for own, foreign, orphan, nonexistent and null face IDs across both mutation routes, including unchanged state on rejection.
 - `dependencies`:none.
 - `status`: fixed
-- `fixedCommit`: round1 commit (see rounds.md)
+- `fixedCommit`: 879e61f24d12da94843bd4ed17b740790e07fe0c
 
 ### R1-API-04: Repeating a person-tag attachment returns an uncaught database error
 
@@ -168,7 +168,7 @@ Baseline items precede reviewer round 1. No blockers are implicitly waived.
 - `testsNeeded`:Permanent repeat/concurrent attachment test, membership count1, missing IDs404 and detach/re-attach coverage.
 - `dependencies`:Coordinate ownership with R1-API-01 because both edit app/api/tags.py.
 - `status`: fixed
-- `fixedCommit`: round1 commit (see rounds.md)
+- `fixedCommit`: 879e61f24d12da94843bd4ed17b740790e07fe0c
 
 ### R1-API-05: Geolocation mutation accepts impossible latitude and longitude
 
@@ -189,7 +189,7 @@ Baseline items precede reviewer round 1. No blockers are implicitly waived.
 - `testsNeeded`:Permanent HTTP tests for each range boundary, over/underflow and nonfinite input, no DB/file writer call on rejection, unchanged prior location/place and valid catalog-only edits.
 - `dependencies`:none.
 - `status`: fixed
-- `fixedCommit`: round1 commit (see rounds.md)
+- `fixedCommit`: 879e61f24d12da94843bd4ed17b740790e07fe0c
 
 
 ### R1-RUNTIME-01: Dataset workers revive cancelled or interrupted tasks
@@ -211,7 +211,7 @@ Baseline items precede reviewer round 1. No blockers are implicitly waived.
 - `testsNeeded`: Runtime regression for cancelled/interrupted/failed worker admission, no export/annotation/mining call when rejected, mid-work terminal-state preservation, and pending/running success/resume cases.
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: round1 commit (see rounds.md)
+- `fixedCommit`: 879e61f24d12da94843bd4ed17b740790e07fe0c
 
 ### R1-RUNTIME-02: Replacement conversion deletes the original before durable catalog commit
 
@@ -232,7 +232,7 @@ Baseline items precede reviewer round 1. No blockers are implicitly waived.
 - `testsNeeded`: Runtime fault injection at final catalog/task commit, original/recovery byte verification, catalog/filesystem agreement after rollback, no unrelated file overwrite, and existing cancellation/final-claim tests.
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: round1 commit (see rounds.md)
+- `fixedCommit`: 879e61f24d12da94843bd4ed17b740790e07fe0c
 
 ### R1-RUNTIME-03: Training launch request is visible before its database transaction commits
 
@@ -253,7 +253,7 @@ Baseline items precede reviewer round 1. No blockers are implicitly waived.
 - `testsNeeded`: Runtime isolated filesystem/SQLite tests for commit rollback without launch marker, atomic marker publication, postcommit marker-write failure recovery, and normal launch request contents. No actual training process needed.
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: round1 commit (see rounds.md)
+- `fixedCommit`: 879e61f24d12da94843bd4ed17b740790e07fe0c
 
 
 ### UI-R1-001: Stale album/event detail responses can cross route identities and misdirect destructive actions
@@ -275,7 +275,7 @@ Baseline items precede reviewer round 1. No blockers are implicitly waived.
 - `testsNeeded`: Out-of-order album/event GETs, stale GET failures, request completion after unmount, rename completion after navigation, confirmation opened before route change, and exact mutation target assertions
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: round1 commit (see rounds.md)
+- `fixedCommit`: 879e61f24d12da94843bd4ed17b740790e07fe0c
 
 ### UI-R1-002: Person deletion confirmation silently retargets after navigation
 
@@ -296,7 +296,7 @@ Baseline items precede reviewer round 1. No blockers are implicitly waived.
 - `testsNeeded`: Open delete for person A, navigate to B, complete B's load, confirm; assert B is never deleted by A's dialog. Cover failed deletion and response completion after subsequent navigation.
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: round1 commit (see rounds.md)
+- `fixedCommit`: 879e61f24d12da94843bd4ed17b740790e07fe0c
 
 ### UI-R1-003: Person detail cache patches override the selected upstream people sort
 
@@ -317,7 +317,7 @@ Baseline items precede reviewer round 1. No blockers are implicitly waived.
 - `testsNeeded`: At minimum name ascending and appearances ascending retain server order or invalidate cleanly after a detail patch; cover favorites and name-filter membership and appending a cursor page after the patch
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: round1 commit (see rounds.md)
+- `fixedCommit`: 879e61f24d12da94843bd4ed17b740790e07fe0c
 
 ### UI-R1-004: Person export reports capped failure samples as the total and can announce false success
 
@@ -338,7 +338,7 @@ Baseline items precede reviewer round 1. No blockers are implicitly waived.
 - `testsNeeded`: More than 500 failures, zero successful exports, mixed success/failure, empty or evicted samples, persisted outcomes after restart, and historical unknown totals; success severity only when supported by actual results
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: round1 commit (see rounds.md)
+- `fixedCommit`: 879e61f24d12da94843bd4ed17b740790e07fe0c
 
 
 ### R1-DOC-01: Workstation media permissions are misrepresented
@@ -360,4 +360,159 @@ Baseline items precede reviewer round 1. No blockers are implicitly waived.
 - `testsNeeded`: none; direct configuration consistency check
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: round1 commit (see rounds.md)
+- `fixedCommit`: 879e61f24d12da94843bd4ed17b740790e07fe0c
+
+### R2-API-01: Failed target-profile migration is advertised as successful activation
+
+- `round`:2
+- `reviewer`:API/domain architecture, error boundaries and migration compatibility
+- `label`:issue
+- `blockingStatus`:blocking
+- `severity`:P1-high
+- `doctrineBucket`:not-doctrine
+- `sourceRefs`:app/database.py:233-239 explicitly requires callers to treat Alembic failures as degraded schema and never advertise migration success; docs/qa/2026-10-24/plan.md requires profile/migration/error-boundary correctness; tests/test_round6_pipeline_profile.py:93-104 establishes restoration of prior bootstrap identity on rejected profile activation.
+- `affectedFiles`:app/config/__init__.py:306-401, especially327-374; app/api/config.py:352-366 and equivalent create_profile activation path.
+- `evidence`:A temporary isolated regression invokes the real switch_profile→reload_settings path with a new task-owned profile directory and real CLIP prevalidation, injecting RuntimeError only at database.run_migrations while spying reset_engine. switch_profile raises no exception (the route therefore reports204), runtime data_dir changes to the target, bootstrap is written only once with no restoration, vector/schema completion is never reached, and configure_auto_scan_job is called. reload_settings catches the migration exception and then logs Settings reloaded successfully. Probe:/tmp/omoide-qa-round2-profile-probe.py; failing log:/tmp/omoide-qa-round2-profile-probe.log. The process used isolated configuration and mocked engine reset/scheduler; no live profile, engine or database was changed.
+- `impact`:A profile whose required migrations failed becomes the advertised active profile and can drive subsequent requests/scheduling against unavailable schema. The previous identity is not restored. Existing health checks may correctly return503 after a real migration failure; this finding does not claim that health incorrectly returns200 or that data loss occurred.
+- `suggestedFix`:Make activation failure explicit and keep or restore the prior settings, bootstrap and runtime engine identity when target migration/schema preparation fails. Do not schedule or advertise target activation before schema readiness. Preserve ordinary same-profile reload contracts and successful activation behavior; avoid adding a broad success fallback.
+- `recommendedSkillOrAgent`:Configuration/profile migration-boundary fixer.
+- `fixerGroup`:profile-activation.
+- `acceptanceCommands`:PYTHONPATH=. .venv/bin/python /tmp/omoide-qa-round2-profile-probe.py; permanent regression family for switch/create/reload migration failure and restoration; .venv/bin/python -m unittest discover -s tests -p test_round6_pipeline_profile.py; migration health/lifecycle suites; full backend suite.
+- `testsNeeded`:Failing-first permanent tests for target migration and vector/schema failures, prior settings/bootstrap/engine retention, skipped target scheduling/model release on failure, unchanged successful switch/create/reload behavior and controlled API failure responses.
+- `dependencies`:none.
+- `status`: fixed
+- `fixedCommit`: round2 commit (see rounds.md)
+
+One required finding. Protected annotation mutation guards and curation fixture/production legacy-authority guards were inspected read-only; no additional reproduced blocker is claimed there. Genuine passkey/inference/training and production profile activation remain outside this review's execution proof. Source coverage/history and green907backend/199frontend/76hotkey/9MCP gates are accepted from the orchestrator; this review does not reclassify coverage limitations as passes.
+
+
+### R2-RUNTIME-01: Conversion recovery and cleanup can overwrite/delete a newer source inode
+
+- `round`: 2
+- `reviewer`: Quality/runtime — storage identity and compensation
+- `label`: issue
+- `blockingStatus`: blocking
+- `severity`: P1-high
+- `doctrineBucket`: not-doctrine
+- `sourceRefs`: docs/qa/2026-10-24/plan.md destructive synthetic safety; R1-RUNTIME-02 compensation contract; AGENTS.md media safety and failing-test-first rule
+- `affectedFiles`: app/conversion.py:publish_replacement, especially backup.replace(source) rollback and postcommit obsolete.unlink loop
+- `evidence`: Two deterministic filesystem interleavings in real SQLite fixture: commit callback commits an AVI-to-MP4 row, then atomically replaces original AVI with a newer unrelated file; postcommit cleanup deletes that newer file (`concurrent_source_exists=False`). For same-path MP4, commit callback atomically replaces newly published MP4 with newer edited bytes then raises commit fault; compensation unconditionally backup.replace(source) overwrites that newer edit (`concurrent_edit_preserved=False`). Cross-destination rollback already checks inode identity, but source cleanup and same-path restore do not.
+- `impact`: Another import/editor or concurrent file operation can lose newer bytes during conversion cleanup or rollback. Ordinary commit-fault tests pass because they do not replace filesystem identity during the failure window.
+- `suggestedFix`: Bind source and published-file identities, verify ownership before every destructive cleanup/compensation, and leave foreign/newer source bytes untouched on mismatch. Retain original backup/encoded recovery where available and report an explicit identity conflict rather than overwriting/deleting another inode.
+- `recommendedSkillOrAgent`: conversion storage safety fixer
+- `fixerGroup`: app/conversion.py and focused transaction safety tests
+- `acceptanceCommands`: Add failing tests for both exact concurrent replacement interleavings, then test_runtime_transaction_safety.py, safety_conversion_lifecycle.py, safety_paths.py and full canonical backend suite.
+- `testsNeeded`: Runtime atomic source replacement after commit and before rollback, unchanged-source successful cleanup, original/encoded recovery retention, and no foreign-inode unlink/replace.
+- `dependencies`: none
+- `status`: fixed
+- `fixedCommit`: round2 commit (see rounds.md)
+
+### R2-RUNTIME-02: Repair completion overwrites cancellation accepted during thumbnail finalization
+
+- `round`: 2
+- `reviewer`: Quality/runtime — repair terminal-state concurrency
+- `label`: issue
+- `blockingStatus`: blocking
+- `severity`: P1-high
+- `doctrineBucket`: not-doctrine
+- `sourceRefs`: app/api/repairs.py:cancel_repair cancellation contract; AGENTS.md task cancellation and terminal-state precedence; docs/qa/2026-10-24/coverage.md Repairs/output lineage and tasks families
+- `affectedFiles`: app/tasks/image_repair.py:149-173 and follow-up dispatch
+- `evidence`: Existing FakeRepairClient produces synthetic JPEG. During mocked generate_thumbnail, a separate Session commits ImageRepairJob.status=cancelled after the generated Media row was registered. Worker then unconditionally writes succeeded and schedules follow-up processing. Reproducer prints `REPAIR_CANCEL final_status=succeeded followup_calls=1`. No actual Comfy operation ran.
+- `impact`: A successful cancellation is lost during output finalization, cancelled work becomes succeeded, and additional processing runs. The earlier job.status check before first Media commit does not protect the later terminal transition.
+- `suggestedFix`: Use a guarded running-to-succeeded CAS for final repair publication and dispatch follow-up only if that claim succeeds. Preserve cancelled state and clean or explicitly account for task-owned provisional output/media/thumbnail if cancellation wins; never delete or modify source media.
+- `recommendedSkillOrAgent`: repair task concurrency fixer
+- `fixerGroup`: app/tasks/image_repair.py and focused repair/transaction tests; protected annotation code remains untouched
+- `acceptanceCommands`: Add failing cancellation-during-thumbnail regression using FakeRepairClient, then test_image_repairs.py, test_round6_pipeline_repairs.py, transaction safety tests and full canonical backend suite.
+- `testsNeeded`: Runtime accepted cancellation during metadata/thumbnail finalization, no follow-up when CAS loses, original bytes unchanged, no dangling provisional output rows, and normal success/error behavior.
+- `dependencies`: none
+- `status`: fixed
+- `fixedCommit`: round2 commit (see rounds.md)
+
+No additional confirmed training admission, durable counter/feed, curation lease/authority or streaming failure was reproduced in this bounded round. External codec/training/Comfy/passkey/platform limits remain as recorded in coverage.md; they are not implied passes.
+
+
+### UI-R2-001: Caption filter responses and regeneration polling outlive their owning view
+
+- `round`: 2
+- `reviewer`: UI/contracts
+- `label`: issue
+- `blockingStatus`: blocking
+- `severity`: P1-high
+- `doctrineBucket`: not-doctrine
+- `sourceRefs`: `docs/qa/2026-10-24/plan.md` asynchronous boundaries; `docs/qa/2026-10-24/coverage.md` captions/export/history; existing route/filter generation contracts in DatasetDetailPage and DatasetTriagePage
+- `affectedFiles`: `frontend/src/components/DatasetCaptionsPanel.tsx:74`, `frontend/src/components/DatasetCaptionsPanel.tsx:97`, `frontend/src/components/DatasetCaptionsPanel.tsx:149`, `frontend/src/components/DatasetCaptionsPanel.tsx:180`
+- `evidence`: Actual component harness changes All -> Approved, resolves Approved first then the old All request: `CAPTION_FILTER_RACE {"filter":"approved","caption":"old all response"}`. A second reproduction starts Regenerate, unmounts, then releases its delay; it still invokes the annotations API: `CAPTION_POLL_UNMOUNT ["after-unmount"]`. The load/save/approve/regenerate/pagination/task-poll callbacks have no view generation or mounted guard; setInterval can also overlap polls. `/tmp/omoide-r2-ui-repro.cjs` and `/tmp/omoide-r2-ui-repro.log`.
+- `impact`: Obsolete responses replace the current filter's rows and draft captions. Regeneration continues polling after leaving the view, and obsolete completion can reload an old filter or write state after unmount. Existing successful caption persistence does not cover these delayed-response cases.
+- `suggestedFix`: Scope reads, mutations and polling to dataset/filter/task generation; abort reads where supported and independently reject ignored-abort responses. Reset dataset-owned state on identity changes. Serialize task polling using the existing visible polling pattern. Stop client regeneration polling on view invalidation without cancelling already-started server work. Show pagination errors and retain retryable loaded rows.
+- `recommendedSkillOrAgent`: frontend caption asynchronous-lifecycle fixer
+- `fixerGroup`: frontend-caption-lifecycle
+- `acceptanceCommands`: Add permanent ignored-abort filter race, delayed mutation completion, task/regeneration unmount and pagination failure tests; `node --test-isolation=none --test frontend/tests/*.test.cjs`; `npm --prefix frontend run build`; source ESLint
+- `testsNeeded`: Out-of-order filters, dataset identity changes, concurrent polling, stale errors, pagination failure, and no API polling/state writes after unmount
+- `dependencies`: none
+- `status`: fixed
+- `fixedCommit`: round2 commit (see rounds.md)
+
+### UI-R2-002: Dataset export creation completion contaminates the next dataset's history
+
+- `round`: 2
+- `reviewer`: UI/contracts
+- `label`: issue
+- `blockingStatus`: blocking
+- `severity`: P1-high
+- `doctrineBucket`: not-doctrine
+- `sourceRefs`: `docs/qa/2026-10-24/plan.md` public contract/async correctness; `docs/qa/2026-10-24/coverage.md` captions/export/history; existing routeGeneration invariant in DatasetDetailPage
+- `affectedFiles`: `frontend/src/pages/DatasetDetailPage.tsx:519`, `frontend/src/pages/DatasetDetailPage.tsx:407`
+- `evidence`: Actual page harness starts Export now in dataset 1, navigates and loads dataset 2, then resolves the old export: `EXPORT_ROUTE_RACE {"route":"2","showsOldExport":true}`. The callback unconditionally prepends the created export to current state. Unlike load/loadItems/saveSettings, this mutation completion does not compare routeGeneration. Bulk membership callbacks have the same unguarded presentation pattern. `/tmp/omoide-r2-ui-repro.cjs` and `/tmp/omoide-r2-ui-repro.log`.
+- `impact`: Dataset 2 displays another dataset's export and can expose the wrong manifest/output/training choice. Late mutation errors and selection cleanup can also affect the newly opened dataset.
+- `suggestedFix`: Capture dataset identity and generation at operation start, snapshot target ids, and guard success/error/finally presentation callbacks. Reset remaining per-dataset notices and pending state on route changes. Audit sibling inline mutation handlers rather than adding a guard solely to the reproduced export path.
+- `recommendedSkillOrAgent`: frontend dataset mutation-lifecycle fixer
+- `fixerGroup`: frontend-dataset-lifecycle
+- `acceptanceCommands`: Add delayed export and membership mutation regressions across dataset navigation; `node --test-isolation=none --test frontend/tests/*.test.cjs`; strict build and source ESLint
+- `testsNeeded`: Export success/error after route change, old membership completion with media shared by both datasets, stale selection cleanup, and late operation completion after unmount
+- `dependencies`: none
+- `status`: fixed
+- `fixedCommit`: round2 commit (see rounds.md)
+
+### UI-R2-003: Right-angle image rotation cannot save because output validation reads unrotated metadata
+
+- `round`: 2
+- `reviewer`: UI/contracts
+- `label`: issue
+- `blockingStatus`: blocking
+- `severity`: P1-high
+- `doctrineBucket`: not-doctrine
+- `sourceRefs`: `docs/qa/2026-10-24/coverage.md` edit/crop feature contract; `frontend/src/utils/editorOps.ts` replay geometry/output invariant; installed Filerobot 4.9.1 `lib/hooks/useTransformedImgData.js`
+- `affectedFiles`: `frontend/src/components/ImageEditorDialog.tsx:443`, `frontend/src/components/ImageEditorDialog.tsx:460`, `frontend/src/utils/editorOps.ts:125`
+- `evidence`: Root Chrome: synthetic 640x480 image -> Rotate +90 degrees -> editor shows 480x640 -> Save copy rejects with expected 640x480/replay 480x640, and no file changes. Installed Filerobot computes a rotated canvas (`getSizeAfterRotation`, stage dimensions) but returns imageData.width/height as unrotated crop dimensions unless resize overrides them. App passes those metadata fields into designStateToOps despite imageData.imageCanvas carrying 480x640. Temporary isolated regression evaluates the actual app save-call initializer with that real provider contract and fails with the same message: `/tmp/omoide-r2-rotation-repro.cjs`, `/tmp/omoide-r2-rotation-repro.log`.
+- `impact`: A basic supported right-angle rotation cannot be saved as a copy or overwrite. The safety guard is rejecting correct replay geometry because its expected-size input is wrong.
+- `suggestedFix`: Derive expected rendered dimensions from the actual image canvas, accounting for configured pixel ratio, while retaining replay output validation. Preserve crop, resize and virtual-edit behavior; do not remove the mismatch guard or silently resize back to the unrotated metadata.
+- `recommendedSkillOrAgent`: image editor serialization/replay fixer
+- `fixerGroup`: frontend-image-edit-contract
+- `acceptanceCommands`: Add failing permanent rotation save contract regression, plus 90/180/270, crop+rotate and resize cases; frontend suites/build/lint; relevant Python image-edit tests; root Chrome Save copy verifies a 480x640 result from the 640x480 fixture
+- `testsNeeded`: Actual canvas vs metadata disagreement, right-angle rotations, cropped rotations, resize, pixel ratio and genuine output mismatch rejection
+- `dependencies`: none
+- `status`: fixed
+- `fixedCommit`: round2 commit (see rounds.md)
+
+### UI-R2-004: Video preview is keyboard-focusable but has no accessible role or name
+
+- `round`: 2
+- `reviewer`: UI/contracts
+- `label`: issue
+- `blockingStatus`: blocking
+- `severity`: P2-medium
+- `doctrineBucket`: not-doctrine
+- `sourceRefs`: `docs/qa/2026-10-24/plan.md` accessibility review role; `docs/qa/2026-10-24/coverage.md` shell/keyboard and video controls; installed ReactPlayer 2.16.0 Preview render contract
+- `affectedFiles`: `frontend/src/components/VideoPlayer.tsx:381`, `frontend/src/localFilePlayer.ts`, installed `react-player/lib/Preview.js:123`
+- `evidence`: App enables light/thumbnail preview without supplying accessible preview controls. Installed Preview renders a div with tabindex 0, no role and default empty previewAriaLabel; direct installed-class reproduction returns `{"element":"div","tabIndex":0,"role":null,"ariaLabel":null}`. Root Chrome independently confirms this markup. Clicking produces a native video with controls and complete 3.018-second playback, so this is an accessibility defect, not a playback failure.
+- `impact`: Keyboard focus reaches an unnamed generic element, and assistive technology cannot identify the Play action as a named control before video activation.
+- `suggestedFix`: Provide an app-owned named button/semantic preview activation control with Enter/Space support and one coherent tab stop. Preserve lazy thumbnail behavior, native controls after activation and streaming fallback. A label alone on an otherwise generic focusable div is insufficient to establish button semantics.
+- `recommendedSkillOrAgent`: frontend accessible-video-control fixer
+- `fixerGroup`: frontend-video-preview-accessibility
+- `acceptanceCommands`: Add preview semantics/name/Enter/Space regression, run frontend/hotkey tests and build/lint; root Chrome accessibility/DOM proof verifies named Play button before activation and native controls afterwards
+- `testsNeeded`: Accessible role/name, exactly one intended tab stop, Enter and Space activation, pointer activation, and unchanged post-activation playback
+- `dependencies`: none
+- `status`: fixed
+- `fixedCommit`: round2 commit (see rounds.md)
+
+No source or test file was edited during this review. Temporary synthetic harnesses intercepted all services; no HTTP, private media, or production state was touched.

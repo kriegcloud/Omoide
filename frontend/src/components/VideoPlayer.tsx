@@ -1,3 +1,4 @@
+import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import { useState, useEffect, useRef } from "react";
 import { Box, Button, CircularProgress, Typography } from "@mui/material";
 import ReactPlayer from "../localFilePlayer";
@@ -68,6 +69,8 @@ export function VideoWithPreview({
   onProgress,
   convertedAvailable = false,
 }: VideoWithPreviewProps) {
+  const [activated, setActivated] = useState(autoplay);
+  useEffect(() => { if (autoplay) setActivated(true); }, [autoplay]);
   const [isLoading, setIsLoading] = useState(false);
   const [playbackError, setPlaybackError] = useState(false);
   // Converting on the fly because the browser cannot play the file itself.
@@ -378,7 +381,15 @@ export function VideoWithPreview({
         </Box>
       )}
 
-      <ReactPlayer
+      {!activated ? (
+        <Button type="button" className="react-player__preview"
+          aria-label={`Play video: ${media.filename}`}
+          onClick={() => setActivated(true)}
+          sx={{position: "absolute", inset: 0, width: "100%", height: "100%", backgroundImage: `url("${thumbnailUrl}")`, backgroundSize: "cover", backgroundPosition: "center", color: "common.white", borderRadius: 0,
+            "&:focus-visible": {outline: "3px solid", outlineColor: "primary.main", outlineOffset: -3}}}>
+          <PlayArrowIcon aria-hidden="true" sx={{fontSize: 64, borderRadius: "50%", bgcolor: "rgba(0,0,0,.45)"}} />
+        </Button>
+      ) : <ReactPlayer
         ref={playerRef}
         url={mediaUrl}
         controls
@@ -387,7 +398,7 @@ export function VideoWithPreview({
         width="100%"
         height="100%"
         style={{ position: "absolute", top: 0, left: 0 }} // Disable pointer events on the player itself
-        light={autoplay ? false : thumbnailUrl}
+        light={false}
         onReady={handleReady}
         onProgress={({ playedSeconds }: {playedSeconds: number}) => {
           lastPositionRef.current = playedSeconds;
@@ -395,7 +406,7 @@ export function VideoWithPreview({
         }}
         onError={handleUnplayable}
         // The config track is not needed for the manual implementation
-      />
+      />}
 
       {/* 3. Display the thumbnail preview */}
       {hoverData.visible && (

@@ -37,6 +37,8 @@ import type { CropFraming, FaceCropSuggestion, Media, MediaDetail } from "../typ
 import { encodeFilePath } from "../urlUtils";
 import {
   designStateToOps,
+  editorCanvasOutput,
+  refitEditorCrop,
   type EditOp,
   type FilerobotDesignState,
 } from "../utils/editorOps";
@@ -118,6 +120,8 @@ const FRAMING_PRESETS: Array<{ framing: CropFraming; label: string }> = [
   { framing: "full_body", label: "Full body" },
 ];
 
+const EDITOR_SAVING_PIXEL_RATIO = 1;
+
 const FilerobotImageEditor = lazy(async () => {
   const editorModule = await import("react-filerobot-image-editor");
   const Editor = editorModule.default;
@@ -127,7 +131,7 @@ const FilerobotImageEditor = lazy(async () => {
       <Editor
         {...props}
         loadableDesignState={props.loadableDesignState as React.ComponentProps<typeof Editor>["loadableDesignState"]}
-        savingPixelRatio={1}
+        savingPixelRatio={EDITOR_SAVING_PIXEL_RATIO}
         previewPixelRatio={1}
         tabsIds={[
           editorModule.TABS.ADJUST,
@@ -212,6 +216,7 @@ export default function ImageEditorDialog({
   );
   const updateStateRef = useRef<FilerobotUpdateState | undefined>(undefined);
   const editorHostRef = useRef<HTMLDivElement>(null);
+  const cropSpaceRef = useRef<FilerobotDesignState | null>(null);
   const [faceGuides, setFaceGuides] = useState(false);
   const [aspectGuides, setAspectGuides] = useState(false);
   const [compareHeld, setCompareHeld] = useState(false);
@@ -268,6 +273,36 @@ export default function ImageEditorDialog({
   // dialog that container has no size yet, so mount the editor only after the
   // transition finished (and let Filerobot observe later resizes).
   const [entered, setEntered] = useState(false);
+
+  // Filerobot does not notify onModify for automatic fits. Observe its live
+  // store while mounted and keep an unchanged crop in the same
+  // source space. The read returns null (a reducer bailout); idle frames do not
+  // render. Apply only to the snapshot read, so an intervening edit wins.
+  // Stop the observer with the dialog/editor lifecycle.
+  useEffect(() => {
+    cropSpaceRef.current = null;
+    if (!open || !entered) return;
+    let frame: number;
+    let active = true;
+    const observe = async () => {
+      const state = await captureStoreState();
+      if (!active) return;
+      if (state) {
+        const snapshot = { adjustments: state.adjustments, shownImageDimensions: state.shownImageDimensions };
+        const adjustments = refitEditorCrop(cropSpaceRef.current, snapshot);
+        cropSpaceRef.current = { ...snapshot, adjustments: adjustments ?? snapshot.adjustments };
+        if (adjustments) {
+          updateStateRef.current?.(current =>
+            current.adjustments === state.adjustments && current.shownImageDimensions === state.shownImageDimensions
+              ? { adjustments } : null
+          );
+        }
+      }
+      frame = window.requestAnimationFrame(() => { void observe(); });
+    };
+    frame = window.requestAnimationFrame(() => { void observe(); });
+    return () => { active = false; window.cancelAnimationFrame(frame); };
+  }, [open, entered, media.id, captureStoreState]);
 
   useEffect(() => {
     if (!open) return;
@@ -461,9 +496,7 @@ export default function ImageEditorDialog({
         freshState,
         media.width,
         media.height,
-        current?.imageData
-          ? { width: current.imageData.width, height: current.imageData.height }
-          : undefined
+        editorCanvasOutput(current?.imageData, EDITOR_SAVING_PIXEL_RATIO)
       );
       if (import.meta.env.DEV) {
         console.debug(

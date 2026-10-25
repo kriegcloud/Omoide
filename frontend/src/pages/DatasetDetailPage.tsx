@@ -151,6 +151,7 @@ export default function DatasetDetailPage() {
   const [pageError, setPageError] = useState<string | null>(null);
   const [bucketText, setBucketText] = useState("");
   const routeGeneration = useRef(0);
+  const datasetIdentity = useRef(datasetId); datasetIdentity.current = datasetId;
   const listGeneration = useRef(0);
   const analysisGeneration = useRef(0);
   const morePending = useRef(false);
@@ -208,6 +209,8 @@ export default function DatasetDetailPage() {
   useEffect(() => {
     routeGeneration.current += 1;
     setDataset(null);
+    setNotice(null); setAnalysisError(null); setGapMedia([]); setCaption("");
+    setPreviewExcluded(null); setDedupeBusy(false); setTrainingHealth(null);
     setBucketText("");
     setItems([]);
     setNextCursor(null);
@@ -240,6 +243,7 @@ export default function DatasetDetailPage() {
   // the dataset, items and exports are on screen and its failure only
   // affects the Analysis tab.
   const loadAnalysis = useCallback(async () => {
+    if (datasetIdentity.current !== datasetId) return;
     const route = routeGeneration.current;
     const revision = ++analysisGeneration.current;
     setAnalysisError(null);
@@ -263,6 +267,7 @@ export default function DatasetDetailPage() {
   }, [poseTaskVersion, loadAnalysis]);
 
   const loadItems = useCallback(async () => {
+    if (datasetIdentity.current !== datasetId) return;
     const route = routeGeneration.current;
     const revision = ++listGeneration.current;
     morePending.current = false;
@@ -283,6 +288,7 @@ export default function DatasetDetailPage() {
   }, [datasetId]);
 
   const load = useCallback(async () => {
+    if (datasetIdentity.current !== datasetId) return;
     const route = routeGeneration.current;
     setError(null);
     try {
@@ -320,7 +326,7 @@ export default function DatasetDetailPage() {
     const ids = (gapPreview.candidates ?? []).slice(0, gapPreview.deficit);
     void Promise.all(ids.map((mediaId) => getMedia(String(mediaId))))
       .then((details) => { if (!cancelled) setGapMedia(details.map((detail) => detail.media)); })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to preview gap candidates"));
+      .catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason.message : "Failed to preview gap candidates"); });
     return () => { cancelled = true; };
   }, [gapPreview]);
   const hasRunning = exports.some((entry) => entry.status === "pending" || entry.status === "running");
@@ -348,6 +354,7 @@ export default function DatasetDetailPage() {
 
   const loadMore = useCallback(async () => {
     if (!nextCursor || morePending.current) return;
+    if (datasetIdentity.current !== datasetId) return;
     const route = routeGeneration.current;
     const revision = listGeneration.current;
     morePending.current = true;
@@ -375,16 +382,19 @@ export default function DatasetDetailPage() {
   }, [loadMoreInView, nextCursor, loadingMore, pageError, tab, loadMore]);
 
   const patchItem = async (item: DatasetItem, input: Parameters<typeof updateDatasetItem>[2]) => {
+    if (datasetIdentity.current !== datasetId) return;
     const route = routeGeneration.current;
     const updated = await updateDatasetItem(datasetId, item.id, input);
-    if (route !== routeGeneration.current) return;
+    if (route !== routeGeneration.current) return false;
     setItems((current) => current.map((entry) => entry.id === updated.id ? updated : entry));
+    return true;
   };
   const refreshCuration = async () => {
     await Promise.all([loadItems(), loadAnalysis()]);
   };
   const saveSettings = async () => {
     if (!dataset || dataset.id !== datasetId || saving) return;
+    if (datasetIdentity.current !== datasetId) return;
     const route = routeGeneration.current;
     const buckets = bucketText.split(",").map((value) => Number(value.trim()));
     if (!buckets.length || buckets.some((value) => !Number.isInteger(value) || value <= 0)) {
@@ -404,17 +414,52 @@ export default function DatasetDetailPage() {
     }
   };
   const selectedItems = useMemo(() => items.filter((item) => selection.selectedIds.has(item.media_id)), [items, selection.selectedIds]);
+  const mutateDataset = async <T,>(operation: () => Promise<T>, apply: (result: T, current: () => boolean) => void | Promise<void>, fallback: string) => {
+    const version = routeGeneration.current;
+    const current = () => datasetIdentity.current === datasetId && routeGeneration.current === version;
+    if (!current()) return;
+    try {const result = await operation(); if (current()) await apply(result, current);}
+    catch (reason) {if (current()) setError(reason instanceof Error ? reason.message : fallback);}
+  };
   const bulkExcluded = async (excluded: boolean) => {
-    await Promise.all(selectedItems.map((item) => updateDatasetItem(datasetId, item.id, { excluded, excluded_reason: excluded ? "manual" : null })));
-    setItems((current) => current.map((item) => selection.selectedIds.has(item.media_id) ? { ...item, excluded, excluded_reason: excluded ? "manual" : null } : item));
-    selection.clear();
+    const targets = selectedItems.map(item => item.id), ids = new Set(targets);
+    await mutateDataset(() => Promise.all(targets.map(itemId => updateDatasetItem(datasetId, itemId, {excluded, excluded_reason: excluded ? "manual" : null}))), () => {
+      setItems(current => current.map(item => ids.has(item.id) ? {...item, excluded, excluded_reason: excluded ? "manual" : null} : item));
+      selection.clear();
+    }, "Failed to update dataset membership");
   };
   const remove = async (targets: DatasetItem[]) => {
-    await removeDatasetItems(datasetId, targets.map((item) => item.media_id));
-    const ids = new Set(targets.map((item) => item.id));
-    setItems((current) => current.filter((item) => !ids.has(item.id)));
-    selection.clear();
+    const ids = new Set(targets.map(item => item.id));
+    await mutateDataset(() => removeDatasetItems(datasetId, targets.map(item => item.media_id)), () => {
+      setItems(current => current.filter(item => !ids.has(item.id))); selection.clear();
+    }, "Failed to remove dataset items");
   };
+  const createExport = () => mutateDataset(() => createDatasetExport(datasetId, exportLayout), created => setExports(current => [created, ...current]), "Failed to start export");
+  const changeDuplicates = async (undo: boolean) => {
+    if (datasetIdentity.current !== datasetId) return;
+    const version = routeGeneration.current;
+    setDedupeBusy(true);
+    await mutateDataset<{included?: number; excluded?: number}>(() => undo ? reincludeDatasetItems(datasetId) : dedupeDataset(datasetId, {mode: "both", keep: "sharpest", pose_aware: true, dry_run: false}), async result => {
+      setNotice(undo ? `Reincluded ${result.included} duplicates.` : `Excluded ${result.excluded} duplicates.`);
+      await refreshCuration();
+    }, undo ? "Failed to undo duplicate exclusions" : "Failed to apply duplicate exclusions");
+    if (datasetIdentity.current === datasetId && routeGeneration.current === version) setDedupeBusy(false);
+  };
+  const previewAuto = () => mutateDataset(() => autoSelectDataset(datasetId, {...autoInput, dry_run: true}), result => setPreviewExcluded(result.excluded_item_ids.length), "Failed to preview auto-selection");
+  const applyAuto = () => mutateDataset(() => autoSelectDataset(datasetId, {...autoInput, dry_run: false}), async (_result, current) => {await refreshCuration(); if (current()) setAutoOpen(false);}, "Failed to apply auto-selection");
+  const buildRegularization = () => mutateDataset(() => buildRegularizationDataset(datasetId, {target_count: regularizationCount, ...(regularizationGender ? {gender: regularizationGender} : {})}), created => navigate(`/dataset/${created.id}`), "Failed to build regularization set");
+  const addGapItems = () => {
+    const mediaIds = gapMedia.map(media => media.id);
+    return mutateDataset(() => addDatasetItems(datasetId, mediaIds), async () => {setGapPreview(null); await Promise.all([load(), loadItems()]);}, "Failed to add gap candidates");
+  };
+  const saveCaption = async () => {
+    if (!captionItem) return;
+    const version = routeGeneration.current;
+    try {if (await patchItem(captionItem, {caption_override: caption.trim() || null}) && datasetIdentity.current === datasetId && routeGeneration.current === version) setCaptionItem(null);}
+    catch (reason) {if (datasetIdentity.current === datasetId && routeGeneration.current === version) setError(reason instanceof Error ? reason.message : "Failed to save caption");}
+  };
+  const renderGeneration = routeGeneration.current;
+  const renderCurrent = () => datasetIdentity.current === datasetId && routeGeneration.current === renderGeneration;
 
   if (loading || (dataset !== null && dataset.id !== datasetId)) return <Box minHeight="60vh" display="grid" sx={{ placeItems: "center" }}><CircularProgress /></Box>;
   if (!dataset) return <Container maxWidth="xl" sx={{ py: 4 }}><Alert severity="error">{error ?? "Dataset not found"}</Alert></Container>;
@@ -493,7 +538,7 @@ export default function DatasetDetailPage() {
             </Box>
             <CompositionPanel analysis={analysis} gaps={gaps} items={items} onPreview={setGapPreview} />
             <Box><Typography variant="h6" gutterBottom>Identity outliers</Typography>{analysis.outliers.length === 0 ? <Typography color="text.secondary">No identity-distance outliers.</Typography> : <Stack direction="row" spacing={2} sx={{ overflowX: "auto", pb: 1 }}>{analysis.outliers.map((itemId) => { const item = items.find((entry) => entry.id === itemId); const metric = analysis.items.find((entry) => entry.item_id === itemId); return item && <Paper key={itemId} elevation={0} sx={{ p: 1.5, minWidth: 180, border: 1, borderColor: "divider" }}><Box component="img" src={`${API}/thumbnails/${encodeFilePath(item.media.thumbnail_path ?? "")}`} sx={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 1 }} /><Typography variant="body2" mt={1}>Distance {metric?.identity_distance?.toFixed(3)}</Typography><Button size="small" onClick={async () => { await patchItem(item, { excluded: true, excluded_reason: "quality" }); await refreshCuration(); }}>Exclude</Button></Paper>; })}</Stack>}</Box>
-            <DuplicatesPanel groups={analysis.groups} items={items} busy={dedupeBusy} onApply={() => { setDedupeBusy(true); void dedupeDataset(datasetId, { mode: "both", keep: "sharpest", pose_aware: true, dry_run: false }).then((result) => { setNotice(`Excluded ${result.excluded} duplicate${result.excluded === 1 ? "" : "s"}.`); return refreshCuration(); }).catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to apply duplicate exclusions")).finally(() => setDedupeBusy(false)); }} onUndo={() => { setDedupeBusy(true); void reincludeDatasetItems(datasetId).then((result) => { setNotice(`Reincluded ${result.included} duplicate${result.included === 1 ? "" : "s"}.`); return refreshCuration(); }).catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to undo duplicate exclusions")).finally(() => setDedupeBusy(false)); }} />
+            <DuplicatesPanel groups={analysis.groups} items={items} busy={dedupeBusy} onApply={() => { void changeDuplicates(false); }} onUndo={() => { void changeDuplicates(true); }} />
           </>}
         </Stack>
       )}
@@ -502,27 +547,20 @@ export default function DatasetDetailPage() {
         mediaIds={selectedItems.map((item) => item.media_id)}
         personId={dataset.person_id ?? undefined}
         onClose={() => setRepairOpen(false)}
-        onStarted={() => selection.clear()}
+        onStarted={() => {if (renderCurrent()) selection.clear();}}
       />
       <FrameMiningDialog
         open={frameMiningOpen}
         datasetId={datasetId}
         onClose={() => setFrameMiningOpen(false)}
-        onStarted={() => setNotice("Video frame mining started. New frames will appear when processing finishes.")}
+        onStarted={() => {if (renderCurrent()) setNotice("Video frame mining started. New frames will appear when processing finishes.");}}
       />
 
       {tab === 2 && (
         <Stack spacing={2}>
           <Stack direction="row" spacing={1} alignItems="center">
             <FormControl size="small" sx={{ minWidth: 160 }}><InputLabel>Layout</InputLabel><Select label="Layout" value={exportLayout} onChange={(event) => setExportLayout(event.target.value as DatasetExportLayout)}><MenuItem value="ai_toolkit">ai-toolkit</MenuItem><MenuItem value="kohya">Kohya</MenuItem><MenuItem value="onetrainer">OneTrainer</MenuItem></Select></FormControl>
-            <Button variant="contained" startIcon={<FileDownloadIcon />} onClick={async () => {
-              try {
-                const created = await createDatasetExport(datasetId, exportLayout);
-                setExports((current) => [created, ...current]);
-              } catch (reason) {
-                setError(reason instanceof Error ? reason.message : "Failed to start export");
-              }
-            }}>Export now</Button>
+            <Button variant="contained" startIcon={<FileDownloadIcon />} onClick={createExport}>Export now</Button>
           </Stack>
           {exports.length === 0 ? <Typography color="text.secondary">No exports yet.</Typography> : exports.map((entry) => (
             <Paper key={entry.id} elevation={0} sx={{ p: 2, border: 1, borderColor: "divider", borderRadius: 3 }}>
@@ -540,9 +578,9 @@ export default function DatasetDetailPage() {
           datasetId={datasetId}
           exports={exports}
           runs={runs}
-          onRunsChange={setRuns}
+          onRunsChange={next => {if (renderCurrent()) setRuns(next);}}
           health={trainingHealth}
-          onHealthChange={setTrainingHealth}
+          onHealthChange={next => {if (renderCurrent()) setTrainingHealth(next);}}
         />
       )}
 
@@ -558,13 +596,13 @@ export default function DatasetDetailPage() {
           <FormControl><InputLabel>Duplicates</InputLabel><Select label="Duplicates" value={autoInput.drop_duplicates ? "drop" : "keep"} onChange={(event) => setAutoInput({ ...autoInput, drop_duplicates: event.target.value === "drop" })}><MenuItem value="drop">Keep only the best</MenuItem><MenuItem value="keep">Allow duplicates</MenuItem></Select></FormControl>
           {previewExcluded != null && <Alert severity="info">Preview: {autoInput.target_count} requested, {previewExcluded} items would be excluded.</Alert>}
         </Stack></DialogContent>
-        <DialogActions><Button onClick={() => setAutoOpen(false)}>Cancel</Button><Button onClick={async () => { const result = await autoSelectDataset(datasetId, { ...autoInput, dry_run: true }); setPreviewExcluded(result.excluded_item_ids.length); }}>Preview</Button><Button variant="contained" onClick={async () => { await autoSelectDataset(datasetId, { ...autoInput, dry_run: false }); await refreshCuration(); setAutoOpen(false); }}>Apply</Button></DialogActions>
+        <DialogActions><Button onClick={() => setAutoOpen(false)}>Cancel</Button><Button onClick={previewAuto}>Preview</Button><Button variant="contained" onClick={applyAuto}>Apply</Button></DialogActions>
       </Dialog>
 
       <Dialog open={regularizationOpen} onClose={() => setRegularizationOpen(false)} fullWidth maxWidth="xs">
         <DialogTitle>Build regularization set</DialogTitle>
         <DialogContent><Stack spacing={2} sx={{ mt: 1 }}><TextField type="number" label="Target count" value={regularizationCount} onChange={(event) => setRegularizationCount(Number(event.target.value))} /><FormControl><InputLabel>Gender</InputLabel><Select label="Gender" value={regularizationGender} onChange={(event) => setRegularizationGender(event.target.value)}><MenuItem value="">Subject default</MenuItem><MenuItem value="female">Woman</MenuItem><MenuItem value="male">Man</MenuItem></Select></FormControl></Stack></DialogContent>
-        <DialogActions><Button onClick={() => setRegularizationOpen(false)}>Cancel</Button><Button variant="contained" onClick={async () => { const created = await buildRegularizationDataset(datasetId, { target_count: regularizationCount, ...(regularizationGender ? { gender: regularizationGender } : {}) }); navigate(`/dataset/${created.id}`); }}>Build</Button></DialogActions>
+        <DialogActions><Button onClick={() => setRegularizationOpen(false)}>Cancel</Button><Button variant="contained" onClick={buildRegularization}>Build</Button></DialogActions>
       </Dialog>
 
       <Dialog open={Boolean(gapPreview)} onClose={() => setGapPreview(null)} fullWidth maxWidth="md">
@@ -573,7 +611,7 @@ export default function DatasetDetailPage() {
           {gapPreview && <Typography color="text.secondary" mb={2}>Add up to {gapPreview.deficit} images for {gapPreview.dimension} · {gapPreview.band.replaceAll("_", " ")}.</Typography>}
           {gapMedia.length === 0 ? <CircularProgress size={24} /> : <Box sx={{ display: "grid", gap: 1, gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(4, 1fr)", md: "repeat(6, 1fr)" } }}>{gapMedia.map((media) => <Box key={media.id} component="img" src={`${API}/thumbnails/${encodeFilePath(media.thumbnail_path ?? "")}`} alt={media.filename} sx={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 2, bgcolor: "action.hover" }} />)}</Box>}
         </DialogContent>
-        <DialogActions><Button onClick={() => setGapPreview(null)}>Cancel</Button><Button variant="contained" disabled={gapMedia.length === 0} onClick={async () => { await addDatasetItems(datasetId, gapMedia.map((media) => media.id)); setGapPreview(null); await Promise.all([load(), loadItems()]); }}>Add {gapMedia.length}</Button></DialogActions>
+        <DialogActions><Button onClick={() => setGapPreview(null)}>Cancel</Button><Button variant="contained" disabled={gapMedia.length === 0} onClick={addGapItems}>Add {gapMedia.length}</Button></DialogActions>
       </Dialog>
 
       <BatchCropDialog
@@ -583,15 +621,15 @@ export default function DatasetDetailPage() {
         items={items}
         onClose={() => setBatchCropOpen(false)}
         onApplied={async () => {
-          await refreshCuration();
+          if (renderCurrent()) await refreshCuration();
         }}
       />
 
-      <Dialog open={Boolean(captionItem)} onClose={() => setCaptionItem(null)} fullWidth maxWidth="sm"><DialogTitle>Edit caption</DialogTitle><DialogContent><TextField autoFocus multiline minRows={3} fullWidth value={caption} onChange={(event) => setCaption(event.target.value)} sx={{ mt: 1 }} /></DialogContent><DialogActions><Button onClick={() => setCaptionItem(null)}>Cancel</Button><Button variant="contained" onClick={async () => { if (captionItem) await patchItem(captionItem, { caption_override: caption.trim() || null }); setCaptionItem(null); }}>Save caption</Button></DialogActions></Dialog>
+      <Dialog open={Boolean(captionItem)} onClose={() => setCaptionItem(null)} fullWidth maxWidth="sm"><DialogTitle>Edit caption</DialogTitle><DialogContent><TextField autoFocus multiline minRows={3} fullWidth value={caption} onChange={(event) => setCaption(event.target.value)} sx={{ mt: 1 }} /></DialogContent><DialogActions><Button onClick={() => setCaptionItem(null)}>Cancel</Button><Button variant="contained" onClick={saveCaption}>Save caption</Button></DialogActions></Dialog>
       {cropItem && <Suspense fallback={<CircularProgress size={24} />}><ImageEditorDialog
         open media={{ ...cropItem.media, tags: [], faces: [], extracted_scenes: false } as Media}
         mode="virtual" loadableDesignState={(cropItem.edit_design_state as FilerobotDesignState | null) ?? null}
-        onClose={() => setCropItem(null)}
+        onClose={() => {if (renderCurrent()) setCropItem(null);}}
         onOpsReady={async (ops, designState) => { await patchItem(cropItem, { edit_ops: ops, edit_design_state: designState }); }}
       /></Suspense>}
     </Container>

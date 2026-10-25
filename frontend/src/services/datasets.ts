@@ -195,10 +195,11 @@ export const getDatasetCaptions = (
   id: number,
   filter: DatasetCaptionFilter,
   cursor?: string | null,
+  signal?: AbortSignal,
 ) => {
   const params = new URLSearchParams({ filter, limit: "100" });
   if (cursor) params.set("cursor", cursor);
-  return fetch(`${API}/api/datasets/${id}/captions?${params}`).then(
+  return fetch(`${API}/api/datasets/${id}/captions?${params}`, {signal}).then(
     json<DatasetCaptionPage>,
   );
 };
