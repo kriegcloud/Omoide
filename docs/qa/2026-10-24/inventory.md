@@ -649,4 +649,4 @@ No other required runtime/quality issue reproduced in this bounded round. R3 sou
 - `testsNeeded`: Failing-first real worker entry-point regression for postcommit destination atomic replacement and in-place edit in AVI/MP4 modes; assert retained encoded/original recovery, newer bytes unchanged, committed task/catalog state, truthful warning paths. Ordinary unchanged conversions must still clean their owned temporary files.
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: pending
+- `fixedCommit`: 0f8fa8692ecf547fc7da49260cda3786f3fec6ca
