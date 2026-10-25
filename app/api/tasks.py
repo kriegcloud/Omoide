@@ -47,8 +47,17 @@ def _to_read(
     progress_map: dict[str, dict] | None = None,
 ) -> ProcessingTaskRead:
     base = task.model_dump()
+    if isinstance(base.get("result"), dict):
+        # Detailed paths are fetched only when opening the failures dialog.
+        base["result"] = {
+            key: value for key, value in base["result"].items()
+            if key not in {"failure_samples", "unreadable_dirs"}
+        }
     base.update((progress_map or {}).get(task.id, {}))
-    base["failure_count"] = task_state.get_failure_count(task.id)
+    persisted_failures = (task.result or {}).get("failure_count", 0)
+    if type(persisted_failures) is not int or persisted_failures < 0:
+        persisted_failures = 0
+    base["failure_count"] = max(persisted_failures, task_state.get_failure_count(task.id))
     base["summary"] = summarize_task(task)
     base["duration_seconds"] = task_duration_seconds(task)
     base["resumable"] = is_resumable(task)
@@ -455,7 +464,11 @@ def get_task_failures_endpoint(
     task = session.get(ProcessingTask, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    return task_state.get_task_failures(task_id)
+    failures = task_state.get_task_failures(task_id)
+    persisted_samples = (task.result or {}).get("failure_samples", [])
+    if persisted_samples and (task.status not in {"running", "pending"} or len(persisted_samples) > len(failures)):
+        return [task_state.TaskFailure.model_validate(entry) for entry in persisted_samples]
+    return failures
 
 
 @router.get(

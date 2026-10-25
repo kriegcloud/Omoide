@@ -549,64 +549,49 @@ class FaceProcessor(MediaProcessor):
         if getattr(self, "model", None) is not None:
             return
         if settings.face_recognition.embedding_backend.value == "adaface_kprpe":
-            from app.services.face_inference import (
-                FACE_MODEL_FINGERPRINT,
-                AdaFaceSocketAnalysis,
+            from app.services.face_inference import AdaFaceSocketAnalysis
+            from app.services.face_model_state import (
+                ADA_FACE_MODEL_NAME,
+                ensure_pinned_face_model,
             )
-
             from app.database import engine
 
-            with engine.begin() as connection:
-                connection.exec_driver_sql(
-                    """
-                    CREATE TABLE IF NOT EXISTS model_fingerprints (
-                        component TEXT PRIMARY KEY,
-                        fingerprint TEXT NOT NULL,
-                        status TEXT NOT NULL,
-                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                    )
-                    """
-                )
-                state = connection.exec_driver_sql(
-                    """
-                    SELECT fingerprint, status
-                    FROM model_fingerprints
-                    WHERE component = 'face_embeddings'
-                    """
-                ).first()
-            if state is None or tuple(state) != (FACE_MODEL_FINGERPRINT, "ready"):
-                raise RuntimeError(
-                    "AdaFace cannot process media until the existing face "
-                    "embeddings have completed the pinned model migration."
-                )
-
-            self._ctx_id = -1
-            self.model = AdaFaceSocketAnalysis(
+            ensure_pinned_face_model(engine)
+            # Keep candidates local until health, demographics and the final
+            # provenance check all succeed. Failed setup must be retryable.
+            model = AdaFaceSocketAnalysis(
                 settings.face_recognition.inference_socket_path,
                 settings.face_recognition.inference_timeout_seconds,
             )
-            health = self.model.health()
-            logger.info(
-                "Using isolated face inference service: %s (%s)",
-                health.get("model"),
-                health.get("runtime", {}).get("actualCompute"),
-            )
-            # AdaFace replaces embeddings only. Keep InsightFace's CPU detector
-            # and genderage attribute model available for demographic fields.
+            health = model.health()
+            if health.get("model") != ADA_FACE_MODEL_NAME:
+                raise RuntimeError("The face service reported an unexpected AdaFace model.")
+            # The service's vendored backend verifies its pinned artifacts;
+            # health identifies that model but does not expose a fingerprint.
+            # Keep InsightFace's CPU detector and genderage model for attributes.
             from insightface.app import FaceAnalysis
 
-            self.demographics_model = FaceAnalysis(
+            demographics_model = FaceAnalysis(
                 "buffalo_l",
                 root=str(settings.general.models_dir),
                 allowed_modules=["detection", "genderage"],
                 providers=["CPUExecutionProvider"],
             )
-            self.demographics_model.prepare(
+            demographics_model.prepare(
                 ctx_id=-1,
                 det_size=(640, 640),
                 det_thresh=float(
                     settings.face_recognition.face_recognition_min_confidence
                 ),
+            )
+            ensure_pinned_face_model(engine, bootstrap_empty=True)
+            self._ctx_id = -1
+            self.demographics_model = demographics_model
+            self.model = model
+            logger.info(
+                "Using isolated face inference service: %s (%s)",
+                health.get("model"),
+                health.get("runtime", {}).get("actualCompute"),
             )
             return
         # Reduce ORT's long-lived CPU memory arenas so memory is released faster

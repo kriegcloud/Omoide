@@ -23,7 +23,7 @@ import {
   FormControlLabel,
   Switch,
 } from "@mui/material";
-import { TaskFailure, TaskType } from "../types";
+import { Task, TaskFailure, TaskType } from "../types";
 import {
   startTask as startTaskService,
   cancelTask as cancelTaskService,
@@ -80,6 +80,20 @@ const TASK_LABELS: TaskLabels = {
   generate_hashes: "Generate Hashes",
 };
 
+// Older terminal rows stored only the capped sample count. A persisted total
+// identifies new results; active tasks use the current API's live counter.
+function knownIssueCount(task: Task | null): number | undefined {
+  const persisted = task?.result?.failure_count;
+  const persistedTotal = typeof persisted === "number" && Number.isFinite(persisted) && persisted >= 0
+    ? persisted : undefined;
+  const live = task?.failure_count;
+  if (task && ["running", "pending"].includes(task.status) &&
+      typeof live === "number" && Number.isFinite(live) && live >= 0) {
+    return Math.max(live, persistedTotal ?? 0);
+  }
+  return persistedTotal;
+}
+
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
@@ -117,7 +131,9 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
   }>({ open: false, msg: "", sev: "success" });
   const [failureEntries, setFailureEntries] = useState<TaskFailure[]>([]);
   const [failureDialogOpen, setFailureDialogOpen] = useState(false);
-  const [failureTaskId, setFailureTaskId] = useState<string | null>(null);
+  const [failureTask, setFailureTask] = useState<Task | null>(null);
+  const failureTotal = knownIssueCount(failureTask);
+  const failureTitle = failureTask?.task_type === "scan" ? "Scan issues" : "Task issues";
   const [lastSeenScanTaskId, setLastSeenScanTaskId] = useState<string | null>(
     () => sessionStorage.getItem("smol_lastSeenScanTaskId")
   );
@@ -156,37 +172,37 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
 
   const loadFailures = useCallback(
     async (
-      taskId: string,
+      task: Task,
       {
         openDialog = true,
         notifyEmpty = true,
       }: { openDialog?: boolean; notifyEmpty?: boolean } = {}
     ) => {
       try {
-        const entries = await getTaskFailures(taskId);
-        if (!entries.length) {
+        const entries = await getTaskFailures(task.id);
+        if (!entries.length && !(task.failure_count && task.failure_count > 0)) {
           if (notifyEmpty) {
             setSnack({
               open: true,
-              msg: "No failures recorded for this task.",
+              msg: "No issues recorded for this task.",
               sev: "success",
             });
           }
           setFailureEntries([]);
-          setFailureTaskId(null);
+          setFailureTask(null);
           if (openDialog) {
             setFailureDialogOpen(false);
           }
           return entries;
         }
         setFailureEntries(entries);
-        setFailureTaskId(taskId);
+        setFailureTask(task);
         if (openDialog) {
           setFailureDialogOpen(true);
         }
         return entries;
       } catch (err) {
-        console.error("Failed to load failures for task", taskId, err);
+        console.error("Failed to load failures for task", task.id, err);
         setSnack({
           open: true,
           msg: "Failed to load failure details",
@@ -235,13 +251,13 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
     }
     setLastSeenScanTaskId(completedScan.id);
     sessionStorage.setItem("smol_lastSeenScanTaskId", completedScan.id);
-    loadFailures(completedScan.id, { notifyEmpty: false }).then((entries) => {
-      if (!entries.length) {
+    loadFailures(completedScan, { notifyEmpty: false }).then((entries) => {
+      if (!entries.length && !(completedScan.failure_count && completedScan.failure_count > 0)) {
         return;
       }
       setSnack({
         open: true,
-        msg: `Scan skipped ${entries.length} file${entries.length === 1 ? "" : "s"}.`,
+        msg: `Scan issues${knownIssueCount(completedScan) != null ? `: ${knownIssueCount(completedScan)?.toLocaleString()} recorded` : " recorded"}.${completedScan.summary ? ` ${completedScan.summary}` : ""}`,
         sev: "error",
         action: (
           <Button
@@ -362,7 +378,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
       </Snackbar>
       <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
         <Box sx={{ flexGrow: 1 }}>
-          {failureEntries.length > 0 && (
+          {(failureEntries.length > 0 || (failureTotal ?? 0) > 0) && (
             <Alert
               severity="warning"
               sx={{ mb: 2 }}
@@ -376,8 +392,8 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                 </Button>
               }
             >
-              Last scan skipped {failureEntries.length} file
-              {failureEntries.length === 1 ? "" : "s"}.
+              {failureTitle}{failureTotal != null ? `: ${failureTotal.toLocaleString()} recorded.` : " recorded."}
+              {failureTask?.summary && <Typography variant="body2">{failureTask.summary}</Typography>}
             </Alert>
           )}
           {/* Active Tasks Section */}
@@ -420,7 +436,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                     (effectiveTotal === 0 ||
                       staleForMs > 8000 ||
                       t.current_step === "indexing"));
-                const failureCount = t.failure_count ?? 0;
+                const failureCount = knownIssueCount(t) ?? 0;
                 const clusteringPct =
                   isClusterTask && t.total > 0
                     ? Math.min(
@@ -534,13 +550,12 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                         mt={0.5}
                       >
                         <Typography variant="caption" color="error.main">
-                          {failureCount} file{failureCount === 1 ? "" : "s"}{" "}
-                          failed
+                          {t.task_type === "scan" ? "Scan issues" : "Task issues"}: {failureCount.toLocaleString()}
                         </Typography>
                         <Button
                           size="small"
                           onClick={() =>
-                            loadFailures(t.id, { notifyEmpty: false })
+                            loadFailures(t, { notifyEmpty: false })
                           }
                           sx={{ ml: 1 }}
                         >
@@ -619,6 +634,9 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                     {formatTaskDuration(task.duration_seconds)} ·{" "}
                     {formatRelativeTime(task)}
                   </Typography>
+                  {(task.failure_count ?? 0) > 0 && <Button size="small" onClick={() => loadFailures(task, {notifyEmpty: false})}>
+                    {task.task_type === "scan" ? "Scan issues" : "Task issues"}{knownIssueCount(task) != null ? `: ${knownIssueCount(task)?.toLocaleString()}` : ""}
+                  </Button>}
                   {task.resumed_by ? (
                     <Typography variant="caption" color="text.secondary">
                       Resumed
@@ -833,11 +851,17 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
         fullWidth
         maxWidth="md"
       >
-        <DialogTitle>Skipped Files ({failureEntries.length})</DialogTitle>
+        <DialogTitle>{failureTitle}{failureTotal != null ? ` (${failureTotal.toLocaleString()})` : ""}</DialogTitle>
         <DialogContent dividers>
+          {failureTask?.summary && <Typography variant="body2" sx={{mb: 1}}>{failureTask.summary}</Typography>}
+          <Typography variant="caption" color="text.secondary" sx={{display: "block", mb: 1}}>
+            {failureTotal != null
+              ? `Showing latest ${failureEntries.length.toLocaleString()} of ${failureTotal.toLocaleString()} issues.`
+              : `Showing ${failureEntries.length >= 500 ? "latest " : ""}${failureEntries.length.toLocaleString()} recorded issues${failureEntries.length >= 500 ? " (limited samples)" : ""}. Total unavailable.`}
+          </Typography>
           {failureEntries.length === 0 ? (
             <Typography variant="body2" color="text.secondary">
-              No failures recorded.
+              No issue samples are available for this task.
             </Typography>
           ) : (
             <List dense disablePadding>
@@ -863,7 +887,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
         </DialogContent>
         <DialogActions sx={{ justifyContent: "space-between" }}>
           <Typography variant="caption" color="text.secondary">
-            {failureTaskId ? `Task: ${failureTaskId}` : ""}
+            {failureTask ? `Task: ${failureTask.id}` : ""}
           </Typography>
           <Button onClick={() => setFailureDialogOpen(false)}>Close</Button>
         </DialogActions>

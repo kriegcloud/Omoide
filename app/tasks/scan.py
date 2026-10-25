@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import time
+from collections import deque
 from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -22,7 +23,6 @@ from app.utils import generate_thumbnail, process_file, save_thumbnail_image
 from .common import _finish_task, _start_task
 from .state import (
     clear_task_progress,
-    get_failure_count,
     record_task_failure,
     set_task_progress,
 )
@@ -133,11 +133,9 @@ def _walk_media_candidates(
                         )
                         continue
                 except OSError as exc:
-                    logger.warning(
-                        "Skipping unreadable media directory %s: %s",
-                        root_path / dirname,
-                        exc,
-                    )
+                    if exc.filename is None:
+                        exc.filename = os.fspath(root_path / dirname)
+                    on_walk_error(exc)
                     continue
                 safe_dirs.append(dirname)
             dirs[:] = safe_dirs
@@ -184,6 +182,41 @@ def run_scan(task_id: str) -> None:
             return
         set_task_progress(task_id, current_step="indexing", current_item=None)
 
+    counts = {
+        "discovered": 0, "indexed": 0, "skipped": 0,
+        "metadata_failures": 0, "thumbnail_failures": 0,
+        "blacklisted": 0, "already_indexed": 0, "insertion_failures": 0,
+        "missing_before_indexing": 0, "missing_during_thumbnail": 0,
+        "unreadable_directory_count": 0, "failure_count": 0,
+    }
+    failure_samples: deque[dict[str, str]] = deque(maxlen=500)
+    unreadable_dirs: deque[str] = deque(maxlen=500)
+
+    def record_failure(path: str, reason: str) -> None:
+        counts["failure_count"] += 1
+        failure_samples.append({"path": path, "reason": reason})
+        record_task_failure(task_id, path, reason)
+
+    def persist_counts(task: ProcessingTask) -> None:
+        task.result = {
+            **(task.result or {}), **counts,
+            # Legacy consumers used new_files for the discovery candidate count.
+            "new_files": counts["discovered"],
+            "attempted": counts["indexed"] + counts["skipped"],
+            "remaining": counts["discovered"] - counts["indexed"] - counts["skipped"],
+            "unreadable_dirs": list(unreadable_dirs),
+            "failure_samples": list(failure_samples),
+        }
+
+    def file_is_missing(path: str | Path) -> bool:
+        try:
+            Path(path).stat()
+        except FileNotFoundError:
+            return True
+        except OSError:
+            pass
+        return False
+
     new_files: list[Path] = []
     existing_paths: set[str] = set()
     missing_candidates: dict[str, int] = {}
@@ -223,14 +256,14 @@ def run_scan(task_id: str) -> None:
         since_update = 0
         next_total_update = time.monotonic() + discovery_update_interval
         recovered_ids: set[int] = set()
-        unreadable_dirs: list[str] = []
 
         def on_unreadable_dir(err: OSError) -> None:
             # A media root that answers EIO (stale mount) or EACCES walks as
             # empty; without this the scan reports a clean "0 new files".
             directory = err.filename or "unknown"
             unreadable_dirs.append(os.fspath(directory))
-            record_task_failure(task_id, os.fspath(directory), str(err))
+            counts["unreadable_directory_count"] += 1
+            record_failure(os.fspath(directory), "Unreadable directory: " + str(err))
 
         for path in _walk_media_candidates(
             media_dirs,
@@ -248,6 +281,7 @@ def run_scan(task_id: str) -> None:
             if path_key in existing_paths:
                 continue
             new_files.append(path)
+            counts["discovered"] = len(new_files)
             existing_paths.add(path_key)
             since_update += 1
             if (
@@ -255,6 +289,7 @@ def run_scan(task_id: str) -> None:
                 or time.monotonic() >= next_total_update
             ):
                 task.total = len(new_files)
+                persist_counts(task)
                 sess.add(task)
                 safe_commit(sess)
                 sess.refresh(task, attribute_names=["status"])
@@ -271,6 +306,7 @@ def run_scan(task_id: str) -> None:
             )
 
         task.total = len(new_files)
+        persist_counts(task)
         logger.info("Found %s new files!", len(new_files))
         sess.add(task)
         safe_commit(sess)
@@ -278,12 +314,7 @@ def run_scan(task_id: str) -> None:
     if not new_files:
         with Session(db.engine) as sess:
             task = sess.get(ProcessingTask, task_id)
-            task.result = {
-                **(task.result or {}),
-                "new_files": len(new_files),
-                "skipped": get_failure_count(task_id) - len(unreadable_dirs),
-                "unreadable_dirs": unreadable_dirs,
-            }
+            persist_counts(task)
             safe_commit(sess)
             _finish_task(sess, task, "completed")
         clear_task_progress(task_id)
@@ -302,7 +333,11 @@ def run_scan(task_id: str) -> None:
             current_item=os.fspath(filepath),
             current_step="processing",
         )
-        return process_file(filepath)
+        try:
+            return process_file(filepath)
+        except Exception as exc:
+            logger.exception("Metadata extraction failed for %s", filepath)
+            return None, None, str(exc)
 
     def create_thumbnail(item) -> tuple[str | None, str | None]:
         media_obj, thumb_img = item
@@ -369,11 +404,20 @@ def run_scan(task_id: str) -> None:
                     for filepath, (media_obj, thumb_img, process_error) in zip(
                         batch, results
                     ):
+                        processed += 1
                         if _scan_path_key(filepath) in blacklisted_paths:
+                            counts["skipped"] += 1
+                            counts["blacklisted"] += 1
                             if thumb_img is not None:
                                 thumb_img.close()
                             continue
                         if not media_obj:
+                            if thumb_img is not None:
+                                thumb_img.close()
+                            counts["skipped"] += 1
+                            counts["metadata_failures"] += 1
+                            missing = file_is_missing(filepath)
+                            counts["missing_before_indexing"] += int(missing)
                             reason = (
                                 process_error
                                 or "Failed to extract media metadata."
@@ -383,17 +427,24 @@ def run_scan(task_id: str) -> None:
                                 filepath,
                                 reason,
                             )
-                            record_task_failure(
-                                task_id, os.fspath(filepath), reason
-                            )
+                            label = "Missing before indexing" if missing else "Metadata extraction failed"
+                            record_failure(os.fspath(filepath), f"{label}: {reason}")
                             continue
                         try:
                             with sess.begin_nested():
                                 sess.add(media_obj)
-                        except IntegrityError:
+                        except IntegrityError as exc:
                             if thumb_img is not None:
                                 thumb_img.close()
+                            counts["skipped"] += 1
+                            existing_id = sess.exec(select(Media.id).where(Media.path == media_obj.path)).first()
+                            if existing_id is not None:
+                                counts["already_indexed"] += 1
+                            else:
+                                counts["insertion_failures"] += 1
+                                record_failure(os.fspath(filepath), f"Database insertion failed: {exc.orig}")
                             continue
+                        counts["indexed"] += 1
                         pending.append((media_obj, thumb_img))
 
                     # Thumbnails need the flushed media id; saving prepared
@@ -412,28 +463,25 @@ def run_scan(task_id: str) -> None:
                                 media_obj.path,
                                 reason,
                             )
-                            record_task_failure(
-                                task_id, media_obj.path, reason
-                            )
+                            counts["thumbnail_failures"] += 1
+                            missing = file_is_missing(media_obj.path)
+                            counts["missing_during_thumbnail"] += int(missing)
+                            label = "Missing during thumbnail generation" if missing else "Thumbnail generation failed"
+                            record_failure(media_obj.path, f"{label}: {reason}")
                             media_obj.processing_error = reason
                             sess.add(media_obj)
                             continue
                         media_obj.thumbnail_path = thumb
                         sess.add(media_obj)
-                        processed += 1
 
                     task.processed = processed
+                    persist_counts(task)
                     sess.add(task)
                     safe_commit(sess)
 
             sess.refresh(task)
             task.processed = processed
-            task.result = {
-                **(task.result or {}),
-                "new_files": len(new_files),
-                "skipped": get_failure_count(task_id) - len(unreadable_dirs),
-                "unreadable_dirs": unreadable_dirs,
-            }
+            persist_counts(task)
             sess.add(task)
             safe_commit(sess)
             _finish_task(sess, task, "completed")

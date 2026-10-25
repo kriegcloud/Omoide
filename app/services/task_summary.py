@@ -55,6 +55,19 @@ def summarize_task(task: ProcessingTask) -> str:
 
     task_type = task.task_type
     if task_type == "scan":
+        indexed = _count(result.get("indexed"))
+        if indexed is not None:
+            discovered = _count(result.get("discovered")) or 0
+            skipped = _count(result.get("skipped")) or 0
+            summary = ("0 new files" if discovered == 0 and indexed == 0
+                       else f"{indexed} indexed, {skipped} skipped ({discovered} discovered)")
+            thumbnail_failures = _count(result.get("thumbnail_failures")) or 0
+            if thumbnail_failures:
+                summary += ", " + _plural(thumbnail_failures, "thumbnail failure")
+            unreadable = _count(result.get("unreadable_directory_count")) or 0
+            if unreadable:
+                summary += ", " + _plural(unreadable, "unreadable directory", "unreadable directories")
+            return summary
         new_files = _count(result.get("new_files"))
         if new_files is not None:
             summary = _plural(new_files, "new file")

@@ -228,3 +228,80 @@ test("cancel_is_single_flight_and_shows_failure_feedback", async () => {
   "request failure must be visible in snackbar");
   assert.equal(button(render(), "Cancel").props.disabled, false);
 });
+
+function failurePanel(task, entries, completed = false) {
+  const state = hooks();
+  const effects = [];
+  const Panel = load("components/TasksPanel.tsx", {
+    react: { ...state.react, useEffect: (effect) => effects.push(effect) },
+    "@mui/material": componentNames,
+    "../config": { default: { PRESENTATION_MODE: false } },
+    "../services/taskActions": { getTaskFailures: async () => entries },
+    "../utils/taskFormat": { formatTaskStep: (step) => step },
+    "../TaskEventsContext": {
+      useTaskEvents: () => ({
+        activeTasks: completed ? [] : [task], recentTasks: [],
+        lastCompletedTasks: completed ? { scan: task } : {},
+        forceRefresh: async () => {},
+      }),
+    },
+  }, { sessionStorage: { getItem: () => null, setItem() {} } }).default;
+  const render = () => state.render(() => Panel({ isActive: true }));
+  return { render, runEffects: () => effects.splice(0).forEach((effect) => effect()) };
+}
+
+function panelText(tree) {
+  return elements(tree).flatMap((element) => element.props.children.flat(Infinity))
+    .filter((value) => typeof value === "string" || typeof value === "number").join(" ");
+}
+
+test("task issue dialog reports total failures separately from its bounded latest samples", async () => {
+  const task = { id: "scan-issues", status: "running", task_type: "scan", processed: 1000, total: 2000,
+    failure_count: 1207, summary: "Indexed 800 of 1000 discovered; 200 skipped; 1007 thumbnail failures" };
+  const samples = Array.from({ length: 500 }, (_, index) => ({ path: `/fixture/${index}.jpg`, reason: "Thumbnail generation failed" }));
+  const page = failurePanel(task, samples);
+  await button(page.render(), "View").props.onClick();
+  const tree = page.render();
+  const title = elements(tree).find((element) => element.type === "DialogTitle");
+  assert.match(panelText(title), /Scan issues.*1,207/);
+  assert.match(panelText(tree), /Showing latest 500 of 1,207/);
+  assert.doesNotMatch(panelText(tree), /skipped 500|Skipped Files|500 files failed/i);
+  assert.match(panelText(tree), /Indexed 800 of 1000 discovered/);
+});
+
+test("thumbnail failures are scan issues, not skipped media, in completion feedback", async () => {
+  const task = { id: "thumbnail-issue", status: "completed", task_type: "scan", processed: 1, total: 1,
+    failure_count: 1, summary: "Indexed 1 of 1 discovered; 0 skipped; 1 thumbnail failure" };
+  const page = failurePanel(task, [{ path: "/fixture/indexed.jpg", reason: "Thumbnail generation failed" }], true);
+  page.render();
+  page.runEffects();
+  await new Promise((resolve) => setImmediate(resolve));
+  const text = panelText(page.render());
+  assert.match(text, /Scan issues/);
+  assert.match(text, /Indexed 1 of 1 discovered; 0 skipped; 1 thumbnail failure/);
+  assert.doesNotMatch(text, /Scan skipped|Last scan skipped|Skipped Files/);
+});
+
+test("legacy capped scan failures do not imply a known total", async () => {
+  const task = { id: "legacy-capped-scan", status: "completed", task_type: "scan", processed: 900, total: 900,
+    failure_count: 500, result: { new_files: 900 } };
+  const samples = Array.from({ length: 500 }, (_, index) => ({ path: `/fixture/${index}.jpg`, reason: "Missing file" }));
+  const page = failurePanel(task, samples, true);
+  page.render();
+  page.runEffects();
+  await new Promise((resolve) => setImmediate(resolve));
+  const text = panelText(page.render());
+  assert.match(text, /Showing latest 500 recorded issues.*Total unavailable/);
+  assert.doesNotMatch(text, /of 500 issues|Scan issues\s*\(500\)|Scan issues: 500 recorded/);
+});
+
+test("active task issues use the live count when persisted scan totals lag behind", async () => {
+  const task = { id: "active-lagging-count", status: "running", task_type: "scan", processed: 600, total: 1000,
+    failure_count: 550, result: { failure_count: 0 } };
+  const samples = Array.from({ length: 500 }, (_, index) => ({ path: `/fixture/${index}.jpg`, reason: "Thumbnail generation failed" }));
+  const page = failurePanel(task, samples);
+  await button(page.render(), "View").props.onClick();
+  const text = panelText(page.render());
+  assert.match(text, /Showing latest 500 of 550 issues/);
+  assert.doesNotMatch(text, /of 0 issues|Scan issues\s*\(0\)/);
+});
