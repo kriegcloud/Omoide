@@ -37,6 +37,14 @@ import { useSelection } from "../context/SelectionContext";
 import CheckBoxOutlineBlankIcon from "@mui/icons-material/CheckBoxOutlineBlank";
 import CheckBoxIcon from "@mui/icons-material/CheckBox";
 
+type SearchCategory = "media" | "person" | "tag" | "scene";
+const SEARCH_CATEGORIES: readonly SearchCategory[] = [
+  "media",
+  "person",
+  "tag",
+  "scene",
+];
+
 function TaskStatusButton({ onClick }: { onClick: () => void }) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
@@ -118,11 +126,9 @@ export function Header() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isSearchVisible, setIsSearchVisible] = useState(false);
   const [q, setQ] = useState("");
-  const [category, setCategory] = useState<"media" | "tag" | "scene">(
-    "media"
-  );
+  const [category, setCategory] = useState<SearchCategory>("media");
   // Force a re-render when runtime config updates (e.g., read-only flag changes)
-  const [configTick, setConfigTick] = useState(0);
+  const [, setConfigTick] = useState(0);
   const navigate = useNavigate();
   const fileInputRef = React.useRef<HTMLInputElement>(null); // Ref for the hidden file input
   const location = useLocation();
@@ -144,12 +150,8 @@ export function Header() {
     const urlQuery = params.get("query");
     const urlCategory = params.get("category");
     if (urlQuery !== null) setQ(urlQuery);
-    if (
-      urlCategory === "media" ||
-      urlCategory === "tag" ||
-      urlCategory === "scene"
-    ) {
-      setCategory(urlCategory);
+    if (SEARCH_CATEGORIES.includes(urlCategory as SearchCategory)) {
+      setCategory(urlCategory as SearchCategory);
     }
   }, [location.pathname, location.search]);
 
@@ -211,23 +213,25 @@ export function Header() {
           <ThemeToggleButton />
         </Box>
 
-        <Tooltip title={isSelecting ? `Select mode — ${selectedIds.size} selected` : "Select items"}>
-          <IconButton
-            onClick={toggleSelecting}
-            color={isSelecting ? "primary" : "default"}
-            size="large"
-            sx={{ p: 1 }}
-          >
-            {isSelecting ? <CheckBoxIcon /> : <CheckBoxOutlineBlankIcon />}
-          </IconButton>
-        </Tooltip>
+        {!config.PRESENTATION_MODE && (
+          <Tooltip title={isSelecting ? `Select mode — ${selectedIds.size} selected` : "Select items"}>
+            <IconButton
+              onClick={toggleSelecting}
+              color={isSelecting ? "primary" : "default"}
+              size="large"
+              sx={{ p: 1 }}
+            >
+              {isSelecting ? <CheckBoxIcon /> : <CheckBoxOutlineBlankIcon />}
+            </IconButton>
+          </Tooltip>
+        )}
 
         {!config.PRESENTATION_MODE && (
           <TaskStatusButton onClick={() => setIsControlPanelOpen(true)} />
         )}
 
         <Box sx={{ display: { xs: "flex", md: "none" } }}>
-          <IconButton color="primary" onClick={() => setIsSearchVisible(true)}>
+          <IconButton aria-label="Open search" color="primary" onClick={() => setIsSearchVisible(true)}>
             <SearchIcon />
           </IconButton>
         </Box>
@@ -245,9 +249,7 @@ export function Header() {
         variant="outlined"
         size="small"
         value={category}
-        onChange={(e) =>
-          setCategory(e.target.value as "media" | "tag" | "scene")
-        }
+        onChange={(e) => setCategory(e.target.value as SearchCategory)}
         sx={{ 
             borderTopRightRadius: 0, 
             borderBottomRightRadius: 0,
@@ -256,6 +258,7 @@ export function Header() {
         }}
       >
         <MenuItem value="media">Media</MenuItem>
+        {config.ENABLE_PEOPLE && <MenuItem value="person">People</MenuItem>}
         <MenuItem value="tag">Tags</MenuItem>
         <MenuItem value="scene">Scenes</MenuItem>
       </Select>
@@ -290,7 +293,7 @@ export function Header() {
 
   const renderSearchHeader = () => (
     <>
-      <IconButton color="primary" onClick={() => setIsSearchVisible(false)}>
+      <IconButton aria-label="Close search" color="primary" onClick={() => setIsSearchVisible(false)}>
         <ArrowBackIcon />
       </IconButton>
       {renderSearchInputs()}

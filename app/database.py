@@ -103,30 +103,36 @@ def _ctypes_load_extension(conn, ext_path: str) -> None:
         enable_fn(db_ptr, 0)
 
 
+def _default_frozen_vec_path() -> None:
+    """In a frozen build, point SQLITE_VEC_PATH at the bundled vec0 binary
+    unless the user already set it."""
+    if not (getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS")):
+        return
+    if os.environ.get("SQLITE_VEC_PATH"):
+        return
+    base = Path(sys._MEIPASS)
+    candidates: list[Path] = []
+    try:
+        for pat in ("vec0*.dll", "vec0*.so", "vec0*.dylib"):
+            candidates += list(base.glob(pat))
+    except Exception:
+        candidates = []
+    if candidates:
+        os.environ["SQLITE_VEC_PATH"] = str(candidates[0])
+        return
+    vec_name = {
+        "win32": "vec0.dll",
+        "cygwin": "vec0.dll",
+        "darwin": "vec0.dylib",
+    }.get(sys.platform, "vec0.so")
+    os.environ["SQLITE_VEC_PATH"] = str(base / vec_name)
+
+
 def _attach_engine_listeners(eng):
     """Attach sqlite-vec loader and PRAGMA setup to the given engine."""
 
     def _load_sqlite_extensions(dbapi_conn, connection_record):
-        # Resolve path to the bundled vec0 binary (frozen build only).
-        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-            base = Path(sys._MEIPASS)
-            if not os.environ.get("SQLITE_VEC_PATH"):
-                candidates: list[Path] = []
-                try:
-                    for pat in ("vec0*.dll", "vec0*.so", "vec0*.dylib"):
-                        candidates += list(base.glob(pat))
-                except Exception:
-                    candidates = []
-                if candidates:
-                    os.environ["SQLITE_VEC_PATH"] = str(candidates[0])
-                else:
-                    vec_name = {
-                        "win32": "vec0.dll",
-                        "cygwin": "vec0.dll",
-                        "darwin": "vec0.dylib",
-                    }.get(sys.platform, "vec0.so")
-                    os.environ["SQLITE_VEC_PATH"] = str(base / vec_name)
-
+        _default_frozen_vec_path()
         vec_path = os.environ.get("SQLITE_VEC_PATH")
 
         if hasattr(dbapi_conn, "enable_load_extension"):
@@ -310,26 +316,7 @@ def validate_clip_vector_space(model, *, previous_model=None, database_url=None)
 
 def ensure_vec_tables():
     """Ensure vec0 virtual tables exist (idempotent)."""
-    # Try best to ensure the sqlite-vec extension can be located in binary mode
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        # Provide default path to bundled vec0 binary if not set
-        base = Path(sys._MEIPASS)
-        if not os.environ.get("SQLITE_VEC_PATH"):
-            candidates = []
-            try:
-                for pat in ("vec0*.dll", "vec0*.so", "vec0*.dylib"):
-                    candidates += list(base.glob(pat))
-            except Exception:
-                candidates = []
-            if candidates:
-                os.environ["SQLITE_VEC_PATH"] = str(candidates[0])
-            else:
-                vec_name = {
-                    "win32": "vec0.dll",
-                    "cygwin": "vec0.dll",
-                    "darwin": "vec0.dylib",
-                }.get(sys.platform, "vec0.so")
-                os.environ.setdefault("SQLITE_VEC_PATH", str(base / vec_name))
+    _default_frozen_vec_path()
 
     dim_media = settings.ai.clip_model_embedding_size
     validate_clip_vector_space(settings.ai.clip_model)

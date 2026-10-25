@@ -17,6 +17,8 @@ from sqlmodel import Session, delete, select, text, update
 from app.config import settings
 from app.database import get_session, safe_commit, safe_execute
 from app.logger import logger
+from app.pagination import paginate
+from app.persons import set_face_embedding_person
 from app.models import Face, FaceAssignmentSource, FaceSuggestionRejection, Person, PersonMediaLink
 from app.schemas.face import (
     AssignSuggestedFaces,
@@ -43,6 +45,20 @@ from app.utils import (
 )
 
 router = APIRouter()
+
+def _load_faces(session: Session, face_ids: list[int]) -> list[Face]:
+    """Fetch faces in request order with one query, logging unknown ids."""
+    if not face_ids:
+        return []
+    by_id = {
+        face.id: face
+        for face in session.exec(select(Face).where(Face.id.in_(face_ids))).all()
+    }
+    missing = [fid for fid in face_ids if fid not in by_id]
+    if missing:
+        logger.warning("Skipping unknown face ids: %s", missing)
+    return [by_id[fid] for fid in dict.fromkeys(face_ids) if fid in by_id]
+
 
 
 @router.get("/assignments/recent", response_model=list[RecentFaceAssignment])
@@ -123,11 +139,7 @@ async def assign_faces(
     if new_person_id is not None:
         affected_person_ids.add(new_person_id)
 
-    for face_id in body.face_ids:
-        face = session.get(Face, face_id)
-        if not face:
-            logger.warning(f"Face with ID {face_id} not found, skipping assignment.")
-            continue
+    for face in _load_faces(session, body.face_ids):
 
         _assign_face(
             session, face, new_person, affected_person_ids, FaceAssignmentSource(body.source)
@@ -191,11 +203,8 @@ async def detach_faces(
 
     affected_person_ids: set[int] = set()
 
-    for face_id in face_ids:
-        face = session.get(Face, face_id)
-        if not face:
-            logger.warning(f"Face with ID {face_id} not found, skipping detachment.")
-            continue
+    for face in _load_faces(session, face_ids):
+        face_id = face.id
 
         person_id = face.person_id
         if person_id:
@@ -407,26 +416,19 @@ def delete_all_orphans(session: Session = Depends(get_session)) -> dict[str, int
 def get_orphans(
     session: Session = Depends(get_session),
     cursor: str | None = Query(
-        None,
-        description=(
-            "encoded as `<id>`; e.g. `2025-05-05T12:34:56.789012_1234` or `2500_1234`"
-        ),
+        None, description="Opaque cursor from the previous page's `next_cursor`"
     ),
     limit: int = 48,
 ):
-    before_id = None
-    if cursor:
-        before_id = int(cursor)
-    query = select(Face).where(Face.person_id.is_(None)).order_by(Face.id.desc())
-    if before_id:
-        query = query.where(Face.id < before_id)
-    orphans = safe_execute(session, query.limit(limit)).all()
-
-    if len(orphans) == limit:
-        next_cursor = str(orphans[-1].id)
-    else:
-        next_cursor = None
+    orphans, next_cursor = paginate(
+        session,
+        select(Face).where(Face.person_id.is_(None)),
+        [(Face.id, False)],
+        cursor=cursor,
+        limit=limit,
+    )
     return CursorPage(next_cursor=next_cursor, items=orphans)
+
 
 @router.post(
     "/create_person",

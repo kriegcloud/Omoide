@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { mutationBus, type MediaPatch } from "./mutationBus";
 import { ListRevision, mergeUnique } from "./listReconciliation";
 import { create } from "zustand";
+export type PageResponse<T> = import("../types").CursorPage<T> & {total?: number};
 import { CursorPage } from "../types";
 
 // Keep the initial fetcher so a mounted card can refresh its owning cached list.
@@ -135,7 +136,7 @@ export const useListStore = create<ListStoreState>((set, get) => ({
 
   loadMore: async <T>(
     listKey: string,
-    fetcher: (cursor: string | null) => Promise<CursorPage<T>>
+    fetcher: (cursor?: string) => Promise<CursorPage<T>>
   ) => {
     const generation = generations.get(listKey) ?? 0;
     const revision = journal(listKey).revision;
@@ -147,7 +148,7 @@ export const useListStore = create<ListStoreState>((set, get) => ({
     }));
 
     try {
-      const response = await fetcher(currentList.nextCursor);
+      const response = await fetcher(currentList.nextCursor ?? undefined);
       if ((generations.get(listKey) ?? 0) !== generation) return;
       // Merge from the latest state, not the pre-await snapshot: items removed
       // (or lists cleared) while the page was in flight must stay removed.

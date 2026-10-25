@@ -19,18 +19,7 @@ import ShutterSpeedIcon from "@mui/icons-material/ShutterSpeed";
 import ApertureIcon from "@mui/icons-material/DonutLarge";
 import MyLocationIcon from "@mui/icons-material/MyLocation";
 import { getExifData } from "../services/exif";
-
-interface ExifData {
-  make?: string;
-  model?: string;
-  timestamp?: string;
-  aperture?: string;
-  exposure_time?: string;
-  iso?: number;
-  focal_length?: number;
-  lat?: number;
-  lon?: number;
-}
+import { ExifData } from "../types";
 
 interface MediaExifProps {
   mediaId: number;

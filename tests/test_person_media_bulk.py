@@ -49,8 +49,8 @@ class PersonMediaBulkTests(unittest.TestCase):
         for item in [self.source_person, self.target_person, *self.media]:
             self.session.refresh(item)
         self.helper_patches = [
-            patch.object(person_api, "recalculate_person_appearance_counts"),
-            patch.object(person_api, "update_person_embedding"),
+            patch("app.api.person.extensions.recalculate_person_appearance_counts"),
+            patch("app.api.person.extensions.update_person_embedding"),
             patch("app.api.face.update_face_embedding"),
             patch("app.api.face.old_person_can_be_deleted", return_value=False),
         ]

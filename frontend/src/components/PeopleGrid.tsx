@@ -1,3 +1,6 @@
+import { PERSON_GRID_SIZES, PersonThumbSizeToggle, usePersonThumbSize } from "./PersonThumbSize";
+import { useLocalStoragePreference } from "../hooks/useLocalStoragePreference";
+import type { PersonSort } from "../services/person";
 import ListStateView from "./ListState";
 import { useListInvalidation } from "../stores/useListStore";
 import { useUndo, useUndoRefresh } from "../context/UndoContext";
@@ -6,6 +9,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import {
   Alert,
+  TextField,
+  MenuItem,
   Box,
   Button,
   Chip,
@@ -60,18 +65,30 @@ type SnackbarState = {
 
 export default function PeopleGrid({
   title,
-  listKey,
+  listKey: baseListKey,
   hidden = false,
   gender,
   onGenderChange,
 }: PeopleGridProps) {
+  const [name, setName] = useState("");
+  const [debouncedName, setDebouncedName] = useState("");
+  const [thumbSize, setThumbSize] = usePersonThumbSize();
+  const sortOptions: {value: PersonSort; label: string}[] = [
+    {value: "appearances_desc", label: "Most media"}, {value: "appearances_asc", label: "Fewest media"},
+    {value: "name_asc", label: "Name (A–Z)"}, {value: "name_desc", label: "Name (Z–A)"},
+    {value: "views_desc", label: "Most viewed"}, {value: "favorites", label: "Favorites first"},
+    {value: "newest", label: "Newest"}, {value: "oldest", label: "Oldest"},
+  ];
+  const [sort, setSort] = useLocalStoragePreference<PersonSort>("peopleSort", sortOptions.map(o => o.value), "appearances_desc");
+  const listKey = `${baseListKey}-${sort}-${debouncedName}`;
+  useEffect(() => { const timer = setTimeout(() => setDebouncedName(name.trim()), 300); return () => clearTimeout(timer); }, [name]);
   const navigate = useNavigate();
   const { push, refreshVisible } = useUndo();
   useUndoRefresh(`cache:${listKey}`, () => refreshCachedList(listKey));
   const { ref: loaderRef, inView } = useInView({ rootMargin: "200px" });
   const fetchPeople = useCallback(
-    (cursor?: string | null) => getPeople(cursor ?? undefined, hidden, gender),
-    [gender, hidden],
+    (cursor?: string | null) => getPeople(cursor ?? undefined, hidden, gender, undefined, debouncedName, sort),
+    [gender, hidden, debouncedName, sort],
   );
   const { items: people, hasMore, isLoading, error } = useListStore(
     (state) =>
@@ -308,6 +325,11 @@ const clearList = useListStore(state => state.clearList);
           {title}
         </Typography>
         <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
+          <TextField size="small" label="Search people" value={name} onChange={e => setName(e.target.value)} />
+          <TextField select size="small" label="Sort people" value={sort} onChange={e => setSort(e.target.value as PersonSort)} sx={{minWidth: 160}}>
+            {sortOptions.map(option => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
+          </TextField>
+          <PersonThumbSizeToggle value={thumbSize} onChange={setThumbSize} />
           {onGenderChange && (
             <ToggleButtonGroup
               exclusive
@@ -405,7 +427,7 @@ const clearList = useListStore(state => state.clearList);
         sx={{ position: "relative" }}
       >
         {people.map((person) => (
-          <Grid key={person.id} size={{ xs: 6, sm: 4, md: 2, lg: 1.5 }}>
+          <Grid key={person.id} size={PERSON_GRID_SIZES[thumbSize]}>
             <PersonCard
               person={person}
               selecting={selectionMode}

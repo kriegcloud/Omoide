@@ -76,7 +76,7 @@ export default function MediaDetailPage() {
     mediaListKey ? state.lists[mediaListKey] : undefined
   );
   // A. Global state from Zustand for the list context
-  const items: unknown[] = listFromStore?.items ?? [];
+  const items: unknown[] = useMemo(() => listFromStore?.items ?? [], [listFromStore?.items]);
 
   const routeId = useRef(id);
   routeId.current = id;
@@ -264,20 +264,21 @@ export default function MediaDetailPage() {
     return () => { active = false; };
   }, []);
 
+  const repairMediaId = detail?.media.id;
+  const repairFilename = detail?.media.filename;
   useEffect(() => {
     setCompareSource(null);
     setCompareEnabled(false);
-    const media = detail?.media;
-    if (!media || !media.filename.includes("_repaired-")) return;
+    if (!repairMediaId || !repairFilename?.includes("_repaired-")) return;
     let cancelled = false;
-    void listRepairs({ resultMediaId: media.id, limit: 1 })
+    void listRepairs({ resultMediaId: repairMediaId, limit: 1 })
       .then((page) => page.items[0] ? getMedia(String(page.items[0].media_id)) : null)
       .then((sourceDetail) => {
         if (!cancelled && sourceDetail) setCompareSource(sourceDetail.media);
       })
       .catch(() => undefined);
     return () => { cancelled = true; };
-  }, [detail?.media.id, detail?.media.filename]);
+  }, [repairMediaId, repairFilename]);
 
   const handleNavigate = useCallback(
     (direction: "prev" | "next") => {
@@ -384,12 +385,12 @@ export default function MediaDetailPage() {
     setActionTarget({ id: detail.media.id, mediaListKey });
     setDialogType(type);
   };
-  const confirmConvert = async () => {
+  const confirmConvert = async (mode: Exclude<import("../types").VideoConversionMode, "off">) => {
     if (!actionTarget || actionBusyRef.current) return;
     actionBusyRef.current = true;
     setActionBusy(true);
     try {
-      const t = await convertMedia(actionTarget.id);
+      const t = await convertMedia(actionTarget.id, mode);
       setTask(t);
       setSnackbar({
         open: true,
@@ -690,6 +691,7 @@ export default function MediaDetailPage() {
                     <BeforeAfterCompare before={compareSource} after={detail.media} />
                   ) : (
                     <MediaDisplay
+                      convertedAvailable={detail.converted_available}
                       key={detail.media.id}
                       media={detail.media}
                       initialTime={sceneStartTime ?? undefined}
@@ -716,6 +718,7 @@ export default function MediaDetailPage() {
                 )}
               </Box>
               <ActionDialogs
+                key={`${dialogType}-${actionTarget?.id}`}
                 dialogType={dialogType}
                 loading={actionBusy}
                 onClose={closeDialog}

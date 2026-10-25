@@ -16,7 +16,7 @@ export const getMedia = async (
 };
 
 export const getImages = async (
-  cursor: string | null,
+  cursor: string | null | undefined,
   sortOrder: "newest" | "latest"
 ): Promise<CursorPage<Media>> => {
   const params = new URLSearchParams();
@@ -28,7 +28,7 @@ export const getImages = async (
 };
 
 export const getVideos = async (
-  cursor: string | null,
+  cursor: string | null | undefined,
   sortOrder: "newest" | "latest"
 ): Promise<CursorPage<Media>> => {
   const params = new URLSearchParams();
@@ -40,7 +40,7 @@ export const getVideos = async (
 };
 
 export const getFavorites = async (
-  cursor: string | null,
+  cursor: string | null | undefined,
   sortOrder: "newest" | "latest"
 ): Promise<CursorPage<Media>> => {
   const params = new URLSearchParams();
@@ -76,7 +76,7 @@ export interface CameraFilter {
 }
 
 export const getMediaList = async (
-  cursor: string | null,
+  cursor: string | null | undefined,
   sortOrder: "newest" | "latest",
   tags: string[],
   folder?: string | null,

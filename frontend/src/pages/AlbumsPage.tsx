@@ -35,6 +35,7 @@ export default function AlbumsPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
   const selection = useEntitySelection<number>();
+  const {pruneTo} = selection;
   const { marqueeRect, onItemClick } = useGridSelection<number>({
     containerRef: gridRef,
     selecting: selection.selectionMode,
@@ -59,8 +60,8 @@ export default function AlbumsPage() {
   }, [load]);
 
   useEffect(() => {
-    selection.pruneTo(albums.map((album) => album.id));
-  }, [albums, selection.pruneTo]);
+    pruneTo(albums.map((album) => album.id));
+  }, [albums, pruneTo]);
 
   const handleCreate = async () => {
     const trimmed = name.trim();

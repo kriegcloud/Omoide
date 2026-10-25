@@ -119,7 +119,7 @@ class FilenameTests(unittest.TestCase):
 
     def test_open_commands_pass_paths_as_single_arguments(self):
         request = Request({"type": "http", "method": "POST", "path": "/", "headers": [], "client": ("127.0.0.1", 123)})
-        with patch.object(settings.general, "is_docker", False), patch.object(media_api.sys, "platform", "linux"), patch.object(media_api.subprocess, "Popen") as popen:
+        with patch.object(settings.general, "is_docker", False), patch("app.api.media.desktop.sys.platform", "linux"), patch("app.api.media.desktop.subprocess.Popen") as popen:
             for row in self.rows:
                 with self.subTest(name=row.filename):
                     media_api.open_media_file(row.id, request, self.session)

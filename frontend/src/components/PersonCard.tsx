@@ -1,3 +1,9 @@
+import { useEffect, useState } from "react";
+import { IconButton, Tooltip } from "@mui/material";
+import FavoriteIcon from "@mui/icons-material/Favorite";
+import FavoriteBorderIcon from "@mui/icons-material/FavoriteBorder";
+import config from "../config";
+import { setPersonFavorite } from "../services/personActions";
 import { Box, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import type { PersonReadSimple } from "../types";
@@ -6,7 +12,7 @@ import { encodeFilePath } from "../urlUtils";
 import type { SelectionClickEvent } from "../hooks/useMarqueeSelection";
 import SelectableTileFrame from "./SelectableTileFrame";
 
-type PersonCardPerson = PersonReadSimple & { appearance_count?: number };
+type PersonCardPerson = Pick<PersonReadSimple, "id" | "name"> & { profile_face?: { thumbnail_path?: string | null } | null; appearance_count?: number; is_favorite?: boolean };
 
 interface PersonCardProps {
   person: PersonCardPerson;
@@ -29,6 +35,14 @@ export default function PersonCard({
   selected = false,
   onSelectionClick,
 }: PersonCardProps) {
+  const [favorite, setFavorite] = useState(Boolean(person.is_favorite));
+  const [favoriteBusy, setFavoriteBusy] = useState(false);
+  useEffect(() => setFavorite(Boolean(person.is_favorite)), [person.id, person.is_favorite]);
+  const toggleFavorite = async () => {
+    if (favoriteBusy) return;
+    const next = !favorite; setFavorite(next); setFavoriteBusy(true);
+    try { await setPersonFavorite(person.id, next); } catch { setFavorite(!next); } finally {setFavoriteBusy(false);}
+  };
   const fallbackName = person.name || "Unknown";
 
   const thumbUrl = person.profile_face?.thumbnail_path
@@ -60,6 +74,8 @@ export default function PersonCard({
         backgroundPosition: "center",
       }}
     >
+      {!selecting && (config.PRESENTATION_MODE ? favorite && <FavoriteIcon aria-label="Favorite" color="error" sx={{position: "absolute", top: 8, right: 48, zIndex: 25}} /> :
+        <Tooltip title={favorite ? "Remove from favorites" : "Add to favorites"}><IconButton data-tile-control aria-label={favorite ? "Remove from favorites" : "Add to favorites"} aria-pressed={favorite} disabled={favoriteBusy} onClick={event => {event.preventDefault(); event.stopPropagation(); void toggleFavorite();}} sx={{position: "absolute", top: 8, right: 48, zIndex: 25, bgcolor: "rgba(0,0,0,.45)", color: favorite ? "error.main" : "common.white"}}>{favorite ? <FavoriteIcon /> : <FavoriteBorderIcon />}</IconButton></Tooltip>)}
       {!thumbUrl && (
         <Box
           sx={{

@@ -5,28 +5,32 @@ import time
 import weakref
 from collections import OrderedDict
 from dataclasses import dataclass
-from datetime import datetime
 
 import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from PIL import Image
-from sqlalchemy import and_, desc, func, or_, text, tuple_
+from sqlalchemy import func, or_, text
 from sqlmodel import Session, select
 
-from app.config import get_clip_bundle, retain_clip_for_search, settings
+from app.api._cursor_validation import validate_person_cursor, validate_tag_cursor
+from app.clip_onnx import get_clip_encoder
+from app.config import settings
 from app.api._media_filters import exclude_missing
 from app.database import get_session
 from app.logger import logger
 from app.models import Media, MediaTagLink, Person, Scene, Tag
+from app.pagination import paginate
+from app.presentation import allow_in_presentation_mode
 from app.schemas.media import MediaPreview
-from app.schemas.person import PersonRead, PersonReadSimple
+from app.schemas.person import PersonRead
 from app.schemas.search import (
     CombinedMediaSearchResult,
     CursorPage,
     SceneSearchResult,
 )
 from app.schemas.tag import TagRead
-from app.utils import vector_to_blob
+from app.persons import name_contains_all_terms
+from app.vectors import vector_to_blob
 
 router = APIRouter()
 
@@ -147,72 +151,42 @@ def encode_uploaded_image(image_bytes: bytes) -> np.ndarray:
             status_code=400, detail="Invalid or corrupt image file."
         )
 
-    import torch
-    clip_model, preprocess, _ = get_clip_bundle()
-    image_transformed = preprocess(image).unsqueeze(0)
-    try:
-        device = next(clip_model.parameters()).device
-    except StopIteration:
-        device = torch.device("cpu")
-    if hasattr(image_transformed, "to"):
-        image_transformed = image_transformed.to(device)
-    with torch.no_grad():
-        image_feat = clip_model.encode_image(image_transformed)
-        image_feat /= image_feat.norm(dim=-1, keepdim=True)
-
-    return image_feat.squeeze(0).cpu().numpy().tolist()
+    return get_clip_encoder().encode_images([image])[0].tolist()
 
 
 _TEXT_EMBEDDING_CACHE_SIZE = 256
-_text_embedding_cache: OrderedDict[tuple[str, str], tuple[float, ...]] = OrderedDict()
-_text_embedding_bundle_ref: weakref.ReferenceType | None = None
+_text_embedding_cache: OrderedDict[tuple[str, int, str], tuple[float, ...]] = OrderedDict()
 _text_embedding_lock = threading.RLock()
+_text_embedding_encoder_ref: weakref.ReferenceType | None = None
 
 
-def _clear_released_text_bundle(reference: weakref.ReferenceType) -> None:
-    global _text_embedding_bundle_ref
+def _clear_released_text_encoder(reference: weakref.ReferenceType) -> None:
+    global _text_embedding_encoder_ref
     with _text_embedding_lock:
-        if _text_embedding_bundle_ref is reference:
+        if _text_embedding_encoder_ref is reference:
             _text_embedding_cache.clear()
-            _text_embedding_bundle_ref = None
+            _text_embedding_encoder_ref = None
 
 
 def encode_text_query(query: str) -> list[float]:
-    """Reuse query vectors for the current bundle without retaining its model."""
-    global _text_embedding_bundle_ref
-    clip_model, _, tokenizer = get_clip_bundle()
-    retain_clip_for_search(clip_model)
-    # Keep case and internal whitespace: multilingual tokenizers can use both.
-    normalized = (settings.ai.clip_model.model_name, query.strip())
+    """Cache normalized text vectors for the current ONNX encoder instance."""
+    global _text_embedding_encoder_ref
+    encoder = get_clip_encoder()
+    normalized = query.strip()
+    key = (settings.ai.clip_model.model_name, id(encoder), normalized)
     with _text_embedding_lock:
-        if _text_embedding_bundle_ref is None or _text_embedding_bundle_ref() is not clip_model:
+        if _text_embedding_encoder_ref is None or _text_embedding_encoder_ref() is not encoder:
             _text_embedding_cache.clear()
-            _text_embedding_bundle_ref = weakref.ref(clip_model, _clear_released_text_bundle)
-        cached = _text_embedding_cache.get(normalized)
+            _text_embedding_encoder_ref = weakref.ref(encoder, _clear_released_text_encoder)
+        cached = _text_embedding_cache.get(key)
         if cached is None:
-            cached = tuple(_encode_text_query_uncached(normalized[1], clip_model, tokenizer))
-            _text_embedding_cache[normalized] = cached
+            cached = tuple(encoder.encode_texts([normalized])[0].tolist())
+            _text_embedding_cache[key] = cached
             if len(_text_embedding_cache) > _TEXT_EMBEDDING_CACHE_SIZE:
                 _text_embedding_cache.popitem(last=False)
         else:
-            _text_embedding_cache.move_to_end(normalized)
-        # Callers get their own mutable result, never the cached tuple.
+            _text_embedding_cache.move_to_end(key)
         return list(cached)
-
-
-def _encode_text_query_uncached(query: str, clip_model, tokenizer) -> list[float]:
-    import torch
-    tokenized = tokenizer([query])
-    try:
-        device = next(clip_model.parameters()).device
-    except StopIteration:
-        device = torch.device("cpu")
-    if hasattr(tokenized, "to"):
-        tokenized = tokenized.to(device)
-    with torch.no_grad():
-        text_feat = clip_model.encode_text(tokenized)
-    text_feat /= text_feat.norm(dim=-1, keepdim=True)
-    return text_feat.squeeze(0).cpu().numpy().tolist()
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +296,7 @@ def _find_by_filename(query: str, session: Session) -> list[Media]:
     summary="Search for similar media by uploading an image",
     response_model=list[MediaPreview],
 )
+@allow_in_presentation_mode
 def search_by_image(
     file: UploadFile = File(...),
     limit: int = 20,
@@ -408,21 +383,14 @@ def search_combined(
     if not search_text and person_ids:
         media_filter = _person_media_filter_sql(person_ids)
         q = exclude_missing(select(Media)).where(Media.id.in_(text(media_filter)))
-        if cursor:
-            try:
-                iso_str, id_str = cursor.rsplit("_", 1)
-                cursor_dt, cursor_id = datetime.fromisoformat(iso_str), int(id_str)
-            except (ValueError, TypeError):
-                raise HTTPException(status_code=400, detail="Invalid cursor format")
-            q = q.where(or_(Media.inserted_at < cursor_dt,
-                           and_(Media.inserted_at == cursor_dt, Media.id < cursor_id)))
-        rows = list(session.exec(q.order_by(desc(Media.inserted_at), desc(Media.id)).limit(limit + 1)).all())
-        page = rows[:limit]
-        last = page[-1] if page else None
+        page, next_cursor = paginate(
+            session, q, [(Media.inserted_at, False), (Media.id, False)],
+            cursor=cursor, limit=limit, tag="date",
+        )
         return CombinedMediaSearchResult(
             persons=persons,
             media=[MediaPreview.model_validate(m) for m in page],
-            next_cursor=f"{last.inserted_at.isoformat()}_{last.id}" if last and len(rows) > limit else None,
+            next_cursor=next_cursor,
         )
 
     if not search_text:
@@ -503,18 +471,7 @@ def search_combined(
     # ------------------------------------------------------------------
     # Date order: over-fetch all vector candidates (up to _MAX_KNN_RESULTS),
     # then sort and paginate by (inserted_at DESC, id DESC).
-    # Cursor format: "<iso_datetime>_<media_id>"
     # ------------------------------------------------------------------
-    cursor_dt: datetime | None = None
-    cursor_id: int | None = None
-    if cursor:
-        try:
-            iso_str, id_str = cursor.rsplit("_", 1)
-            cursor_dt = datetime.fromisoformat(iso_str)
-            cursor_id = int(id_str)
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=400, detail="Invalid cursor format")
-
     if person_ids:
         media_filter = _person_media_filter_sql(person_ids)
         vec_sql = text(f"""
@@ -541,21 +498,14 @@ def search_combined(
     if not candidate_ids:
         return CombinedMediaSearchResult(persons=persons)
 
-    q = exclude_missing(select(Media)).where(Media.id.in_(candidate_ids))
-    if cursor_dt is not None:
-        q = q.where(
-            or_(
-                Media.inserted_at < cursor_dt,
-                and_(Media.inserted_at == cursor_dt, Media.id < cursor_id),
-            )
-        )
-    q = q.order_by(desc(Media.inserted_at), desc(Media.id)).limit(limit + 1)
-    media_objs = list(session.exec(q).all())
-
-    page_objs = media_objs[:limit]
-    has_more = len(media_objs) > limit
-    last = page_objs[-1] if page_objs else None
-    next_cursor = f"{last.inserted_at.isoformat()}_{last.id}" if last and has_more else None
+    page_objs, next_cursor = paginate(
+        session,
+        exclude_missing(select(Media)).where(Media.id.in_(candidate_ids)),
+        [(Media.inserted_at, False), (Media.id, False)],
+        cursor=cursor,
+        limit=limit,
+        tag="date",
+    )
 
     return CombinedMediaSearchResult(
         persons=persons,
@@ -679,43 +629,27 @@ def search_scenes(
 @router.get(
     "/person",
     summary="Search people by name",
-    response_model=CursorPage[PersonReadSimple],
+    response_model=CursorPage[PersonRead],
 )
 def search_people(
     limit: int = Query(20, ge=1, le=500),
-    cursor: str | None = Query(None, pattern=r"^[0-9]{1,19}_[1-9][0-9]{0,18}$", description="Encoded as `<count>_<id>`"),
+    cursor: str | None = Depends(validate_person_cursor),
     query: str = Query("", description="Person name query"),
     session: Session = Depends(get_session),
 ):
-    if not query:
+    name_clause = name_contains_all_terms(Person.name, query)
+    if name_clause is None:
         return CursorPage(items=[], next_cursor=None)
 
-    q = select(Person).where(
-        Person.name.ilike(f"%{query}%"),
-        Person.hidden_at.is_(None),
+    people, next_cursor = paginate(
+        session,
+        select(Person).where(name_clause, Person.hidden_at.is_(None)),
+        [(func.coalesce(Person.appearance_count, 0), False), (Person.id, False)],
+        cursor=cursor,
+        limit=limit,
     )
-
-    if cursor:
-        try:
-            cursor_count, cursor_id = map(int, cursor.split("_"))
-            if not (0 <= cursor_count <= 9223372036854775807 and 1 <= cursor_id <= 9223372036854775807):
-                raise ValueError("Cursor is out of range")
-            q = q.where(
-                tuple_(Person.appearance_count, Person.id)
-                < (cursor_count, cursor_id)
-            )
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=422, detail="Invalid cursor format")
-
-    q = q.order_by(desc(Person.appearance_count), desc(Person.id)).limit(limit)
-    people = session.exec(q).all()
-
-    next_cursor = None
-    if len(people) == limit:
-        last = people[-1]
-        next_cursor = f"{last.appearance_count}_{last.id}"
     return CursorPage(
-        items=[PersonReadSimple.model_validate(p) for p in people],
+        items=[PersonRead.model_validate(p) for p in people],
         next_cursor=next_cursor,
     )
 
@@ -727,33 +661,20 @@ def search_people(
 )
 def search_tags(
     limit: int = Query(20, ge=1, le=500),
-    cursor: str | None = Query(
-        None, pattern=r"^[1-9][0-9]{0,18}$", description="The ID of the last tag from the previous page"
-    ),
+    cursor: str | None = Depends(validate_tag_cursor),
     query: str = Query("", description="Tag name query"),
     session: Session = Depends(get_session),
 ):
     if not query:
         return CursorPage(items=[], next_cursor=None)
 
-    q = select(Tag).where(Tag.name.ilike(f"%{query}%"))
-
-    if cursor:
-        try:
-            cursor_id = int(cursor)
-            if not 1 <= cursor_id <= 9223372036854775807:
-                raise ValueError("Tag id is out of range")
-            q = q.where(Tag.id < cursor_id)
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=422, detail="Invalid cursor format")
-
-    q = q.order_by(desc(Tag.id)).limit(limit)
-    tags = session.exec(q).all()
-
-    next_cursor = None
-    if len(tags) == limit:
-        next_cursor = str(tags[-1].id)
-
+    tags, next_cursor = paginate(
+        session,
+        select(Tag).where(Tag.name.ilike(f"%{query}%")),
+        [(Tag.id, False)],
+        cursor=cursor,
+        limit=limit,
+    )
     return CursorPage(
         items=[
             TagRead(

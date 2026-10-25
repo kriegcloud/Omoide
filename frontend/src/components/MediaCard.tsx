@@ -19,7 +19,7 @@ import DatasetItemMenu from "./DatasetItemMenu";
 import SelectableTileFrame from "./SelectableTileFrame";
 import type { SelectionClickEvent } from "../hooks/useMarqueeSelection";
 
-const ReactPlayer = lazy(() => import("react-player"));
+const ReactPlayer = lazy(() => import("../localFilePlayer"));
 
 export interface MediaDatasetContext {
   caption?: string | null;

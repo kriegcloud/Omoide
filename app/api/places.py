@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import and_, or_
 from sqlmodel import Session, func, select
 
 from app.api._media_filters import exclude_missing
 from app.database import get_session
-from app.logger import logger
 from app.models import ExifData, Media
+from app.pagination import media_newest_first, paginate
 from app.schemas.media import CursorPage
 
 router = APIRouter()
@@ -106,7 +104,6 @@ def list_place_media(
             ExifData.city == city,
             Media.processing_error.is_(None),
         )
-        .order_by(Media.created_at.desc(), Media.id.desc())
     )
     if country == "Unknown":
         # The UI uses this label for rows whose country was not resolved.
@@ -115,23 +112,7 @@ def list_place_media(
         q = q.where(ExifData.country.is_(None))
     elif country:
         q = q.where(ExifData.country == country)
-    if cursor:
-        try:
-            val_str, id_str = cursor.split("_", 1)
-            prev_val = datetime.fromisoformat(val_str)
-            prev_id = int(id_str)
-        except ValueError:
-            logger.warning("Invalid place cursor: %s", cursor)
-        else:
-            q = q.where(
-                or_(
-                    Media.created_at < prev_val,
-                    and_(Media.created_at == prev_val, Media.id < prev_id),
-                )
-            )
-    results = session.exec(q.limit(limit)).all()
-    next_cursor = None
-    if len(results) == limit:
-        last = results[-1]
-        next_cursor = f"{last.created_at.isoformat()}_{last.id}"
+    results, next_cursor = paginate(
+        session, q, media_newest_first(), cursor=cursor, limit=limit
+    )
     return CursorPage(items=results, next_cursor=next_cursor)

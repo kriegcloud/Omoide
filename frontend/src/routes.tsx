@@ -5,6 +5,7 @@ import IndexPage from "./pages/IndexPage";
 import { Layout } from "./components/Layout";
 import { WriteModeBoundary } from "./components/ReadOnlyBoundary";
 import { MaintenanceShell } from "./components/MaintenanceShell";
+import { SelectionProvider } from "./context/SelectionContext";
 
 const MediaDetailPage = lazy(() => import("./pages/MediaDetailPage"));
 const TagDetailPage = lazy(() => import("./pages/TagDetailPage"));
@@ -206,7 +207,11 @@ export const AppRoutes = () => {
       </Routes>
       {backgroundLocation && (
         <Routes>
-          <Route path="/medium/:id" element={<MediaDetailPage />} />
+          <Route path="/medium/:id" element={
+            // Viewer grids have their own list owner; the background grid keeps
+            // its selection while the modal opens, navigates, and closes.
+            <SelectionProvider><MediaDetailPage /></SelectionProvider>
+          } />
         </Routes>
       )}
     </Suspense>

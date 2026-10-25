@@ -127,7 +127,7 @@ export const exportPersonMedia = async (
   personId: number,
   destinationPath: string,
   mode: "copy" | "move"
-): Promise<PersonMediaExportResult> => {
+): Promise<import("../types").Task> => {
   const res = await fetch(`${API}/api/person/${personId}/export-media`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -474,4 +474,10 @@ export const addMediaAppearanceToPerson = async (
   const result = await res.json();
   mutationBus.emit({ type: "person:changed", ids: [personId] });
   return result;
+};
+
+export const setPersonFavorite = async (personId: number, isFavorite: boolean): Promise<void> => {
+ const response = await fetch(`${API}/api/person/${personId}/favorite`, {method: "PATCH", headers: {"Content-Type": "application/json"}, body: JSON.stringify({is_favorite: isFavorite})});
+ if (!response.ok) throw new Error("Failed to update favorite");
+ mutationBus.emit({type: "person:changed", ids: [personId]});
 };

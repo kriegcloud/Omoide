@@ -8,7 +8,7 @@ import {
 } from "../types";
 
 export const getOrphanFaces = async (
-  cursor: string | null
+  cursor: string | null | undefined
 ): Promise<CursorPage<FaceRead>> => {
   const params = new URLSearchParams();
   if (cursor) {
@@ -27,7 +27,7 @@ export const getOrphanFaceCount = async (): Promise<number> => {
 };
 
 export const getOrphanFaceSuggestions = async (
-  cursor: string | null = null,
+  cursor: string | null | undefined = null,
   limit = 48,
   minScore = 0,
 ): Promise<CursorPage<OrphanFaceSuggestion>> => {

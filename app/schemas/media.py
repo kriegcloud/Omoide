@@ -145,12 +145,9 @@ class MediaDetail(SQLModel):
     persons: list[PersonRead] = Field(default_factory=list)
     faces: list[Face] = Field(default_factory=list)
     orphans: list[Face] = Field(default_factory=list)
+    # A browser-playable copy exists at /api/media/{id}/converted.
+    converted_available: bool = False
     model_config = ConfigDict(from_attributes=True)
-
-
-class MediaNeighbors(SQLModel):
-    next_media: MediaPreview | None
-    previous_media: MediaPreview | None
 
 
 class GeoUpdate(SQLModel):
@@ -200,6 +197,35 @@ class CursorPage(BaseModel):
     next_cursor: str | None
 
 
+class MissingGeoMedia(MediaPreview):
+    # Why a location cannot be written into this file; None when it can (or
+    # when locations are only stored in the database).
+    write_block_reason: str | None = None
+
+
+class MissingGeoPage(BaseModel):
+    items: list[MissingGeoMedia]
+    next_cursor: str | None
+
+
+class MissingGeoFolder(BaseModel):
+    # Forward-slash path, passed back as the `folder` filter.
+    path: str
+    name: str
+    # 0 for a configured media directory (or a folder outside all of them).
+    depth: int
+    # Un-located media in this folder and all of its subfolders.
+    media_count: int
+    # None when locations are only stored in the database.
+    write_status: Literal["writable", "blocked", "mixed"] | None = None
+    write_block_reason: str | None = None
+
+
+class MissingGeoFolders(BaseModel):
+    folders: list[MissingGeoFolder]
+    write_to_files: bool
+
+
 class MediaFolderPreview(BaseModel):
     id: int
     path: str
@@ -229,3 +255,8 @@ class MediaFolderListing(BaseModel):
     direct_media_count: int
     folders: list[MediaFolderEntry] = Field(default_factory=list)
     breadcrumbs: list[MediaFolderBreadcrumb] = Field(default_factory=list)
+
+
+class MediaNeighbors(SQLModel):
+    next_media: MediaPreview | None
+    previous_media: MediaPreview | None

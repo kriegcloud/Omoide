@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -11,10 +11,10 @@ from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, select
 
 import app.database as db
-from app.config import settings
 from app.database import safe_commit
 from app.logger import logger
 from app.models import ProcessingTask
+from app.presentation import ensure_writable
 
 from .state import clear_task_progress
 
@@ -126,6 +126,9 @@ def create_and_run_task(
         "pose_backfill",
         "build_events",
         "geocode_places",
+        "export_person_media",
+        "convert_media",
+        "convert_videos",
         "export_dataset",
         "batch_edit_media",
         "dataset_caption_generation",
@@ -140,10 +143,7 @@ def create_and_run_task(
     Creates a processing task in the database and adds the actual job to the
     background task queue.
     """
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403, detail="Not allowed in presentation_mode mode."
-        )
+    ensure_writable()
 
     try:
         existing_task = session.exec(
@@ -169,3 +169,13 @@ def create_and_run_task(
 
     background_tasks.add_task(_run_task_guarded, callable_task, task.id)
     return task
+
+
+def complete_task(session: Session, task: ProcessingTask):
+    task.status = "completed"
+    task.finished_at = datetime.now(UTC)
+    session.add(task)
+    safe_commit(session)
+
+
+from app.utils import complete_task

@@ -17,6 +17,7 @@ from app.models import (Person, PersonSocialLink, TrainingDataset, PersonPairDec
 from app.schemas.person import SimilarPerson, PersonBulkDeleteRequest
 
 api = importlib.import_module("app.api.person")
+merging = importlib.import_module("app.api.person.merging")
 datasets = importlib.import_module("app.api.datasets")
 
 
@@ -85,7 +86,7 @@ class PersonSafetyTests(unittest.TestCase):
     def test_auto_merge_respects_saved_not_same(self):
         self.session.add(PersonPairDecision(person_a_id=self.aid, person_b_id=self.bid, decision="not_same"))
         self.session.commit()
-        with patch.object(api, "get_similarities", return_value=[SimilarPerson(id=self.aid, name="Source", similarity=100)]), patch.object(api, "_merge_person_into_target") as merge:
+        with patch.object(merging, "get_similarities", return_value=[SimilarPerson(id=self.aid, name="Source", similarity=100)]), patch.object(merging, "merge_person_into") as merge:
             result = api.auto_merge_similar_persons(self.bid, self.session)
         merge.assert_not_called()
         self.assertEqual(result.skipped_ids, [self.aid])
@@ -99,7 +100,7 @@ class PersonSafetyTests(unittest.TestCase):
             session.add(PersonPairDecision(person_a_id=self.bid, person_b_id=tid, decision="not_same"))
             session.commit()
         candidates = [SimilarPerson(id=pid, name="candidate", similarity=100) for pid in (self.aid, tid)]
-        with patch.object(api, "get_similarities", return_value=candidates), patch.object(api, "_merge_person_into_target", side_effect=first_merge) as merge:
+        with patch.object(merging, "get_similarities", return_value=candidates), patch.object(merging, "merge_person_into", side_effect=first_merge) as merge:
             result = api.auto_merge_similar_persons(self.bid, self.session)
         self.assertEqual(merge.call_count, 1)
         self.assertEqual(result.skipped_ids, [tid])

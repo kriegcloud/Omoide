@@ -50,7 +50,8 @@ export default function EventDetailPage() {
   }, [eventId]);
 
   const fetcher = useCallback(
-    (cursor: string | null) => getEventMedia(eventId, cursor),
+    (cursor: string | null, signal: AbortSignal) =>
+      getEventMedia(eventId, cursor, signal),
     [eventId]
   );
 
@@ -139,15 +140,15 @@ export default function EventDetailPage() {
             <Typography variant="h5" fontWeight={700}>
               {event?.title || dateRange || "Event"}
             </Typography>
-            {event && (
-              <IconButton size="small" onClick={startRenaming}>
+            {event && !config.PRESENTATION_MODE && (
+              <IconButton aria-label="Rename event" size="small" onClick={startRenaming}>
                 <EditIcon fontSize="small" />
               </IconButton>
             )}
           </>
         )}
         <Box flexGrow={1} />
-        {event && (
+        {event && !config.PRESENTATION_MODE && (
           <Button
             variant="outlined"
             size="small"

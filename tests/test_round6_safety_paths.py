@@ -59,7 +59,7 @@ class ExclusiveMoveTests(unittest.TestCase):
 
     def test_failed_database_commit_compensates_move_rename_and_bulk(self):
         import importlib
-        api = importlib.import_module('app.api.media')
+        api = importlib.import_module('app.api.media.extensions')
         from app.schemas.media import MediaBulkMoveRequest, MediaMoveRequest, MediaRenameRequest
         for action in ('move', 'rename', 'bulk'):
             with self.subTest(action=action), tempfile.TemporaryDirectory() as directory:
@@ -104,7 +104,7 @@ class WritableRootTests(unittest.TestCase):
 
 class ConversionSafetyTests(unittest.TestCase):
     def test_replace_failure_keeps_original_output_and_unrelated_temp(self):
-        from app.api import processors
+        from app.tasks import conversion as processors
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / 'video.mp4'

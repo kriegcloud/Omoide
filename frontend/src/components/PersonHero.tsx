@@ -1,4 +1,8 @@
-import React, { useState } from "react";
+import { IconButton, Tooltip } from "@mui/material";
+import FavoriteIcon from "@mui/icons-material/Favorite";
+import FavoriteBorderIcon from "@mui/icons-material/FavoriteBorder";
+import { setPersonFavorite } from "../services/personActions";
+import React, { useState, useEffect } from "react";
 import {
   Box,
   Typography,
@@ -56,6 +60,15 @@ export function PersonHero({
   exportingMedia,
 }: PersonHeroProps) {
   const theme = useTheme();
+  const [favorite, setFavorite] = useState(Boolean(person.is_favorite));
+  const [favoriteBusy, setFavoriteBusy] = useState(false);
+  useEffect(() => setFavorite(Boolean(person.is_favorite)), [person.id, person.is_favorite]);
+  const toggleFavorite = async () => {
+    if (favoriteBusy) return;
+    const next = !favorite; setFavorite(next); setFavoriteBusy(true);
+    try { await setPersonFavorite(person.id, next); } catch {setFavorite(!next);} finally {setFavoriteBusy(false);}
+  };
+
   const navigate = useNavigate();
   const [creatingDataset, setCreatingDataset] = useState(false);
   const [genderAnchor, setGenderAnchor] = useState<HTMLElement | null>(null);
@@ -89,6 +102,8 @@ export function PersonHero({
             <Typography variant="h3" component="h1" fontWeight="bold">
               {person.name || "Unnamed Person"}
             </Typography>
+            {config.PRESENTATION_MODE ? favorite && <FavoriteIcon aria-label="Favorite" color="error" /> :
+              <Tooltip title={favorite ? "Remove from favorites" : "Add to favorites"}><IconButton disabled={favoriteBusy} aria-label={favorite ? "Remove from favorites" : "Add to favorites"} aria-pressed={favorite} onClick={() => void toggleFavorite()} color={favorite ? "error" : "default"}>{favorite ? <FavoriteIcon /> : <FavoriteBorderIcon />}</IconButton></Tooltip>}
             {person.hidden_at && <Chip label="Hidden" color="warning" />}
             {(person.gender || !config.PRESENTATION_MODE) && (
               <Chip

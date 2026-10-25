@@ -187,7 +187,7 @@ test("configuration_controls_locked_while_save_pending", async () => {
   const page = configurationPage({ saveConfig: () => pending.promise });
   const saving = button(page.render(), "Save").props.onClick();
   const locked = elements(page.render()).find((element) =>
-    element.props.component === "fieldset" && element.props.disabled && element.props.inert === "");
+    element.props.component === "fieldset" && element.props.disabled && element.props.inert === true);
   assert.ok(locked, "settings must disable native controls and make custom controls inert during Save");
   pending.resolve(page.config);
   await saving;

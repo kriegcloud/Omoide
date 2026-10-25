@@ -10,7 +10,9 @@ RUN npm run build
 
 FROM ${OMOIDE_BASE_IMAGE}
 
-ENV OMOIDE_WORKSTATION_BROWSER_HARDENING=true
+# The dependency base has its own version; report this checkout's app/VERSION.
+ENV OMOIDE_WORKSTATION_BROWSER_HARDENING=true \
+    OMOIDE_VERSION=""
 
 USER root
 # Passkey verifier dependencies added by the curation authority work. Versions

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, func, or_
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import and_
 from sqlmodel import Session, select
 
 from app.api._resolve import resolve_media_action
 from app.api._media_filters import exclude_missing, folder_filter
 from app.database import get_session
 from app.models import Media
+from app.pagination import count_rows, paginate
 from app.schemas.lowresolution import LowResMediaItem, LowResPage, LowResResolveRequest
 
 router = APIRouter()
@@ -42,27 +43,16 @@ def get_low_res_media(
     """Paginated list of media whose pixel count (width × height) is below max_pixels, ordered lowest-first."""
     pixel_count = Media.pixel_count
     base_filter = _base_filter(max_pixels, media_type)
-    base_filter = and_(base_filter, folder_filter(folder))
+    base_filter = and_(base_filter, folder_filter(folder), Media.missing_since.is_(None))
 
-    total = session.exec(exclude_missing(select(func.count(Media.id))).where(base_filter)).first() or 0
-
-    query = exclude_missing(select(Media)).where(base_filter).order_by(pixel_count.asc(), Media.id.asc())
-
-    if cursor:
-        try:
-            px_str, id_str = cursor.split("_", 1)
-            cursor_px = int(px_str)
-            cursor_id = int(id_str)
-            query = query.where(
-                or_(
-                    pixel_count > cursor_px,
-                    and_(pixel_count == cursor_px, Media.id > cursor_id),
-                )
-            )
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid cursor format.")
-
-    rows = session.exec(query.limit(limit)).all()
+    total = count_rows(session, Media.id, base_filter)
+    rows, next_cursor = paginate(
+        session,
+        select(Media).where(base_filter),
+        [(pixel_count, True), (Media.id, True)],
+        cursor=cursor,
+        limit=limit,
+    )
 
     items = [
         LowResMediaItem(
@@ -79,11 +69,6 @@ def get_low_res_media(
         )
         for m in rows
     ]
-
-    next_cursor = None
-    if len(rows) == limit:
-        last = rows[-1]
-        next_cursor = f"{last.pixel_count}_{last.id}"
 
     return LowResPage(items=items, next_cursor=next_cursor, total=total)
 

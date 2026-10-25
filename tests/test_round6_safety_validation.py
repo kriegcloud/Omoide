@@ -88,3 +88,47 @@ class RequestSafetyTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(session_calls, [])
         finally:
             settings.general.presentation_mode = previous
+
+
+    async def test_opaque_cursor_keys_reject_invalid_shapes_and_integer_ranges(self):
+        from app.pagination import encode_cursor
+
+        app = FastAPI()
+        app.include_router(importlib.import_module("app.api.tags").router, prefix="/api/tags")
+        app.include_router(importlib.import_module("app.api.search").router, prefix="/api/search")
+        session = Mock()
+        app.dependency_overrides[get_session] = lambda: session
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            for path in ("/api/tags/", "/api/search/tags", "/api/search/person"):
+                person = path.endswith("/person")
+                bad_keys = ([[-1, 1], [0, 0], [0, 2**63], [0, "1"], [0, 1.5]] if person
+                            else [[0], [-1], [2**63], ["1"], [1.5]])
+                bad_keys += [[], [1, 2, 3]]
+                for keys in bad_keys:
+                    with self.subTest(path=path, keys=keys):
+                        response = await client.get(path, params={"query": "x", "cursor": encode_cursor("", keys)})
+                        self.assertEqual(response.status_code, 422, response.text)
+            session.exec.assert_not_called()
+
+    async def test_timeline_mutations_reject_nonpositive_ids_and_missing_parent(self):
+        app = FastAPI()
+        app.include_router(importlib.import_module("app.api.person").router, prefix="/api/person")
+        session = Mock()
+        session.get.return_value = None
+        app.dependency_overrides[get_session] = lambda: session
+        previous = settings.general.presentation_mode
+        settings.general.presentation_mode = False
+        try:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                for method, path in (("POST", "/api/person/0/events"),
+                                     ("PUT", "/api/person/-1/events/1"),
+                                     ("DELETE", "/api/person/1/events/0")):
+                    with self.subTest(method=method, path=path):
+                        response = await client.request(method, path, json={"title": "Fixture", "event_date": "2026-01-01"})
+                        self.assertEqual(response.status_code, 422, response.text)
+                session.get.assert_not_called()
+                response = await client.post("/api/person/123/events", json={"title": "Fixture", "event_date": "2026-01-01"})
+                self.assertEqual(response.status_code, 404, response.text)
+                session.add.assert_not_called()
+        finally:
+            settings.general.presentation_mode = previous

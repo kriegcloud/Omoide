@@ -4,9 +4,11 @@ from sqlalchemy import delete
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
+from app.api._cursor_validation import validate_tag_cursor
 from app.config import require_mutation_allowed, settings
 from app.database import get_session, safe_commit
 from app.models import Media, MediaTagLink, Person, PersonTagLink, Tag
+from app.pagination import paginate
 from app.schemas.tag import CursorPage, TagRead
 
 router = APIRouter(dependencies=[Depends(require_mutation_allowed)])
@@ -24,33 +26,16 @@ class TagBulkDeleteResult(BaseModel):
 @router.get("/", response_model=CursorPage)
 def list_tags(
     limit: int = Query(50, ge=1, le=500),
-    cursor: str | None = Query(
-        None, pattern=r"^[1-9][0-9]{0,18}$",
-        description="ID of the last tag from the previous page",
-    ),
+    cursor: str | None = Depends(validate_tag_cursor),
     session: Session = Depends(get_session),
 ):
-    before_id = None
-    if cursor:
-        try:
-            before_id = int(cursor)
-            if not 1 <= before_id <= 9223372036854775807:
-                raise ValueError("Tag id is out of range")
-        except (ValueError, TypeError):
-            raise HTTPException(422, "Invalid cursor format")
-    query = (
-        select(Tag)
-        .options(selectinload(Tag.media))
-        .order_by(Tag.id.desc())
-        .limit(limit)
+    results, next_cursor = paginate(
+        session,
+        select(Tag).options(selectinload(Tag.media)),
+        [(Tag.id, False)],
+        cursor=cursor,
+        limit=limit,
     )
-    if before_id:
-        query = query.where(Tag.id < before_id)
-    results = session.exec(query).all()
-    if len(results) == limit:
-        next_cursor = str(results[-1].id)
-    else:
-        next_cursor = None
     return CursorPage(next_cursor=next_cursor, items=results)
 
 
@@ -125,11 +110,6 @@ def create_tag(
     name: str = Body(..., embed=True),
     session: Session = Depends(get_session),
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     tag = get_or_create_tag(name, session)
     return tag
 
@@ -148,11 +128,6 @@ def get_tag(tag_id: int, session: Session = Depends(get_session)):
 def add_tag_to_media(
     media_id: int, tag_id: int, session: Session = Depends(get_session)
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     attach_tag_to_media(media_id, tag_id, session)
 
 
@@ -160,11 +135,6 @@ def add_tag_to_media(
 def remove_tag_from_media(
     media_id: int, tag_id: int, session: Session = Depends(get_session)
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     session.exec(
         delete(MediaTagLink).where(
             MediaTagLink.media_id == media_id, MediaTagLink.tag_id == tag_id
@@ -189,11 +159,6 @@ def remove_tag(tag_id: int, session: Session = Depends(get_session)):
 def add_tag_to_person(
     person_id: int, tag_id: int, session: Session = Depends(get_session)
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     if not session.get(Person, person_id):
         raise HTTPException(404, "Person not found")
     if not session.get(Tag, tag_id):
@@ -207,11 +172,6 @@ def add_tag_to_person(
 def remove_tag_from_person(
     person_id: int, tag_id: int, session: Session = Depends(get_session)
 ):
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in settings.general.presentation_mode mode.",
-        )
     session.exec(
         delete(PersonTagLink).where(
             PersonTagLink.person_id == person_id,

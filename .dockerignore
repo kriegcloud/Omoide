@@ -28,3 +28,7 @@ npm-debug.log
 .data/
 .env
 omoide.env
+
+# Nested worktrees and private environment backups must not enter build context
+.claude/
+omoide.env.bak-*

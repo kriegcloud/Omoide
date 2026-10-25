@@ -1,10 +1,29 @@
 import { useState, useEffect, useRef } from "react";
 import { Box, Button, CircularProgress, Typography } from "@mui/material";
-import DownloadIcon from "@mui/icons-material/Download";
-import ReactPlayer from "react-player";
+import ReactPlayer from "../localFilePlayer";
+import type FilePlayerInstance from "react-player/file";
 import { Media } from "../types";
-import { API } from "../config";
+import appConfig, { API } from "../config";
+import { StreamingVideo } from "./StreamingVideo";
 import { encodeFilePath } from "../urlUtils";
+
+/** One scene of the WebVTT track: its time range and preview image URL. */
+interface SceneCue {
+  start: number;
+  end: number;
+  url: string;
+}
+
+/**
+ * Audio-detection properties of a media element. `audioTracks`,
+ * `webkitAudioDecodedByteCount` and `mozHasAudio` are non-standard and only
+ * exist in some browsers, so every field is optional and checked at runtime.
+ */
+interface AudioInfoSource {
+  audioTracks?: { length?: unknown };
+  webkitAudioDecodedByteCount?: unknown;
+  mozHasAudio?: unknown;
+}
 
 const VOLUME_STORAGE_KEY = "smol.video.volume";
 const DEFAULT_VOLUME = 1;
@@ -37,6 +56,8 @@ interface VideoWithPreviewProps {
   autoplay?: boolean;
   seekRequest?: { time: number; seq: number } | null;
   onProgress?: (playedSeconds: number) => void;
+  /** A browser-playable copy was kept when converting; play that instead. */
+  convertedAvailable?: boolean;
 }
 
 export function VideoWithPreview({
@@ -45,12 +66,24 @@ export function VideoWithPreview({
   autoplay = false,
   seekRequest,
   onProgress,
+  convertedAvailable = false,
 }: VideoWithPreviewProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [playbackError, setPlaybackError] = useState(false);
-  const mediaUrl = media
-    ? `${API}/originals/${encodeFilePath(media.path)}`
-    : `${API}/static/brand/404.png`;
+  // Converting on the fly because the browser cannot play the file itself.
+  const [streaming, setStreaming] = useState(false);
+  const lastPositionRef = useRef(initialTime);
+  const mediaUrl = !media
+    ? `${API}/static/brand/404.png`
+    : convertedAvailable
+      ? `${API}/api/media/${media.id}/converted`
+      : `${API}/originals/${encodeFilePath(media.path)}${media.cache_version ? `?v=${media.cache_version}` : ""}`;
+
+  const handleUnplayable = () => {
+    setIsLoading(false);
+    if (appConfig.VIDEO_CONVERT_ON_THE_FLY) setStreaming(true);
+    else setPlaybackError(true);
+  };
 
   const scenesUrl = `${API}/api/media/${media.id}/scenes.vtt`;
   const thumbnailUrl = media.thumbnail_path
@@ -59,7 +92,7 @@ export function VideoWithPreview({
 
   const [hasAudio, setHasAudio] = useState(true); //Used to calculate timeline width offset
 
-  const [cues, setCues] = useState([]);
+  const [cues, setCues] = useState<SceneCue[]>([]);
   const [volume, setVolume] = useState(() => getStoredVolume());
   const [hoverData, setHoverData] = useState({
     visible: false,
@@ -67,8 +100,8 @@ export function VideoWithPreview({
     x: 0,
   });
 
-  const playerWrapperRef = useRef<any>(null);
-  const playerRef = useRef<any>(null);
+  const playerWrapperRef = useRef<HTMLDivElement>(null);
+  const playerRef = useRef<FilePlayerInstance>(null);
   const hoverRafRef = useRef<number | null>(null);
   const hoverClientXRef = useRef(0);
   const [isReady, setIsReady] = useState(false);
@@ -100,15 +133,15 @@ export function VideoWithPreview({
     };
   }, []);
 
-  const parseVTT = (data) => {
+  const parseVTT = (data: string): SceneCue[] => {
     const pattern =
       /^(\d{2}:\d{2}:\d{2}\.\d{3}) --> (\d{2}:\d{2}:\d{2}\.\d{3})\n(.*?)$/gm;
-    const toSeconds = (t) => {
+    const toSeconds = (t: string) => {
       const a = t.split(":");
       return +a[0] * 3600 + +a[1] * 60 + +a[2];
     };
     let match;
-    const result = [];
+    const result: SceneCue[] = [];
     while ((match = pattern.exec(data)) !== null) {
       result.push({
         start: toSeconds(match[1]),
@@ -119,7 +152,7 @@ export function VideoWithPreview({
     return result;
   };
 
-  const handleMouseMove = (e) => {
+  const handleMouseMove = (e: React.MouseEvent) => {
     // Throttle hover updates to one per animation frame, but always use the
     // latest cursor position — intermediate mousemove events within the same
     // frame must not be dropped, or the preview lags behind the cursor.
@@ -183,7 +216,7 @@ export function VideoWithPreview({
     setHoverData({ ...hoverData, visible: false });
   };
 
-  const detectHasAudio = (el: any): boolean => {
+  const detectHasAudio = (el: AudioInfoSource | null | undefined): boolean => {
     if (!el) return true;
     if (el.audioTracks && typeof el.audioTracks.length === "number") {
       return el.audioTracks.length > 0;
@@ -202,6 +235,16 @@ export function VideoWithPreview({
     const internalPlayer = playerRef.current?.getInternalPlayer();
     setHasAudio(detectHasAudio(internalPlayer));
     setIsReady(true);
+    // An undecodable video track (e.g. HEVC) still loads: audio plays over a
+    // black picture and the decoded width stays 0.
+    if (
+      internalPlayer instanceof HTMLVideoElement &&
+      internalPlayer.readyState >= HTMLMediaElement.HAVE_METADATA &&
+      internalPlayer.videoWidth === 0
+    ) {
+      internalPlayer.pause();
+      handleUnplayable();
+    }
   };
 
   const handleVolumeChange = (nextVolume: number) => {
@@ -256,6 +299,19 @@ export function VideoWithPreview({
     return <Typography color="text.secondary">No video available</Typography>;
   }
 
+  if (streaming) {
+    return (
+      <StreamingVideo
+        media={media}
+        startAt={lastPositionRef.current}
+        seekRequest={seekRequest}
+        initialVolume={volume}
+        onVolumeChange={handleVolumeChange}
+        onProgress={onProgress}
+      />
+    );
+  }
+
   return (
     <Box
       ref={playerWrapperRef}
@@ -305,16 +361,20 @@ export function VideoWithPreview({
             This format cannot be played in the browser.
           </Typography>
           <Button
-            variant="outlined"
-            color="inherit"
-            size="small"
-            startIcon={<DownloadIcon />}
-            component="a"
-            href={mediaUrl}
-            download={media.filename}
+            variant="contained"
+            onClick={() => {
+              setPlaybackError(false);
+              setStreaming(true);
+            }}
           >
-            Download to play
+            Play converted version
           </Button>
+          <Typography variant="body2" align="center" color="inherit">
+            Omoide converts it while it plays; the file is not changed. To do
+            this automatically, enable it under Settings → Video. You can also
+            use the Open file button in the toolbar to play it in your default
+            application.
+          </Typography>
         </Box>
       )}
 
@@ -329,8 +389,11 @@ export function VideoWithPreview({
         style={{ position: "absolute", top: 0, left: 0 }} // Disable pointer events on the player itself
         light={autoplay ? false : thumbnailUrl}
         onReady={handleReady}
-        onProgress={({ playedSeconds }) => onProgress?.(playedSeconds)}
-        onError={() => { setIsLoading(false); setPlaybackError(true); }}
+        onProgress={({ playedSeconds }: {playedSeconds: number}) => {
+          lastPositionRef.current = playedSeconds;
+          onProgress?.(playedSeconds);
+        }}
+        onError={handleUnplayable}
         // The config track is not needed for the manual implementation
       />
 

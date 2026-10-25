@@ -1,18 +1,17 @@
-import cv2
 import numpy as np
-import torch
 from cv2.typing import MatLike
 from PIL import Image
-from PIL.ImageFile import ImageFile
 from sqlalchemy import text
 from sqlmodel import select
-from tqdm import tqdm
 
-from app.config import settings, get_clip_bundle
+from app.clip_onnx import get_clip_encoder
+from app.config import settings
 from app.logger import logger
 from app.models import Media, Scene, Tag
 from app.processors.base import MediaProcessor
-from app.utils import safe_commit, vector_to_blob, vector_from_stored
+from app.database import safe_commit
+from app.frames import PhotoScene
+from app.vectors import vector_from_stored, vector_to_blob
 
 
 class EmbeddingExtractor(MediaProcessor):
@@ -22,12 +21,8 @@ class EmbeddingExtractor(MediaProcessor):
     def load_model(self):
         if settings.processors.image_embedding_processor_active:
             self.active = True
-            # Use shared CLIP bundle; keep it warm to avoid repeated init
-            self._clip_model, self._preprocess, _ = get_clip_bundle()
-            try:
-                self._clip_device = next(self._clip_model.parameters()).device
-            except StopIteration:
-                self._clip_device = torch.device("cpu")
+            # Use shared CLIP encoder; keep it warm to avoid repeated init
+            self._clip = get_clip_encoder()
 
     def unload(self):
         # Keep CLIP warm; no action needed here to avoid per-task reinit
@@ -36,7 +31,7 @@ class EmbeddingExtractor(MediaProcessor):
     def _get_embeddings_batch(self, images: list) -> list[np.ndarray | None]:
         """Run CLIP encode_image on a batch of raw images in sub-batches.
 
-        Accepts PIL ImageFile or numpy RGB arrays. Returns a list of float32
+        Accepts PIL images or numpy RGB arrays. Returns a list of float32
         embeddings (or None for any image that failed preprocessing).
         """
         batch_size = max(1, getattr(settings.processors, "embedding_batch_size", 16))
@@ -44,14 +39,12 @@ class EmbeddingExtractor(MediaProcessor):
 
         for chunk_start in range(0, len(images), batch_size):
             chunk = images[chunk_start : chunk_start + batch_size]
-            preprocessed: list[torch.Tensor] = []
+            preprocessed: list[np.ndarray] = []
             valid_in_chunk: list[int] = []
 
             for i, img in enumerate(chunk):
                 try:
-                    if not isinstance(img, Image.Image):
-                        img = Image.fromarray(img).convert("RGB")
-                    preprocessed.append(self._preprocess(img))
+                    preprocessed.append(self._clip.preprocess(img))
                     valid_in_chunk.append(i)
                 except OSError as e:
                     logger.error(
@@ -61,14 +54,7 @@ class EmbeddingExtractor(MediaProcessor):
             if not preprocessed:
                 continue
 
-            batch_tensor = torch.stack(preprocessed)
-            if hasattr(self, "_clip_device"):
-                batch_tensor = batch_tensor.to(self._clip_device)
-
-            with torch.no_grad():
-                features = self._clip_model.encode_image(batch_tensor)
-            features = features / features.norm(dim=-1, keepdim=True)
-            features_np = features.cpu().numpy().astype(np.float32)
+            features_np = self._clip.encode_pixels(np.stack(preprocessed))
 
             for feat_i, chunk_i in enumerate(valid_in_chunk):
                 results[chunk_start + chunk_i] = features_np[feat_i]
@@ -79,7 +65,7 @@ class EmbeddingExtractor(MediaProcessor):
         self,
         media: Media,
         session,
-        scenes: list[tuple[Scene, MatLike]] | list[ImageFile] | list[Scene],
+        scenes: list[tuple[Scene, MatLike]] | list[PhotoScene] | list[Scene],
     ):
         # 1) skip if already extracted
         if session.exec(
@@ -93,7 +79,7 @@ class EmbeddingExtractor(MediaProcessor):
 
         # Fast path: scenes are already-stored Scene DB objects — load from DB
         if scenes and isinstance(scenes[0], Scene):
-            for scene in tqdm(scenes):
+            for scene in scenes:
                 row = session.exec(
                     text(
                         "SELECT embedding FROM scene_embeddings WHERE scene_id = :sid"
@@ -101,7 +87,7 @@ class EmbeddingExtractor(MediaProcessor):
                 ).first()
                 if not row:
                     try:
-                        if not scene.thumbnail_path or not hasattr(self, "_clip_model"):
+                        if not scene.thumbnail_path or not (hasattr(self, "_clip") or hasattr(self, "_clip_model")):
                             raise ValueError("scene has no stored embedding or usable thumbnail encoder")
                         thumb = settings.general.thumb_dir / scene.thumbnail_path
                         with Image.open(thumb) as source:
@@ -138,8 +124,8 @@ class EmbeddingExtractor(MediaProcessor):
             raw_images: list = []
             scene_objects: list[Scene | None] = []
             for scene in scenes:
-                if isinstance(scene, Image.Image):
-                    raw_images.append(scene)
+                if isinstance(scene, (PhotoScene, Image.Image)):
+                    raw_images.append(scene.rgb if isinstance(scene, PhotoScene) else scene)
                     scene_objects.append(None)
                 elif isinstance(scene, tuple):
                     scene_obj, frame = scene
@@ -215,9 +201,16 @@ class EmbeddingExtractor(MediaProcessor):
                 "EmbeddingExtractor: failed to convert embedding for %s", media.path
             )
             return False
+        # sqlite-vec tables reject INSERT OR REPLACE for an existing key, which
+        # every re-run of this processor hits; drop the old vector first.
+        session.exec(
+            text("DELETE FROM media_embeddings WHERE media_id = :id").bindparams(
+                id=media.id
+            )
+        )
         sql = text(
             """
-            INSERT OR REPLACE INTO media_embeddings(media_id, embedding)
+            INSERT INTO media_embeddings(media_id, embedding)
             VALUES (:id, :emb)
             """
         ).bindparams(id=media.id, emb=blob)

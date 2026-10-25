@@ -72,6 +72,7 @@ class PersonDetail(BaseModel):
     gender_manual: bool = False
     age: int | None = None
     social_links: list[SocialLinkRead]
+    is_favorite: bool = False
 
 
 class PersonUpdate(BaseModel):
@@ -110,6 +111,7 @@ class PersonRead(SQLModel):
     gender_confidence: float | None = None
     gender_manual: bool = False
     age: int | None = None
+    is_favorite: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

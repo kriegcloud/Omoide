@@ -18,7 +18,7 @@ from sqlalchemy.sql.dml import Update
 from app.config import MediaDirectory
 from app.models import Media, ProcessingTask
 
-processors = importlib.import_module("app.api.processors")
+processors = importlib.import_module("app.tasks.conversion")
 
 
 class ConversionLifecycleTests(unittest.TestCase):

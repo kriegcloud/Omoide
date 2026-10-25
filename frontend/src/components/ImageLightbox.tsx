@@ -202,7 +202,7 @@ export function ImageLightbox({ open, src, alt, onClose }: ImageLightboxProps) {
       fullScreen
       PaperProps={{ sx: { bgcolor: "rgba(0,0,0,0.95)", m: 0, overflow: "hidden" } }}
     >
-      <IconButton
+      <IconButton aria-label="Close"
         onClick={onClose}
         size="small"
         sx={{
@@ -236,7 +236,7 @@ export function ImageLightbox({ open, src, alt, onClose }: ImageLightboxProps) {
           zIndex: 10,
         }}
       >
-        <IconButton
+        <IconButton aria-label="Zoom out"
           size="small"
           onClick={() => {
             const { zoom: z, panX: px, panY: py } = viewStateRef.current;
@@ -254,7 +254,7 @@ export function ImageLightbox({ open, src, alt, onClose }: ImageLightboxProps) {
         >
           {Math.round(zoom * 100)}%
         </Typography>
-        <IconButton
+        <IconButton aria-label="Zoom in"
           size="small"
           onClick={() => {
             const { zoom: z, panX: px, panY: py } = viewStateRef.current;
@@ -265,7 +265,7 @@ export function ImageLightbox({ open, src, alt, onClose }: ImageLightboxProps) {
         >
           <ZoomInIcon fontSize="small" />
         </IconButton>
-        <IconButton
+        <IconButton aria-label="Reset zoom"
           size="small"
           onClick={reset}
           disabled={zoom === MIN_ZOOM && panX === 0 && panY === 0}

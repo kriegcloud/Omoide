@@ -7,30 +7,19 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 import app.database as db
-from app.config import (
-    AppSettings,
-    read_bootstrap,
-    reload_settings,
-    save_settings,
-    validate_clip_settings_change,
-    settings,
-    write_bootstrap,
-)
+from app.config import reload_settings, save_settings, settings, validate_clip_settings_change
+from app.config.profiles import read_bootstrap, write_bootstrap
+from app.config.schema import AppSettings
 from app.models import Media, ProcessingTask
+from app.presentation import ensure_writable
 from app.tagging import sanitize_custom_tag_list
 from app.tasks import schedule_custom_auto_tagging
-from app.utils import delete_record
+from app.records import delete_record
 
 
-def _ensure_config_access_allowed() -> None:
-    if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Configuration endpoints are disabled in read-only mode.",
-        )
-
-
-router = APIRouter(dependencies=[Depends(_ensure_config_access_allowed)])
+# Even reading the configuration exposes filesystem paths, so the whole
+# router is closed in presentation mode, not just its writes.
+router = APIRouter(dependencies=[Depends(ensure_writable)])
 logger = logging.getLogger(__name__)
 
 
@@ -338,7 +327,7 @@ def switch_profile(req: SwitchProfileRequest):
         if not target_config.exists():
             import yaml
 
-            from app.config import AppSettings
+            from app.config.schema import AppSettings
 
             defaults = AppSettings().model_dump(mode="json")
             # Remove derived paths and data_dir; they are computed by runtime
@@ -421,7 +410,7 @@ def create_profile(req: CreateProfileRequest):
         target_config = dest / "config.yaml"
         import yaml
 
-        from app.config import AppSettings
+        from app.config.schema import AppSettings
 
         defaults = AppSettings().model_dump(mode="json")
         general = defaults.get("general", {})

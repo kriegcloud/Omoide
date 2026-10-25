@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { getCurrentImgDataFunction } from "react-filerobot-image-editor";
 import {
   Alert,
@@ -126,6 +126,9 @@ const FilerobotImageEditor = lazy(async () => {
     return (
       <Editor
         {...props}
+        loadableDesignState={props.loadableDesignState as React.ComponentProps<typeof Editor>["loadableDesignState"]}
+        savingPixelRatio={1}
+        previewPixelRatio={1}
         tabsIds={[
           editorModule.TABS.ADJUST,
           editorModule.TABS.FINETUNE,
@@ -195,7 +198,7 @@ export default function ImageEditorDialog({
   // the stack overflows.
   const initialDesignState = useMemo(
     () => mode === "virtual" ? loadableDesignState ?? undefined : undefined,
-    [open, media.id, mode, loadableDesignState]
+    [mode, loadableDesignState]
   );
   const [designState, setDesignState] = useState<FilerobotDesignState | null>(
     initialDesignState ?? null
@@ -217,7 +220,7 @@ export default function ImageEditorDialog({
   const [faceSuggestions, setFaceSuggestions] = useState<FaceCropSuggestion[] | null>(null);
   const [imageOverlay, setImageOverlay] = useState<ImageOverlayLayout | null>(null);
 
-  const captureStoreState = async (): Promise<FilerobotStoreState | null> => {
+  const captureStoreState = useCallback(async (): Promise<FilerobotStoreState | null> => {
     const updateState = updateStateRef.current;
     if (!updateState) return null;
     let captured: FilerobotStoreState | null = null;
@@ -229,7 +232,7 @@ export default function ImageEditorDialog({
       await new Promise((resolve) => window.setTimeout(resolve, 16));
     }
     return captured;
-  };
+  }, []);
 
   const readLiveDesignState = async (): Promise<FilerobotDesignState | null> => {
     const live = await captureStoreState();
@@ -281,7 +284,7 @@ export default function ImageEditorDialog({
     setImageOverlay(null);
   }, [open, media.id, initialDesignState]);
 
-  const updateImageOverlay = async () => {
+  const updateImageOverlay = useCallback(async () => {
     const live = await captureStoreState();
     const shown = live?.shownImageDimensions;
     const host = editorHostRef.current;
@@ -299,7 +302,7 @@ export default function ImageEditorDialog({
       height: shown.height,
       rotation: live?.adjustments?.rotation ?? 0,
     });
-  };
+  }, [captureStoreState]);
 
   const toggleFaceGuides = async (checked: boolean) => {
     setFaceGuides(checked);
@@ -353,7 +356,7 @@ export default function ImageEditorDialog({
     const onResize = () => { void updateImageOverlay(); };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [faceGuides, aspectGuides, compareHeld, comparePinned]);
+  }, [faceGuides, aspectGuides, compareHeld, comparePinned, updateImageOverlay]);
 
   const editorTheme = useMemo(
     () => ({
@@ -596,8 +599,8 @@ export default function ImageEditorDialog({
 
   useEffect(() => {
     if (!open) return;
-    const stopComparing = (event?: KeyboardEvent) => {
-      if (!event || event.code === "Backquote") setCompareHeld(false);
+    const stopComparing = (event?: KeyboardEvent | FocusEvent) => {
+      if (!event || event.type === "blur" || ("code" in event && event.code === "Backquote")) setCompareHeld(false);
     };
 
     window.addEventListener("keyup", stopComparing);
@@ -741,7 +744,7 @@ export default function ImageEditorDialog({
               {(faceSuggestions ?? []).map((suggestion) => {
                 const [x, y, width, height] = suggestion.face_bbox;
                 return (
-                  <Box key={suggestion.face_id} sx={{ position: "absolute", border: "2px solid", borderColor: "warning.light", boxShadow: "0 0 0 1px rgba(0,0,0,0.6)", left: `${(x / media.width) * 100}%`, top: `${(y / media.height) * 100}%`, width: `${(width / media.width) * 100}%`, height: `${(height / media.height) * 100}%` }} />
+                  <Box key={suggestion.face_id} sx={{ position: "absolute", border: "2px solid", borderColor: "warning.light", boxShadow: "0 0 0 1px rgba(0,0,0,0.6)", left: `${(x / (media.width ?? 1)) * 100}%`, top: `${(y / (media.height ?? 1)) * 100}%`, width: `${(width / (media.width ?? 1)) * 100}%`, height: `${(height / (media.height ?? 1)) * 100}%` }} />
                 );
               })}
             </Box>

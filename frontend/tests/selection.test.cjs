@@ -630,3 +630,33 @@ test('orphan select-all and delete-all stay in the sticky action bar after clear
   selectButton(bar).props.onClick();
   assert.equal(selectButton(renderBar()).props.children, 'Select All');
 });
+
+test('modal viewer grids cannot replace the background selection owner', () => {
+  const filename = path.resolve(__dirname, '../src/routes.tsx');
+  const output = ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
+    fileName: filename,
+  }).outputText;
+  const background = { pathname: '/images', key: 'images' };
+  const location = { pathname: '/medium/2', state: { backgroundLocation: background } };
+  const SelectionProvider = () => null;
+  const modules = {
+    react: { ...React, lazy: () => () => null },
+    'react-router-dom': { Routes: 'Routes', Route: 'Route', useLocation: () => location },
+    '@mui/material': { Box: 'Box', CircularProgress: 'CircularProgress' },
+    './context/SelectionContext': { SelectionProvider },
+    './pages/IndexPage': { __esModule: true, default: () => null },
+    './components/Layout': { Layout: () => null },
+    './components/ReadOnlyBoundary': { WriteModeBoundary: () => null },
+    './components/MaintenanceShell': { MaintenanceShell: () => null },
+  };
+  const module = { exports: {} };
+  new Function('require', 'module', 'exports', output)(name => modules[name] ?? require(name), module, module.exports);
+  const tree = module.exports.AppRoutes();
+  const [backgroundRoutes, modalRoutes] = tree.props.children;
+  assert.equal(backgroundRoutes.props.location, background, 'background grid keeps its own router location');
+  const viewer = modalRoutes.props.children.props.element;
+  assert.equal(viewer.type, SelectionProvider,
+    'the viewer needs a separate selection owner: its Similar grid must not clear selected background images');
+  assert.ok(viewer.props.children, 'the viewer remains inside the isolated context');
+});

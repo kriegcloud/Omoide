@@ -810,6 +810,12 @@ class ExifData(SQLModel, table=True):
     # GPS
     lat: float | None = Field(default=None, index=True)
     lon: float | None = Field(default=None, index=True)
+    # Set in the map editor rather than read from the file; survives
+    # re-running the EXIF processor (the file may not contain it).
+    location_set_manually: bool = Field(default=False)
+    # False while a forced EXIF re-run is pending for a row kept only for its
+    # manual location.
+    extracted: bool = Field(default=True)
 
     # reverse-geocoded place (filled by the geocode_places task)
     city: str | None = Field(default=None, index=True)
@@ -827,7 +833,7 @@ class DuplicateGroup(SQLModel, table=True):
 
 class DuplicateIgnore(SQLModel, table=True):
     media_id_a: int = Field(foreign_key="media.id", primary_key=True)
-    media_id_b: int = Field(foreign_key="media.id", primary_key=True)
+    media_id_b: int = Field(foreign_key="media.id", primary_key=True, index=True)
     created_at: datetime = Field(default_factory=datetime.now)
 
     class Config:

@@ -47,10 +47,10 @@ const breakpointColumnsObj = {
 
 type MediaFilter = "all" | "image" | "video";
 
-function isMedia(item: MediaPreview | Person | Tag): item is MediaPreview {
+function isMedia(item: MediaPreview | Person | Tag | SceneSearchResult): item is MediaPreview {
   return item && "thumbnail_path" in item;
 }
-function isTag(item: MediaPreview | Person | Tag): item is Tag {
+function isTag(item: MediaPreview | Person | Tag | SceneSearchResult): item is Tag {
   return (
     item && !("tags" in item) && "name" in item && !("profile_face" in item)
   );
@@ -224,7 +224,7 @@ export default function SearchResultsPage() {
       scene: () => searchScenes(query, ITEMS_PER_PAGE),
     } as const;
     const fetcher = fetcherMap[category as "tag" | "scene"];
-    if (fetcher) fetchInitial(listKey, fetcher);
+    if (fetcher) fetchInitial<Tag | SceneSearchResult>(listKey, fetcher);
   }, [listKey, category, query, fetchInitial, location.key]);
 
   // ---- infinite scroll ---------------------------------------------------
@@ -240,7 +240,7 @@ export default function SearchResultsPage() {
         scene: (cursor?: string) => searchScenes(query, ITEMS_PER_PAGE, cursor),
       } as const;
       const fetcher = fetcherMap[category as "tag" | "scene"];
-      if (fetcher) loadMore(listKey, fetcher);
+      if (fetcher) loadMore<Tag | SceneSearchResult>(listKey, fetcher);
     }
   }, [inView, category, listHasMore, listIsLoading, listError, listKey, query, loadMore, loadMoreMedia]);
 
@@ -255,12 +255,12 @@ export default function SearchResultsPage() {
     | SceneSearchResult
   )[];
 
-  const rawMediaItems: MediaPreview[] =
+  const rawMediaItems: MediaPreview[] = useMemo(() =>
     category === "media"
       ? isImageSearch
         ? (refreshedImageItems ?? preloadedState?.items?.filter(isMedia) ?? [])
         : mediaState.media
-      : [];
+      : [], [category, isImageSearch, refreshedImageItems, preloadedState?.items, mediaState.media]);
 
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
   const filteredMediaItems = useMemo(() => {

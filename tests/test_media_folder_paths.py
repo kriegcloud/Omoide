@@ -12,6 +12,7 @@ os.environ["XDG_CONFIG_HOME"] = _CONFIG_HOME.name
 from sqlmodel import Session, SQLModel, create_engine  # noqa: E402
 
 from app.models import Media  # noqa: E402
+from app.config import settings  # noqa: E402
 
 media_api = importlib.import_module("app.api.media")
 
@@ -57,7 +58,7 @@ class MediaFolderPathTests(unittest.TestCase):
 
     def patch_roots(self, *roots: str):
         return patch.object(
-            type(media_api.settings.general),
+            type(settings.general),
             "resolved_media_dirs",
             return_value=[(Path(root), True) for root in roots],
         )

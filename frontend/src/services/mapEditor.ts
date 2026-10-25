@@ -1,35 +1,48 @@
 import { mutationBus } from "../stores/mutationBus";
-import { API } from "../config";
-import { CursorPage, MediaPreview } from "../types";
+import {
+  CursorPage,
+  MissingGeoFolders,
+  MissingGeoMedia,
+  MissingGeoSort,
+} from "../types";
+import { apiFetch } from "./api";
 
 export const getMissingGeoMedia = async (
-  cursor: string | null
-): Promise<CursorPage<MediaPreview>> => {
-  const params = new URLSearchParams();
-  if (cursor) {
-    params.append("cursor", cursor);
-  }
-  const response = await fetch(
-    `${API}/api/media/missing-geo?${params.toString()}`
-  );
-  if (!response.ok) throw new Error("Failed to load media missing geolocation");
-  return response.json();
-};
+  cursor: string | null,
+  { folder, sort }: { folder?: string | null; sort?: MissingGeoSort } = {},
+  signal?: AbortSignal
+): Promise<CursorPage<MissingGeoMedia>> =>
+  apiFetch<CursorPage<MissingGeoMedia>>("/api/media/missing-geo", {
+    query: { cursor, folder, sort },
+    errorMessage: "Failed to fetch media without geolocation",
+    signal,
+  });
 
-export const updateMediaGeolocation = async (
+export const getMissingGeoFolders = async (
+  signal?: AbortSignal
+): Promise<MissingGeoFolders> =>
+  apiFetch<MissingGeoFolders>("/api/media/missing-geo/folders", {
+    errorMessage: "Failed to fetch folders",
+    signal,
+  });
+
+const saveMediaGeolocation = async (
   mediaId: number,
   latitude: number,
   longitude: number
-) => {
-  const res = await fetch(`${API}/api/media/${mediaId}/geolocation`, {
+) =>
+  apiFetch<void>(`/api/media/${mediaId}/geolocation`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+    body: {
       latitude: latitude,
       longitude: longitude,
-    }),
+    },
+    errorMessage: "Failed to update media geolocation",
   });
-  if (!res.ok) throw new Error("Failed to update media geolocation");
-  mutationBus.emit({ type: "media:updated", items: [{ id: mediaId, latitude, longitude }] });
-  mutationBus.emit({ type: "list:invalidate", prefix: "media-missing-geolocation" });
+
+export const updateMediaGeolocation = async (...args: Parameters<typeof saveMediaGeolocation>) => {
+ const result = await saveMediaGeolocation(...args);
+ mutationBus.emit({type: "media:updated", items: [{id: args[0], latitude: args[1], longitude: args[2]}]});
+ mutationBus.emit({type: "list:invalidate", prefix: "media-missing-geolocation"});
+ return result;
 };

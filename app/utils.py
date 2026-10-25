@@ -1570,6 +1570,10 @@ def _delete_record_locked(media_id, session: Session, *, delete_original: bool =
     thumb = Path(settings.general.thumb_dir / thumbnail)
     if thumb.is_file():
         to_unlink.append(thumb)
+    from app.conversion import existing_converted_copy
+    converted = existing_converted_copy(media.id)
+    if converted is not None:
+        to_unlink.append(converted)
     faces = session.exec(select(Face).where(Face.media_id == media.id)).all()
     affected_person_ids: set[int] = set()
     linked_person_ids = session.exec(

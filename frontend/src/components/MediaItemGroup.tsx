@@ -85,7 +85,7 @@ export const MediaItemGroup: React.FC<MediaItemGroupProps> = ({
               </Tooltip>
             )}
             {onRemoveMedia && (
-              <IconButton
+              <IconButton aria-label="Remove from this person"
                 className="remove-btn"
                 size="small"
                 onClick={(e) => { e.stopPropagation(); onRemoveMedia(media.id); }}

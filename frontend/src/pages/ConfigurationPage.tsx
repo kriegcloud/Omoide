@@ -1,3 +1,4 @@
+import VideoSection from "../components/configuration/VideoSection";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   getConfig,
@@ -86,7 +87,7 @@ type FacePresetKey = "strict" | "normal" | "loose";
 
 const facePresets: Record<
   FacePresetKey,
-  Omit<AppConfig["face_recognition"], "preset" | "face_sharpness_filter_enabled" | "face_sharpness_min_variance">
+  Omit<AppConfig["face_recognition"], "preset" | "face_detection_model" | "face_sharpness_filter_enabled" | "face_sharpness_min_variance">
 > = {
   strict: {
     face_recognition_min_confidence: 0.6,
@@ -1021,6 +1022,7 @@ export default function ConfigurationPage() {
       label: "General",
       content: (
         <Grid container spacing={2}>
+          <Grid size={{xs: 12}}><FormControlLabel control={<Switch checked={config.general.write_location_to_files ?? false} onChange={e => handleValueChange("general", "write_location_to_files", e.target.checked)} />} label="Write edited locations to original files" /><Typography variant="caption" display="block">Store geotags in writable originals as well as the library database.</Typography></Grid>
           {!isBinary && (
             <>
               <Grid size={{ xs: 12, sm: 6 }}>
@@ -1707,6 +1709,7 @@ export default function ConfigurationPage() {
       label: "Face Recognition",
       content: (
         <Box>
+          <TextField select label="Face detection model" value={config.face_recognition.face_detection_model ?? "buffalo_l"} onChange={e => handleValueChange("face_recognition", "face_detection_model", e.target.value as "buffalo_l" | "buffalo_s")} fullWidth margin="normal"><MenuItem value="buffalo_l">Buffalo L (higher accuracy)</MenuItem><MenuItem value="buffalo_s">Buffalo S (faster)</MenuItem></TextField>
           <Box sx={{ borderBottom: 1, borderColor: "divider", mb: 3 }}>
             <Tabs
               value={faceSettingsMode}
@@ -2208,53 +2211,7 @@ export default function ConfigurationPage() {
     },
     {
       label: "Video",
-      content: (
-        <Grid container spacing={2}>
-          <Grid size={{ xs: 12, sm: 6 }}>
-            <TextField
-              label="Max Frames per Video"
-              value={config.video.max_frames_per_video}
-              onChange={(e) =>
-                handleValueChange(
-                  "video",
-                  "max_frames_per_video",
-                  parseInt(e.target.value)
-                )
-              }
-              fullWidth
-              margin="normal"
-              type="number"
-              helperText="Fallback frame sampling count when scene detection fails"
-            />
-          </Grid>
-          <Grid size={{ xs: 12 }}>
-            <FormGroup>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={config.video.auto_scene_detection}
-                    onChange={(e) =>
-                      handleValueChange(
-                        "video",
-                        "auto_scene_detection",
-                        e.target.checked
-                      )
-                    }
-                  />
-                }
-                label="Auto Scene Detection"
-              />
-              <Typography
-                variant="caption"
-                sx={{ ml: 6, mt: -1, display: "block" }}
-              >
-                Detects scene changes and uses those frames for thumbnails and
-                search.
-              </Typography>
-            </FormGroup>
-          </Grid>
-        </Grid>
-      ),
+      content: <VideoSection config={config} onValueChange={handleValueChange} />,
     },
     {
       label: "Processors",
@@ -2423,7 +2380,7 @@ export default function ConfigurationPage() {
       <Box
         component="fieldset"
         disabled={isSaving}
-        {...(isSaving ? { inert: "" } : {})}
+        {...(isSaving ? { inert: true } : {})}
         aria-busy={isSaving}
         sx={{
           flexGrow: 1,

@@ -35,6 +35,14 @@ class SyntheticTextTower:
         self.weights = torch.randn(256, 256, generator=generator) / 16
         self.calls = 0
 
+    def encode_texts(self, queries):
+        import torch
+
+        with torch.no_grad():
+            vectors = self.encode_text(synthetic_tokenizer(queries))
+            vectors /= vectors.norm(dim=-1, keepdim=True)
+        return vectors.cpu().numpy()
+
     def parameters(self):
         return iter(())
 
@@ -59,8 +67,8 @@ def synthetic_tokenizer(queries):
 class TextQueryCacheTests(unittest.TestCase):
     def setUp(self):
         self.tower = SyntheticTextTower()
-        self.bundle = [self.tower, None, synthetic_tokenizer]
-        self.enterContext(patch.object(search_api, "get_clip_bundle", side_effect=lambda: tuple(self.bundle)))
+        self.bundle = [self.tower]
+        self.enterContext(patch.object(search_api, "get_clip_encoder", side_effect=lambda: self.bundle[0]))
 
     def test_repeated_normalized_query_encodes_once(self):
         first = search_api.encode_text_query("Beach")
@@ -120,7 +128,7 @@ class TextQueryCacheTests(unittest.TestCase):
         before = cProfile.Profile()
         before.enable()
         for _ in range(repeats):
-            search_api._encode_text_query_uncached("beach", self.tower, synthetic_tokenizer)
+            self.tower.encode_texts(["beach"])
         before.disable()
         before_calls = self.tower.calls
         after = cProfile.Profile()

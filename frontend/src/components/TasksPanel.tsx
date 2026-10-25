@@ -55,6 +55,9 @@ import {
 
 type TaskLabels = Record<TaskType, string>;
 const TASK_LABELS: TaskLabels = {
+  export_person_media: "Export person media",
+  convert_media: "Convert media",
+  convert_videos: "Convert videos",
   scan: "Scan for New Files",
   process_media: "Process Unindexed Media",
   clean_missing_files: "Detect Missing Files",

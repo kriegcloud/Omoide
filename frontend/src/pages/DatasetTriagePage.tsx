@@ -436,6 +436,7 @@ export default function DatasetTriagePage() {
   const cropItem = useMemo<DatasetItem[]>(() => current ? [{
     id: current.item.id,
     dataset_id: datasetId,
+    origin: "media",
     media_id: current.media.id,
     position: current.item.position,
     caption_override: current.item.caption_override,

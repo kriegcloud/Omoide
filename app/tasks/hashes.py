@@ -5,14 +5,13 @@ from typing import Literal
 
 from sqlalchemy import func
 from sqlmodel import Session, select
-from tqdm import tqdm
 
 import app.database as db
 from app.concurrency import heavy_writer
 from app.config import settings
 from app.logger import logger
 from app.models import Media, ProcessingTask
-from app.utils import generate_perceptual_hash
+from app.phash import generate_perceptual_hash
 
 __all__ = ["generate_hashes"]
 
@@ -58,7 +57,7 @@ def generate_hashes(task_id: int | None = None) -> None:
                     break
 
                 successful_hashes = 0
-                for media in tqdm(media_to_hash, desc="Generating Hashes"):
+                for media in media_to_hash:
                     if task:
                         session.refresh(task, attribute_names=["status"])
                         if task.status == "cancelled":

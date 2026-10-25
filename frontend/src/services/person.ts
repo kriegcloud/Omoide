@@ -12,6 +12,8 @@ export const getPeople = async (
   hidden = false,
   gender?: "female" | "male",
   signal?: AbortSignal,
+  name?: string,
+  sort?: PersonSort,
 ): Promise<{ items: PersonReadSimple[]; next_cursor: string | null }> => {
   const params = new URLSearchParams();
   if (cursor) {
@@ -23,6 +25,8 @@ export const getPeople = async (
   if (gender) {
     params.append("gender", gender);
   }
+  if (name) params.set("name", name);
+  if (sort) params.set("sort", sort);
   const response = await fetch(`${API}/api/person/?${params.toString()}`, { signal });
   if (!response.ok) throw new Error("Failed to fetch people");
   const data = await response.json();
@@ -64,3 +68,5 @@ export const getPersonMediaAppearances = async (
   if (!response.ok) throw new Error("Failed to fetch media appearances");
   return response.json();
 };
+
+export type PersonSort = "appearances_desc" | "appearances_asc" | "name_asc" | "name_desc" | "views_desc" | "favorites" | "newest" | "oldest";

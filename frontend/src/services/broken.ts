@@ -5,11 +5,11 @@ import { BrokenMediaPage, BrokenResolvePayload } from "../types";
 export const getBrokenMedia = async (params: {
   cursor?: string | null;
   limit?: number;
-}): Promise<BrokenMediaPage> => {
+}, signal?: AbortSignal): Promise<BrokenMediaPage> => {
   const query = new URLSearchParams();
   if (params.cursor) query.set("cursor", params.cursor);
   if (params.limit) query.set("limit", String(params.limit));
-  const res = await fetch(`${API}/api/broken?${query}`);
+  const res = await fetch(`${API}/api/broken?${query}`, {signal});
   if (!res.ok) throw new Error("Failed to load broken media");
   return res.json();
 };

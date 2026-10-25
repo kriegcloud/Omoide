@@ -271,7 +271,7 @@ export default function DatasetCaptionsPanel({
             <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
               <Box
                 component="img"
-                src={`${API}/thumbnails/${encodeFilePath(row.media.thumbnail_path)}`}
+                src={`${API}/thumbnails/${encodeFilePath(row.media.thumbnail_path ?? "")}`}
                 alt=""
                 sx={{
                   width: { xs: "100%", md: 150 },

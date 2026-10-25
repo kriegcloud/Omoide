@@ -25,7 +25,8 @@ const buildQueryString = (params: Record<string, string | undefined>) => {
 };
 
 export const getMissingMedia = async (
-  options: MissingQuery = {}
+  options: MissingQuery = {},
+  signal?: AbortSignal
 ): Promise<MissingMediaPage> => {
   const query = buildQueryString({
     cursor: options.cursor ?? undefined,
@@ -35,7 +36,7 @@ export const getMissingMedia = async (
   });
 
   const response = await fetch(
-    `${API}/api/missing/${query ? `?${query}` : ""}`
+    `${API}/api/missing/${query ? `?${query}` : ""}`, {signal}
   );
   if (!response.ok) {
     throw new Error("Failed to load missing media");

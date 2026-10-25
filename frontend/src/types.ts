@@ -125,6 +125,8 @@ export interface PersonReadSimple {
   gender_confidence?: number | null;
   gender_manual: boolean;
   age?: number | null;
+
+is_favorite?: boolean;
 }
 
 export interface CombinedMediaSearchResult {
@@ -153,6 +155,8 @@ export interface Person {
   gender_manual: boolean;
   age?: number | null;
   social_links: SocialLink[];
+
+is_favorite?: boolean;
 }
 
 export interface MergeCandidatePerson {
@@ -285,6 +289,8 @@ export interface MediaDetail {
   media: Media;
   persons: Person[];
   orphans: Face[];
+
+converted_available?: boolean;
 }
 
 export type AnnotationKind = "caption" | "tags";
@@ -382,7 +388,7 @@ export type TaskType =
   | "export_dataset"
   | "batch_edit_media"
   | "dataset_frame_mining"
-  | "dataset_caption_generation";
+  | "dataset_caption_generation" | "export_person_media" | "convert_media" | "convert_videos";
 export type TaskStatus =
   | "pending"
   | "running"
@@ -527,7 +533,7 @@ export interface MediaPreview {
   filename: string;
   path: string;
   size: number;
-  thumbnail_path: string;
+  thumbnail_path?: string;
   duration?: number;
   width?: number;
   height?: number;
@@ -1242,6 +1248,7 @@ export interface MediaDirectory {
 
 export interface AppConfig {
   general: {
+    write_location_to_files: boolean;
     port: number;
     presentation_mode: boolean;
     enable_people: boolean;
@@ -1305,6 +1312,7 @@ export interface AppConfig {
     remove_people_profile_id: string;
   };
   face_recognition: {
+    face_detection_model: "buffalo_l" | "buffalo_s";
     preset: "strict" | "normal" | "loose" | "custom";
     face_recognition_min_confidence: number;
     existing_person_cosine_threshold: number;
@@ -1343,6 +1351,8 @@ export interface AppConfig {
     preserve_renamed_on_rebuild: boolean;
   };
   video: {
+    auto_convert: VideoConversionMode;
+    convert_on_the_fly: boolean;
     auto_scene_detection: boolean;
     max_frames_per_video: number;
   };
@@ -1371,4 +1381,65 @@ export interface ProfileHealth {
   active_exists: boolean;
   has_db: boolean;
   has_thumbs: boolean;
+}
+
+export type VideoConversionMode = "off" | "keep_original" | "replace_original";
+
+export type FacesSortBy = "id_desc" | "date_desc" | "date_asc";
+
+export interface MissingGeoMedia extends MediaPreview {
+  /** Why a location cannot be written into the file; null when it can. */
+  write_block_reason: string | null;
+}
+
+export type MissingGeoSort = "latest" | "newest" | "oldest" | "path";
+
+export type FolderWriteStatus = "writable" | "blocked" | "mixed";
+
+export interface MissingGeoFolder {
+  /** Forward-slash path, passed back as the `folder` filter. */
+  path: string;
+  name: string;
+  /** 0 for a configured media directory. */
+  depth: number;
+  /** Un-located media in this folder and its subfolders. */
+  media_count: number;
+  /** null when locations are only stored in the database. */
+  write_status: FolderWriteStatus | null;
+  write_block_reason: string | null;
+}
+
+export interface MissingGeoFolders {
+  folders: MissingGeoFolder[];
+  write_to_files: boolean;
+}
+
+export interface ReviewMediaItem {
+  id: number;
+  filename: string;
+  path: string;
+  size: number;
+  thumbnail_path: string | null;
+  width: number | null;
+  height: number | null;
+  duration: number | null;
+  inserted_at: string;
+}
+
+export type TimelineEntry = TimelineMediaItem | EventDisplayItem;
+
+export interface ExifData {
+  id?: number;
+  media_id?: number;
+  make?: string | null;
+  model?: string | null;
+  timestamp?: string | null;
+  aperture?: string | null;
+  exposure_time?: string | null;
+  iso?: number | null;
+  focal_length?: number | null;
+  lat?: number | null;
+  lon?: number | null;
+  city?: string | null;
+  country?: string | null;
 }

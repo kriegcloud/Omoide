@@ -86,27 +86,29 @@ def get_package_path(package_name):
 
 platform_is_windows = sys.platform.startswith("win")
 pyside6_path = get_package_path('PySide6')
-open_clip_path = get_package_path('open_clip')
 binaries = []
 datas = [
     ('frontend/dist', 'dist'),
     ('alembic', 'alembic'),
     ('alembic.ini', '.'),
-    # Optionally bundle a recognition ONNX model if present in repo
-    ('app/models/face_recognition_sface_2021dec.onnx', '.'),
-    ('app/models/scrfd_2.5g_bnkps.onnx', '.'),
     ('app/VERSION', 'app'),
 ]
 if Path('app/GPU_BUILD').exists():
     datas.append(('app/GPU_BUILD', 'app'))
 if os.environ.get('OMOIDE_USE_BUNDLED_WEBVIEW2') and Path('webview2runtime').exists():
     datas.append(('webview2runtime', 'webview2runtime'))
-datas += collect_data_files('open_clip', include_py_files=True)
 # Offline reverse-geocoding dataset (~8 MB rg_cities1000.csv). Without it the
 # geocode_places task silently tries to download from geonames.org at runtime
 # (no timeout, no console output) and appears to hang forever.
 try:
     datas += collect_data_files('reverse_geocoder')
+except Exception:
+    pass
+
+# ONNX Runtime native libs (onnxruntime.dll / DirectML.dll on Windows) used by
+# CLIP and face recognition.
+try:
+    binaries += collect_dynamic_libs('onnxruntime')
 except Exception:
     pass
 
@@ -210,21 +212,6 @@ try:
 except Exception:
     pass
 
-# Bundle OpenCV Haar cascade files so cv2.data.haarcascades works in PyInstaller.
-try:
-    import cv2  # type: ignore
-
-    casc_dir = getattr(getattr(cv2, 'data', None), 'haarcascades', None)
-    if not casc_dir:
-        # Fallback to typical layout: <cv2>/data
-        casc_dir = os.path.join(os.path.dirname(cv2.__file__), 'data')
-    if os.path.isdir(casc_dir):
-        for xml in glob.glob(os.path.join(casc_dir, '*.xml')):
-            datas.append((xml, 'cv2/data'))
-except Exception:
-    # If cv2 is not present during build, skip gracefully.
-    pass
-
 # Include optional Qt config if present to help PySide6 discover plugins.
 if not platform_is_windows and Path('qt.conf').exists():
     datas.append(('qt.conf', '.'))
@@ -286,38 +273,8 @@ if not platform_is_windows:
     except Exception:
         pass
 
-# Optionally include dlib model files if present in repo
-possible_model_dirs = [
-    Path('models'),
-    Path('.data/models'),
-]
-for base in possible_model_dirs:
-    sp = base / 'shape_predictor_5_face_landmarks.dat'
-    fr = base / 'dlib_face_recognition_resnet_model_v1.dat'
-    ssd_pt = base / 'deploy.prototxt'
-    ssd_caffemodel = base / 'res10_300x300_ssd_iter_140000.caffemodel'
-    if sp.exists():
-        datas.append((str(sp), 'models'))
-    if fr.exists():
-        datas.append((str(fr), 'models'))
-    if ssd_pt.exists():
-        datas.append((str(ssd_pt), 'models'))
-    if ssd_caffemodel.exists():
-        datas.append((str(ssd_caffemodel), 'models'))
-
-import importlib.util as _importlib_util
-import sys as _sys
 import tomllib as _tomllib
 from datetime import datetime as _dt
-
-# Conditionally include optional heavy modules only if present to avoid build failures.
-optional_mods = ['dlib']
-for _m in optional_mods:
-    try:
-        if _importlib_util.find_spec(_m):
-            hiddenimports_list.append(_m)
-    except Exception:
-        pass
 
 def _resolve_version():
     # 1) Prefer CI-provided env var
@@ -400,7 +357,8 @@ a = Analysis(
     datas=datas,
     hiddenimports=[
         'cv2',
-        'open_clip',
+        'onnxruntime',
+        'tokenizers',
         'dateutil',
         'dateutil.tz',
         'dateutil.parser',
@@ -451,7 +409,13 @@ coll = COLLECT(
     # the "Failed to resolve Python.Runtime.Loader.Initialize" RuntimeError
     # seen on some Windows systems.  Exclude all .NET managed assemblies from
     # UPX compression so the CLR can load them correctly.
-    upx_exclude=['Python.Runtime.dll'],
+    # UPX-packed ONNX Runtime / DirectML DLLs can fail to load.
+    upx_exclude=[
+        'Python.Runtime.dll',
+        'onnxruntime.dll',
+        'onnxruntime_providers_shared.dll',
+        'DirectML.dll',
+    ],
     name=APP_NAME,
 )
 

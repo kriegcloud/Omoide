@@ -189,7 +189,7 @@ export default function DetectedFaces({
 
   useEffect(() => {
     onClearSelection();
-  }, [personId]);
+  }, [personId, onClearSelection]);
 
   useEffect(() => {
     if (!canMutate) {
@@ -319,7 +319,7 @@ export default function DetectedFaces({
     : {};
 
   const faceItems: React.ReactNode[] = groupByVideo
-    ? groupedItems.flatMap((item, groupIndex) => {
+    ? groupedItems.flatMap<React.ReactNode>((item, groupIndex) => {
         const isLastGroup = groupIndex === groupedItems.length - 1;
         if (item.faces.length > 1) {
           const isExpanded = expandedGroupIds.has(item.mediaId);
@@ -446,7 +446,7 @@ export default function DetectedFaces({
                 Create New
               </Button>
             )}
-            {onDetach && (
+            {canMutate && (
               <Button
                 variant="outlined"
                 color="secondary"
@@ -457,7 +457,7 @@ export default function DetectedFaces({
                 Detach
               </Button>
             )}
-            {onDelete && (
+            {canMutate && (
               <Button
                 variant="outlined"
                 color="error"

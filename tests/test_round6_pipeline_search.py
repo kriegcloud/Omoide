@@ -119,31 +119,31 @@ class SearchRegressionTests(DatabaseCase):
 
 
 class TextTowerLifecycleTests(DatabaseCase):
-    def test_query_cache_key_includes_model_id_even_when_bundle_is_unchanged(self):
-        class Tower:
-            pass
-        tower = Tower()
-        with patch.object(search, "get_clip_bundle", return_value=(tower, None, None)), patch.object(
-            search, "_encode_text_query_uncached", return_value=[1.0]
-        ) as encode:
+    def test_query_cache_key_includes_model_id_even_when_encoder_is_unchanged(self):
+        from unittest.mock import Mock
+        encoder = Mock()
+        encoder.encode_texts.return_value = np.asarray([[1.0]])
+        with patch.object(search, "get_clip_encoder", return_value=encoder):
             with patch.object(config.settings.ai, "clip_model", config.ClipModel.VIT_B_32):
                 search.encode_text_query("beach")
             with patch.object(config.settings.ai, "clip_model", config.ClipModel.ROBERTA_BASE_VIT_B_32):
                 search.encode_text_query("beach")
-            self.assertEqual(encode.call_count, 2)
+            self.assertEqual(encoder.encode_texts.call_count, 2)
 
-    def test_text_search_keeps_shared_bundle_warm_after_processor_release(self):
-        class Tower:
-            pass
-        tower = Tower()
-        with patch.object(config, "_clip_model", tower), patch.object(config, "_clip_refs", 1), patch.object(
-            search, "_encode_text_query_uncached", return_value=[1.0]
-        ):
-            search.encode_text_query("beach")
-            config.release_clip()
-            self.assertIs(config._clip_model, tower)
-            config._reset_clip_after_settings_change()
-            self.assertIsNone(config._clip_model)
+    def test_text_search_reloads_encoder_after_settings_reset(self):
+        from unittest.mock import Mock
+        from app import clip_onnx
+
+        encoder, replacement = Mock(), Mock()
+        encoder.encode_texts.return_value = np.asarray([[1.0]])
+        replacement.encode_texts.return_value = np.asarray([[2.0]])
+        with patch.object(clip_onnx, "_clip_encoder", encoder), patch.object(
+            clip_onnx, "ClipEncoder", return_value=replacement
+        ), patch.object(clip_onnx, "ensure_model_files", return_value=self.root):
+            self.assertEqual(search.encode_text_query("beach"), [1.0])
+            clip_onnx.reset_clip_encoder()
+            self.assertEqual(search.encode_text_query("beach"), [2.0])
+            self.assertEqual(replacement.encode_texts.call_count, 1)
 
 
 class SearchHandlerPerformanceTests(DatabaseCase):
@@ -163,7 +163,7 @@ class SearchHandlerPerformanceTests(DatabaseCase):
             tower.calls += 1
             # Deterministic CPU work makes skipped inference visible in timings.
             sum(sin(i) for i in range(20_000))
-            return vector.tolist()
+            return np.asarray([vector])
 
         def request():
             return search.search_combined(query="beach", limit=20, cursor=None,
@@ -171,8 +171,8 @@ class SearchHandlerPerformanceTests(DatabaseCase):
 
         search.invalidate_person_name_cache()
         self.addCleanup(search.invalidate_person_name_cache)
-        with patch.object(search, "get_clip_bundle", return_value=(tower, None, None)), patch.object(
-            search, "_encode_text_query_uncached", side_effect=encode
+        with patch.object(search, "get_clip_encoder", return_value=tower), patch.object(
+            tower, "encode_texts", side_effect=encode, create=True
         ):
             # Reproduce the old empty-table path while retaining its existing LRU.
             with patch.object(search, "_has_search_vectors", return_value=True):

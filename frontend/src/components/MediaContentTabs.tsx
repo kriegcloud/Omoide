@@ -107,7 +107,7 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
               aria-controls={`${idPrefix}-panel-${t.key}`}
               value={t.key}
               label={t.label}
-              icon={t.icon}
+              icon={t.icon as React.ReactElement}
               iconPosition="start"
               sx={{ minHeight: "64px" }}
             />
@@ -156,7 +156,7 @@ export function MediaContentTabs(props: MediaContentTabsProps) {
             <TagsSection
               media={media}
               onTagAdded={onTagAdded}
-              onUpdate={onTagUpdate}
+              onUpdate={updated => { if ("path" in updated) onTagUpdate(updated); }}
             />
           </TabPanel>
 

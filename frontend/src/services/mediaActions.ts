@@ -20,9 +20,11 @@ const responseError = async (res: Response, fallback: string) => {
   return new Error(data?.detail || fallback);
 };
 
-export const convertMedia = async (mediaId: number): Promise<Task> => {
+export const convertMedia = async (mediaId: number, mode: Exclude<import("../types").VideoConversionMode, "off">): Promise<Task> => {
   const res = await fetch(`${API}/api/media/${mediaId}/converter`, {
     method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({mode}),
   });
   if (!res.ok) throw new Error("Failed to start conversion");
   return res.json();

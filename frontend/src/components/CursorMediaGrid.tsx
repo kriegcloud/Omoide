@@ -22,7 +22,7 @@ const breakpointColumnsObj = {
 
 interface Props {
   listKey: string;
-  fetcher: (cursor: string | null) => Promise<CursorPage<Media>>;
+  fetcher: (cursor: string | null, signal: AbortSignal) => Promise<CursorPage<Media>>;
   empty?: React.ReactNode;
   /** Bumping this value clears and refetches the list. */
   refreshToken?: unknown;
@@ -44,6 +44,7 @@ export function CursorMediaGrid({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestSeq = useRef(0);
+  const controller = useRef(new AbortController());
   const revision = useRef(new ListRevision());
   const inFlightRef = useRef(false);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -72,7 +73,7 @@ export function CursorMediaGrid({
       setIsLoading(true);
       setError(null);
       try {
-        const page = await fetcher(fromCursor);
+        const page = await fetcher(fromCursor, controller.current.signal);
         if (seq !== requestSeq.current) return;
         const incoming = revision.current.reconcile(page.items, started, replace);
         setItems((prev) => replace ? incoming : mergeUnique(prev, incoming));
@@ -100,6 +101,8 @@ export function CursorMediaGrid({
   });
 
   useEffect(() => {
+    controller.current.abort();
+    controller.current = new AbortController();
     // Invalidate any previous list request. A new list must be allowed to
     // start immediately even if the previous list is still resolving.
     requestSeq.current += 1;
@@ -108,7 +111,7 @@ export function CursorMediaGrid({
     setCursor(null);
     setHasMore(true);
     void loadPage(null, true);
-    return () => { requestSeq.current += 1; inFlightRef.current = false; };
+    return () => { controller.current.abort(); requestSeq.current += 1; inFlightRef.current = false; };
   }, [listKey, refreshToken, loadPage]);
 
   useEffect(() => {

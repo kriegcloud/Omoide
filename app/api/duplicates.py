@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, func, or_
+from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, delete, select
 
@@ -19,6 +19,7 @@ from app.models import (
     DuplicateMedia,
     Media,
 )
+from app.pagination import paginate
 from app.schemas.duplicates import (
     DuplicateMediaPreview,
     DuplicateFolderStat,
@@ -31,7 +32,7 @@ from app.schemas.duplicates import (
     DuplicateGroup as DuplicateGroupSchema,
 )
 from app.schemas.media import MediaPreview
-from app.utils import delete_file, delete_record
+from app.records import delete_file, delete_record
 
 router = APIRouter()
 
@@ -41,10 +42,7 @@ def get_duplicates(
     session: Session = Depends(get_session),
     cursor: str | None = Query(
         None,
-        description=(
-            "Cursor for pagination, formatted as '<sort_key>_<group_id>'. "
-            "Use the `next_cursor` value from the previous page."
-        ),
+        description="Opaque cursor from the previous page's `next_cursor`",
     ),
     limit: int = Query(10, ge=1, le=50),
     sort_by: Literal["count", "size"] = Query("count"),
@@ -69,6 +67,16 @@ def get_duplicates(
         .subquery()
     )
 
+    query = (
+        select(DuplicateGroup)
+        .join(counts_subquery, DuplicateGroup.id == counts_subquery.c.group_id)
+        .options(
+            selectinload(DuplicateGroup.media_links).selectinload(
+                DuplicateMedia.media
+            )
+        )
+        .where(counts_subquery.c.item_count >= min_count)
+    )
     if sort_by == "size":
         size_subquery = (
             select(
@@ -80,45 +88,11 @@ def get_duplicates(
             .group_by(DuplicateMedia.group_id)
             .subquery()
         )
-        query = (
-            select(
-                DuplicateGroup,
-                counts_subquery.c.item_count,
-                size_subquery.c.total_size,
-            )
-            .join(
-                counts_subquery,
-                DuplicateGroup.id == counts_subquery.c.group_id,
-            )
-            .join(size_subquery, DuplicateGroup.id == size_subquery.c.group_id)
-            .options(
-                selectinload(DuplicateGroup.media_links).selectinload(
-                    DuplicateMedia.media
-                )
-            )
-            .where(counts_subquery.c.item_count >= min_count)
-            .order_by(
-                size_subquery.c.total_size.desc(), DuplicateGroup.id.asc()
-            )
+        query = query.join(
+            size_subquery, DuplicateGroup.id == size_subquery.c.group_id
         )
         sort_col = size_subquery.c.total_size
     else:
-        query = (
-            select(DuplicateGroup, counts_subquery.c.item_count)
-            .join(
-                counts_subquery,
-                DuplicateGroup.id == counts_subquery.c.group_id,
-            )
-            .options(
-                selectinload(DuplicateGroup.media_links).selectinload(
-                    DuplicateMedia.media
-                )
-            )
-            .where(counts_subquery.c.item_count >= min_count)
-            .order_by(
-                counts_subquery.c.item_count.desc(), DuplicateGroup.id.asc()
-            )
-        )
         sort_col = counts_subquery.c.item_count
 
     if media_type is not None or folder is not None:
@@ -132,61 +106,25 @@ def get_duplicates(
             type_filter = type_filter.where(Media.duration.is_(None) if media_type == "image" else Media.duration.isnot(None))
         query = query.where(DuplicateGroup.id.in_(type_filter))
 
-    cursor_key = None
-    cursor_id = None
-    if cursor:
-        try:
-            if "_" in cursor:
-                cursor_key_str, cursor_id_str = cursor.split("_", 1)
-                cursor_key = int(cursor_key_str)
-                cursor_id = int(cursor_id_str)
-            else:
-                # Backwards compatibility with the previous integer-only cursor.
-                cursor_id = int(cursor)
-        except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid cursor format. Expected '<sort_key>_<group_id>'.",
-            )
-
-    if cursor_key is not None:
-        query = query.where(
-            or_(
-                sort_col < cursor_key,
-                and_(sort_col == cursor_key, DuplicateGroup.id > cursor_id),
-            )
-        )
-    elif cursor_id is not None:
-        query = query.where(DuplicateGroup.id > cursor_id)
-
-    duplicate_groups_db = session.exec(query.limit(limit)).all()
-
-    response_items: list[DuplicateGroupSchema] = []
-    last_sort_key: int | None = None
-    last_group_id: int | None = None
-    for row in duplicate_groups_db:
-        if sort_by == "size":
-            group_db, item_count, total_size = row
-            last_sort_key = int(total_size or 0)
-        else:
-            group_db, item_count = row
-            last_sort_key = int(item_count or 0)
-
+    groups, next_cursor = paginate(
+        session,
+        query,
+        [(sort_col, False), (DuplicateGroup.id, True)],
+        cursor=cursor,
+        limit=limit,
+        tag=sort_by,
+    )
+    response_items = []
+    for group in groups:
         media_objects = sorted(
-            [link.media for link in group_db.media_links if link.media is not None and link.media.missing_since is None],
-            key=lambda m: (-(m.size or 0), -((m.width or 0) * (m.height or 0)), m.id)
+            [link.media for link in group.media_links if link.media is not None and link.media.missing_since is None],
+            key=lambda m: (-(m.size or 0), -((m.width or 0) * (m.height or 0)), m.id),
         )
-        group_schema = DuplicateGroupSchema(
-            group_id=group_db.id,
-            items=[DuplicateMediaPreview(**MediaPreview.model_validate(m).model_dump(), best=index == 0) for index, m in enumerate(media_objects)],
-        )
-        response_items.append(group_schema)
-        last_group_id = group_db.id
-
-    next_cursor = None
-    if len(duplicate_groups_db) == limit and last_group_id is not None:
-        next_cursor = f"{last_sort_key}_{last_group_id}"
-
+        response_items.append(DuplicateGroupSchema(
+            group_id=group.id,
+            items=[DuplicateMediaPreview(**MediaPreview.model_validate(m).model_dump(), best=index == 0)
+                   for index, m in enumerate(media_objects)],
+        ))
     return DuplicatePage(items=response_items, next_cursor=next_cursor)
 
 

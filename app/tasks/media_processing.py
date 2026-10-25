@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
 from PIL import Image
+from types import SimpleNamespace
+from typing import List
+
+from PIL import UnidentifiedImageError
 from sqlalchemy import func, or_
 from sqlmodel import Session, col, select
 
@@ -20,6 +25,8 @@ from app.services.face_matching import match_faces_to_persons, matching_threshol
 from app.utils import split_video
 from .state import clear_task_progress, record_task_failure, set_task_progress
 from .common import _start_task, _finish_task, describe_error, probe_path
+from app.frames import load_photo_scene, split_video
+from .state import clear_task_progress, set_task_progress
 
 __all__ = [
     "run_media_processing",
@@ -100,20 +107,48 @@ def _fetch_media_batch_to_process(session: Session, limit: int, after_id: int = 
     ).all()
 
 
-def _get_or_extract_scenes(
-    media: Media, session: Session
-) -> list[Image.Image | tuple]:
-    media_path_obj = Path(media.path)
-    suffix = media_path_obj.suffix.lower()
+# Media items whose files are decoded / frame-extracted in background threads
+# ahead of the item currently running through the processors, so file I/O and
+# decoding overlap with inference instead of leaving the GPU idle.
+_PREFETCH_AHEAD = 2
 
-    if media.extracted_scenes and suffix not in settings.scan.IMAGE_SUFFIXES:
+
+def _needs_scene_extraction(media: Media) -> bool:
+    if not media.path:
+        return False
+    suffix = Path(media.path).suffix.lower()
+    return not (
+        media.extracted_scenes and suffix not in settings.scan.IMAGE_SUFFIXES
+    )
+
+
+def _load_scenes(media: SimpleNamespace) -> list:
+    """Decode a photo or extract a video's frames. Touches no DB state, so it
+    is safe to run on a prefetch thread with a snapshot of the media row."""
+    path = Path(media.path)
+    if path.suffix.lower() in settings.scan.IMAGE_SUFFIXES:
+        return [load_photo_scene(path)]
+    return split_video(media, path)
+
+
+def _media_snapshot(media: Media) -> SimpleNamespace:
+    # ORM attributes expire on commit and would lazy-load from another thread
+    return SimpleNamespace(id=media.id, path=media.path, duration=media.duration)
+
+
+def _get_or_extract_scenes(
+    media: Media, session: Session, prefetched: Future | None = None
+) -> list:
+    media_path_obj = Path(media.path)
+
+    if not _needs_scene_extraction(media):
         return media.scenes
 
     try:
-        if suffix in settings.scan.IMAGE_SUFFIXES:
-            scenes = [Image.open(media_path_obj)]
+        if prefetched is not None:
+            scenes = prefetched.result()
         else:
-            scenes = split_video(media, media_path_obj)
+            scenes = _load_scenes(_media_snapshot(media))
     except FileNotFoundError:
         logger.warning("File not found: %s. Marking missing.", media.path)
         media.missing_since = datetime.now(timezone.utc)
@@ -291,6 +326,21 @@ def run_media_processing_and_chain(task_id: str) -> None:
         from .person_clustering import run_person_clustering
 
         run_person_clustering(next_task.id)
+    if settings.video.auto_convert != "off":
+        logger.info(
+            "Converting unplayable videos (%s)...", settings.video.auto_convert
+        )
+        with Session(db.engine) as new_session:
+            convert_task = ProcessingTask(
+                task_type="convert_videos", total=0, processed=0
+            )
+            new_session.add(convert_task)
+            new_session.commit()
+            new_session.refresh(convert_task)
+
+        from .conversion import run_convert_unplayable_videos
+
+        run_convert_unplayable_videos(convert_task.id)
     logger.info("Task chain completed")
 
 
@@ -369,6 +419,9 @@ def _run_media_processing(task_id: str, *, clustering_chained: bool = False) -> 
             retry_ids = _prepare_failed_retries(session, task)
             failed_ids = set(retry_ids)
             last_media_id = int((task.params or {}).get("last_media_id", 0))
+            prefetcher = ThreadPoolExecutor(
+                max_workers=_PREFETCH_AHEAD, thread_name_prefix="media-prefetch"
+            )
             batch_index = 0
             while True:
                 if _is_task_cancelled(task_id):
@@ -387,8 +440,23 @@ def _run_media_processing(task_id: str, *, clustering_chained: bool = False) -> 
 
                 batch_dirty = False
                 cancelled_mid_batch = False
+                prefetched: dict[int, Future] = {}
 
-                for media in medias_batch:
+                def _prefetch(index: int) -> None:
+                    if index >= len(medias_batch):
+                        return
+                    upcoming = medias_batch[index]
+                    if _needs_scene_extraction(upcoming):
+                        prefetched[index] = prefetcher.submit(
+                            _load_scenes, _media_snapshot(upcoming)
+                        )
+
+                for index in range(_PREFETCH_AHEAD):
+                    _prefetch(index)
+
+                for index, media in enumerate(medias_batch):
+                    _prefetch(index + _PREFETCH_AHEAD)
+                    pending_scenes = prefetched.pop(index, None)
                     if _is_task_cancelled(task_id):
                         logger.info("Task cancelled mid-batch. Stopping.")
                         cancelled_mid_batch = True
@@ -422,7 +490,9 @@ def _run_media_processing(task_id: str, *, clustering_chained: bool = False) -> 
                         current_item=os.fspath(media.path),
                         current_step="extracting_scenes",
                     )
-                    scenes = _get_or_extract_scenes(media, session)
+                    scenes = _get_or_extract_scenes(
+                        media, session, pending_scenes
+                    )
                     logger.debug(
                         "Scenes for %s: %s",
                         media.filename,
@@ -472,6 +542,9 @@ def _run_media_processing(task_id: str, *, clustering_chained: bool = False) -> 
 
                 if cancelled_mid_batch:
                     break
+
+            # Drop prefetches of items a cancelled run will not reach
+            prefetcher.shutdown(wait=True, cancel_futures=True)
 
             for proc in processors:
                 try:

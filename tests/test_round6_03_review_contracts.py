@@ -33,6 +33,7 @@ class ReviewVisibilityContracts(DatabaseCase):
         first = self.media(width=10, height=10)
         second = self.media(width=10, height=10)
         page = get_low_res_media(self.session, max_pixels=1000, cursor=None, limit=1, media_type=None)
-        self.assertEqual(page.next_cursor, f"100_{first.id}")
+        from app.pagination import decode_cursor
+        self.assertEqual(decode_cursor(page.next_cursor, "", 2), [100, first.id])
         next_page = get_low_res_media(self.session, max_pixels=1000, cursor=page.next_cursor, limit=1, media_type=None)
         self.assertEqual([m.id for m in next_page.items], [second.id])

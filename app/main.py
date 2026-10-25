@@ -123,7 +123,7 @@ from app.api import curation as curation_api
 from app.services.curation_policy import install_curation_guard
 from app.api.person import merge_queue_router
 from app.api.processors import router as proc_router
-from app.config import require_mutation_allowed, get_clip_bundle, get_os_app_config_dir, settings
+from app.config import require_mutation_allowed, get_os_app_config_dir, settings
 from app.image_limits import apply_pillow_limits
 from app.database import ensure_vec_tables
 from app.ffmpeg import ensure_ffmpeg_available
@@ -534,7 +534,9 @@ def _prewarm_clip() -> None:
     Starting this early means the bundle is ready before the user triggers a task.
     """
     try:
-        get_clip_bundle()
+        from app.clip_onnx import get_clip_encoder
+
+        get_clip_encoder()
         logger.info("OpenCLIP bundle pre-loaded")
     except Exception as exc:
         logger.warning(

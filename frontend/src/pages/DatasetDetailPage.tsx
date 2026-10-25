@@ -100,7 +100,7 @@ function CompositionPanel({ analysis, gaps, items, onPreview }: {
     </Box>
     <Box>
       <Typography variant="h6" gutterBottom>Visual clusters</Typography>
-      {analysis.clusters.length === 0 ? <Typography color="text.secondary">Image embeddings are not available yet.</Typography> : <Stack spacing={1}>{analysis.clusters.map((cluster, index) => <Paper key={index} elevation={0} sx={{ p: 1.5, border: 1, borderColor: "divider", borderRadius: 3 }}><Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ sm: "center" }}><Typography fontWeight={700} minWidth={80}>Cluster {index + 1}</Typography><Stack direction="row" spacing={0.5}>{cluster.representative_media_ids.map((mediaId) => { const item = items.find((entry) => entry.media_id === mediaId); return item ? <Box key={mediaId} component="img" src={`${API}/thumbnails/${encodeFilePath(item.media.thumbnail_path)}`} alt="" sx={{ width: 56, height: 56, objectFit: "cover", borderRadius: 1 }} /> : null; })}</Stack><Box flex={1}><Typography variant="body2" color="text.secondary">{cluster.count} images</Typography><Stack direction="row" spacing={0.5} mt={0.5} flexWrap="wrap" useFlexGap>{cluster.top_tags.map((tag) => <Chip key={tag} size="small" label={tag} />)}</Stack></Box></Stack></Paper>)}</Stack>}
+      {analysis.clusters.length === 0 ? <Typography color="text.secondary">Image embeddings are not available yet.</Typography> : <Stack spacing={1}>{analysis.clusters.map((cluster, index) => <Paper key={index} elevation={0} sx={{ p: 1.5, border: 1, borderColor: "divider", borderRadius: 3 }}><Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ sm: "center" }}><Typography fontWeight={700} minWidth={80}>Cluster {index + 1}</Typography><Stack direction="row" spacing={0.5}>{cluster.representative_media_ids.map((mediaId) => { const item = items.find((entry) => entry.media_id === mediaId); return item ? <Box key={mediaId} component="img" src={`${API}/thumbnails/${encodeFilePath(item.media.thumbnail_path ?? "")}`} alt="" sx={{ width: 56, height: 56, objectFit: "cover", borderRadius: 1 }} /> : null; })}</Stack><Box flex={1}><Typography variant="body2" color="text.secondary">{cluster.count} images</Typography><Stack direction="row" spacing={0.5} mt={0.5} flexWrap="wrap" useFlexGap>{cluster.top_tags.map((tag) => <Chip key={tag} size="small" label={tag} />)}</Stack></Box></Stack></Paper>)}</Stack>}
     </Box>
     <Box>
       <Typography variant="h6" gutterBottom>Gaps</Typography>
@@ -130,7 +130,7 @@ function DuplicatesPanel({ groups, items, busy, onApply, onUndo }: {
           {[...group.keep, ...group.drop].map((itemId) => {
             const item = byId.get(itemId);
             return <Box key={itemId} title={`${keepers.has(itemId) ? "Keep" : "Drop"} item ${itemId}`} sx={{ flex: "0 0 auto", width: 72, height: 72, borderRadius: 1.5, overflow: "hidden", border: keepers.has(itemId) ? 3 : 1, borderColor: keepers.has(itemId) ? "success.main" : "divider", bgcolor: "action.hover", display: "grid", placeItems: "center", opacity: keepers.has(itemId) ? 1 : 0.55 }}>
-              {item?.media.thumbnail_path ? <Box component="img" src={`${API}/thumbnails/${encodeFilePath(item.media.thumbnail_path)}`} alt="" sx={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Typography variant="caption">#{itemId}</Typography>}
+              {item?.media.thumbnail_path ? <Box component="img" src={`${API}/thumbnails/${encodeFilePath(item.media.thumbnail_path ?? "")}`} alt="" sx={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Typography variant="caption">#{itemId}</Typography>}
             </Box>;
           })}
         </Stack>
@@ -187,6 +187,7 @@ export default function DatasetDetailPage() {
   const [dedupeBusy, setDedupeBusy] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
   const selection = useSelection();
+  const clearSelection = selection.clear;
   const poseTaskVersion = useTaskCompletionVersion(["pose_backfill"]);
   const frameMiningTaskVersion = useTaskCompletionVersion(["dataset_frame_mining"]);
   const { marqueeRect, onItemClick } = useGridSelection<number>({
@@ -231,9 +232,9 @@ export default function DatasetDetailPage() {
       routeGeneration.current += 1;
       listGeneration.current += 1;
       analysisGeneration.current += 1;
-      selection.clear();
+      clearSelection();
     };
-  }, [datasetId, selection.clear]);
+  }, [datasetId, clearSelection]);
 
   // The analysis is the expensive, optional part of the page: it runs after
   // the dataset, items and exports are on screen and its failure only
@@ -491,7 +492,7 @@ export default function DatasetDetailPage() {
               })}
             </Box>
             <CompositionPanel analysis={analysis} gaps={gaps} items={items} onPreview={setGapPreview} />
-            <Box><Typography variant="h6" gutterBottom>Identity outliers</Typography>{analysis.outliers.length === 0 ? <Typography color="text.secondary">No identity-distance outliers.</Typography> : <Stack direction="row" spacing={2} sx={{ overflowX: "auto", pb: 1 }}>{analysis.outliers.map((itemId) => { const item = items.find((entry) => entry.id === itemId); const metric = analysis.items.find((entry) => entry.item_id === itemId); return item && <Paper key={itemId} elevation={0} sx={{ p: 1.5, minWidth: 180, border: 1, borderColor: "divider" }}><Box component="img" src={`${API}/thumbnails/${encodeFilePath(item.media.thumbnail_path)}`} sx={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 1 }} /><Typography variant="body2" mt={1}>Distance {metric?.identity_distance?.toFixed(3)}</Typography><Button size="small" onClick={async () => { await patchItem(item, { excluded: true, excluded_reason: "quality" }); await refreshCuration(); }}>Exclude</Button></Paper>; })}</Stack>}</Box>
+            <Box><Typography variant="h6" gutterBottom>Identity outliers</Typography>{analysis.outliers.length === 0 ? <Typography color="text.secondary">No identity-distance outliers.</Typography> : <Stack direction="row" spacing={2} sx={{ overflowX: "auto", pb: 1 }}>{analysis.outliers.map((itemId) => { const item = items.find((entry) => entry.id === itemId); const metric = analysis.items.find((entry) => entry.item_id === itemId); return item && <Paper key={itemId} elevation={0} sx={{ p: 1.5, minWidth: 180, border: 1, borderColor: "divider" }}><Box component="img" src={`${API}/thumbnails/${encodeFilePath(item.media.thumbnail_path ?? "")}`} sx={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 1 }} /><Typography variant="body2" mt={1}>Distance {metric?.identity_distance?.toFixed(3)}</Typography><Button size="small" onClick={async () => { await patchItem(item, { excluded: true, excluded_reason: "quality" }); await refreshCuration(); }}>Exclude</Button></Paper>; })}</Stack>}</Box>
             <DuplicatesPanel groups={analysis.groups} items={items} busy={dedupeBusy} onApply={() => { setDedupeBusy(true); void dedupeDataset(datasetId, { mode: "both", keep: "sharpest", pose_aware: true, dry_run: false }).then((result) => { setNotice(`Excluded ${result.excluded} duplicate${result.excluded === 1 ? "" : "s"}.`); return refreshCuration(); }).catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to apply duplicate exclusions")).finally(() => setDedupeBusy(false)); }} onUndo={() => { setDedupeBusy(true); void reincludeDatasetItems(datasetId).then((result) => { setNotice(`Reincluded ${result.included} duplicate${result.included === 1 ? "" : "s"}.`); return refreshCuration(); }).catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to undo duplicate exclusions")).finally(() => setDedupeBusy(false)); }} />
           </>}
         </Stack>
@@ -570,7 +571,7 @@ export default function DatasetDetailPage() {
         <DialogTitle>Preview gap candidates</DialogTitle>
         <DialogContent>
           {gapPreview && <Typography color="text.secondary" mb={2}>Add up to {gapPreview.deficit} images for {gapPreview.dimension} · {gapPreview.band.replaceAll("_", " ")}.</Typography>}
-          {gapMedia.length === 0 ? <CircularProgress size={24} /> : <Box sx={{ display: "grid", gap: 1, gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(4, 1fr)", md: "repeat(6, 1fr)" } }}>{gapMedia.map((media) => <Box key={media.id} component="img" src={`${API}/thumbnails/${encodeFilePath(media.thumbnail_path)}`} alt={media.filename} sx={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 2, bgcolor: "action.hover" }} />)}</Box>}
+          {gapMedia.length === 0 ? <CircularProgress size={24} /> : <Box sx={{ display: "grid", gap: 1, gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(4, 1fr)", md: "repeat(6, 1fr)" } }}>{gapMedia.map((media) => <Box key={media.id} component="img" src={`${API}/thumbnails/${encodeFilePath(media.thumbnail_path ?? "")}`} alt={media.filename} sx={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 2, bgcolor: "action.hover" }} />)}</Box>}
         </DialogContent>
         <DialogActions><Button onClick={() => setGapPreview(null)}>Cancel</Button><Button variant="contained" disabled={gapMedia.length === 0} onClick={async () => { await addDatasetItems(datasetId, gapMedia.map((media) => media.id)); setGapPreview(null); await Promise.all([load(), loadItems()]); }}>Add {gapMedia.length}</Button></DialogActions>
       </Dialog>

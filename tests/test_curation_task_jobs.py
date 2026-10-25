@@ -414,10 +414,14 @@ class CurationJobMigrationTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         config = Config(str(root / 'alembic.ini'))
         config.set_main_option('script_location', str(root / 'alembic'))
-        heads = ScriptDirectory.from_config(config).get_heads()
+        script = ScriptDirectory.from_config(config)
+        heads = script.get_heads()
         module = self._module()
         self.assertEqual(module.down_revision, '60718293a4b5')
-        self.assertEqual(list(heads), [module.revision])
+        self.assertEqual(list(heads), ["e0f1a2b3c4d5"])
+        ancestors = {revision.revision for revision in script.walk_revisions()}
+        self.assertIn(module.revision, ancestors)
+        self.assertIn(module.revision, script.get_revision(heads[0]).down_revision)
 
     def test_additive_upgrade_downgrade_and_populated_refusal(self):
         from alembic.migration import MigrationContext

@@ -4,29 +4,30 @@ import math
 import time
 from collections import deque
 from collections.abc import Iterable
-from datetime import UTC, datetime
-
 import hdbscan
 import networkx as nx
-import numpy as np
 from sklearn.decomposition import PCA
 from sklearn.neighbors import NearestNeighbors
+from tqdm import tqdm
+from datetime import UTC, datetime
+
+import numpy as np
 from sqlalchemy import func, text, update
 from sqlmodel import Session, select
-from tqdm import tqdm
 
 import app.database as db
 from app.concurrency import heavy_writer
 from app.config import settings
 from app.database import safe_commit
+from app.persons import set_face_embedding_person
 from app.tasks.common import _finish_task, _start_task
 from app.logger import logger
 from app.models import (
     Face,
     FaceAssignmentSource,
+    TimelineEvent,
     Person,
     ProcessingTask,
-    TimelineEvent,
 )
 # Keep the private helper names available for existing callers and tests.
 from app.services.face_matching import (
@@ -47,7 +48,12 @@ from app.utils import (
     vector_from_stored,
     vector_to_blob,
 )
+from app.tasks.common import complete_task
 
+from .clustering_algorithms import group_faces_by_cluster, run_clustering
+from .clustering_queries import fetch_faces_and_embeddings, get_face_total
+from .face_matching import match_remaining_single_faces as upstream_match_remaining_single_faces
+from .person_merging import merge_similar_persons as upstream_merge_similar_persons
 from .relationships import rebuild_person_relationships
 from .state import clear_task_progress, set_task_progress
 
@@ -59,420 +65,28 @@ __all__ = [
 ]
 
 
-def _fetch_faces_and_embeddings(
-    session: Session,
-    limit: int = 10000,
-    last_id: int = 0,
-    *,
-    quality_seed_only: bool = False,
-) -> tuple[list[int], np.ndarray]:
-    quality_filter = ""
-    params: dict[str, float | int] = {"last_id": last_id, "limit": limit}
-    if quality_seed_only:
-        quality_filter, quality_params = _quality_seed_filter()
-        params.update(quality_params)
-
-    sql = text(
-        f"""
-        SELECT f.id, fe.embedding
-          FROM face            AS f
-          JOIN face_embeddings AS fe
-               ON fe.face_id = f.id
-         WHERE f.person_id IS NULL
-           AND f.id > :last_id
-           {quality_filter}
-         ORDER BY f.id
-         LIMIT :limit
-        """
-    ).bindparams(**params)
-
-    logger.info("Getting faces!")
-    rows = session.exec(sql).all()
-    logger.info("Got %s faces!", len(rows))
-    if not rows:
-        return [], np.array([])
-
-    face_ids: list[int] = []
-    vectors: list[np.ndarray] = []
-    for face_id, raw_embedding in rows:
-        try:
-            vec = vector_from_stored(raw_embedding)
-            if vec is None or vec.size == 0:
-                logger.debug(
-                    "Skipping face %s for clustering due to missing embedding",
-                    face_id,
-                )
-                continue
-            # norm = float(np.linalg.norm(vec))
-            if not np.all(np.isfinite(vec)) or not np.any(vec):
-                logger.debug(
-                    "Skipping face %s for clustering due to zero-norm embedding",
-                    face_id,
-                )
-                continue
-            face_ids.append(int(face_id))
-            vectors.append(vec.astype(np.float32, copy=False))
-        except Exception:
-            logger.exception("Failure while processing face!")
-
-    if not face_ids:
-        return [], np.array([])
-
-    logger.debug("Transforming embeddings")
-    embeddings = np.vstack(vectors).astype(np.float32, copy=False)
-    return face_ids, embeddings
+from .clustering_queries import fetch_faces_and_embeddings as _fetch_faces_and_embeddings
 
 
-def _cluster_embeddings(
-    embeddings: np.ndarray,
-    *,
-    face_ids: list[int] | None = None,
-    min_cluster_size=None,
-    min_samples=None,
-) -> np.ndarray:
-    logger.info("Running as binary: %s", settings.general.is_binary)
-    if settings.general.is_binary:
-        return _cluster_embeddings_chinese_whispers(
-            face_ids=face_ids, embeddings=embeddings
-        )
-
-    return _cluster_embeddings_hdbscan(
-        embeddings,
-        min_cluster_size=min_cluster_size,
-        min_samples=min_samples,
-    )
+from .clustering_algorithms import _cluster_embeddings
 
 
-def _trim_clusters_by_centroid_similarity(
-    labels: np.ndarray,
-    embeddings: np.ndarray,
-    min_similarity: float,
-    max_iterations: int = 3,
-) -> tuple[np.ndarray, int]:
-    """
-    Demote cluster members whose cosine similarity to their cluster centroid
-    falls below ``min_similarity`` to noise (-1).
-
-    Graph label propagation (Chinese Whispers) merges transitively: A-B and
-    B-C edges pull A and C together even when A and C are dissimilar. This
-    pass enforces a compactness guarantee per cluster; trimmed faces stay
-    unassigned and can still be attached to a person by the leftover
-    matching pass. Recomputes the centroid after each trim since dropping
-    outliers shifts it.
-    """
-    if labels.size == 0 or min_similarity <= 0.0:
-        return labels, 0
-
-    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-    norms[norms == 0.0] = 1.0
-    normed = embeddings / norms
-
-    labels = labels.copy()
-    dropped_total = 0
-    for cluster_id in np.unique(labels):
-        if cluster_id < 0:
-            continue
-        member_idx = np.flatnonzero(labels == cluster_id)
-        for _ in range(max_iterations):
-            if member_idx.size < 2:
-                break
-            centroid = normed[member_idx].mean(axis=0)
-            centroid_norm = float(np.linalg.norm(centroid))
-            if centroid_norm <= 0.0 or not np.isfinite(centroid_norm):
-                break
-            centroid /= centroid_norm
-            sims = normed[member_idx] @ centroid
-            keep = sims >= min_similarity
-            if keep.all():
-                break
-            drop_idx = member_idx[~keep]
-            labels[drop_idx] = -1
-            dropped_total += int(drop_idx.size)
-            member_idx = member_idx[keep]
-    return labels, dropped_total
+from .clustering_algorithms import _trim_clusters_by_centroid_similarity
 
 
-def _cluster_embeddings_chinese_whispers(
-    face_ids: list[int],
-    embeddings: np.ndarray,
-) -> np.ndarray:
-    """
-    Clustering using Chinese Whispers.
-    """
-    if embeddings.size == 0:
-        return np.array([], dtype=int)
-
-    num_faces = len(face_ids)
-
-    k = settings.face_recognition.cw_k_neighbors  # e.g. 10
-    threshold = settings.face_recognition.cw_threshold  # cosine similarity, e.g. 0.6
-    iterations = settings.face_recognition.cw_iterations
-    mutual_nn = getattr(settings.face_recognition, "cw_mutual_nn", True)
-
-    # 1. Build kNN index (cosine distance = 1 - similarity)
-    logger.info(f"Building kNN graph for {num_faces} faces (k={k})...")
-
-    nn = NearestNeighbors(
-        n_neighbors=min(k + 1, num_faces),  # +1 because first neighbor is self
-        metric="cosine",
-        algorithm="auto",
-    ).fit(embeddings)
-
-    distances, indices = nn.kneighbors(embeddings)
-    neighbor_sets = [set(row[1:]) for row in indices]
-
-    # 2. Build the Graph
-    G = nx.Graph()
-    for i in range(num_faces):
-        G.add_node(i, label=i)  # Initial state: each face is its own cluster
-    edge_count = 0
-
-    for i in range(num_faces):
-        for neighbor_idx, dist in zip(indices[i][1:], distances[i][1:]):
-            # with duplicate embeddings the self match is not guaranteed to
-            # be at position 0, so guard explicitly
-            if neighbor_idx == i:
-                continue
-            if mutual_nn and i not in neighbor_sets[neighbor_idx]:
-                continue
-
-            similarity = 1.0 - dist
-
-            if similarity > threshold:
-                G.add_edge(i, neighbor_idx, weight=similarity)
-                edge_count += 1
-
-    logger.info(f"Similarity graph built with {edge_count} edges")
-
-    # 3. Chinese Whispers Iterations
-    # Seeded RNG so repeated runs over the same faces give the same clusters
-    # (makes threshold tuning reproducible).
-    rng = np.random.default_rng(42)
-    nodes = list(G.nodes())
-    for iteration in range(iterations):
-        rng.shuffle(nodes)
-        changed = False
-
-        for node in nodes:
-            neighbors = G[node]
-            if not neighbors:
-                continue
-
-            # Count the total weight for each label in the neighborhood
-            label_scores = {}
-            for neighbor, edge_data in neighbors.items():
-                neigh_label = G.nodes[neighbor]["label"]
-                weight = edge_data.get("weight", 1.0)
-                label_scores[neigh_label] = label_scores.get(neigh_label, 0) + weight
-
-            best_label = max(label_scores, key=label_scores.get)
-            if G.nodes[node]["label"] != best_label:
-                G.nodes[node]["label"] = best_label
-                changed = True
-        logger.debug(f"CW iteration {iteration+1}, changed={changed}")
-        if not changed:
-            logger.info(f"Chinese Whispers converged after {iteration+1} iterations")
-            break
-
-    # 4. Map back to HDBSCAN-style labels
-    labels = nx.get_node_attributes(G, "label")
-    unique_labels = {label: i for i, label in enumerate(set(labels.values()))}
-
-    cluster_labels = np.array([unique_labels[labels[i]] for i in range(num_faces)])
-
-    logger.info(f"Found {len(unique_labels)} clusters using Chinese Whispers")
-
-    # 5. Purity pass: enforce per-cluster compactness that label propagation
-    # cannot guarantee (breaks up "assimilation" clusters built from chains).
-    min_member_similarity = float(
-        getattr(settings.face_recognition, "cw_min_member_similarity", 0.0)
-    )
-    cluster_labels, dropped = _trim_clusters_by_centroid_similarity(
-        cluster_labels, embeddings, min_member_similarity
-    )
-    if dropped:
-        logger.info(
-            "CW purity pass demoted %d chain-merged faces to noise", dropped
-        )
-
-    return cluster_labels
+from .clustering_algorithms import _cluster_embeddings_chinese_whispers
 
 
-def _cluster_embeddings_hdbscan(
-    embeddings: np.ndarray, min_cluster_size=None, min_samples=None
-) -> np.ndarray:
-    logger.info("INSIDE HDBSCAN CLUSTERING")
-    if embeddings.size == 0:
-        return np.array([], dtype=int)
-
-    # L2-normalize so euclidean distance is monotonic with cosine similarity
-    # (embeddings are stored normalized, but older rows may not be).
-    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-    norms[norms == 0.0] = 1.0
-    embeddings_normed = embeddings / norms
-
-    # Reduce with PCA instead of UMAP: PCA is a rotation + truncation, so it
-    # approximately preserves distances. UMAP manufactures density (its job is
-    # visualization-style manifold compression), which turned loose groups of
-    # side profiles/statues into tight blobs HDBSCAN then confidently merged.
-    n_components = min(64, embeddings_normed.shape[0], embeddings_normed.shape[1])
-    if embeddings_normed.shape[1] > n_components:
-        embeddings_reduced = PCA(
-            n_components=n_components, random_state=42
-        ).fit_transform(embeddings_normed)
-    else:
-        embeddings_reduced = embeddings_normed
-    embeddings_reduced = np.ascontiguousarray(embeddings_reduced, dtype=np.float64)
-    min_faces_required = max(2, int(settings.face_recognition.person_min_face_count))
-    sample_count = embeddings.shape[0]
-
-    base_min_cluster_size = int(
-        min_cluster_size
-        if min_cluster_size is not None
-        else settings.face_recognition.hdbscan_min_cluster_size
-    )
-    base_min_samples = int(
-        min_samples
-        if min_samples is not None
-        else settings.face_recognition.hdbscan_min_samples
-    )
-
-    base_min_cluster_size = int(
-        np.clip(base_min_cluster_size, min_faces_required, sample_count)
-    )
-    base_min_samples = int(np.clip(base_min_samples, 1, sample_count))
-    base_min_samples = min(base_min_samples, base_min_cluster_size)
-
-    attempted: set[tuple[int, int]] = set()
-    best_labels: np.ndarray | None = None
-    best_score: float | None = None
-
-    current_min_cluster_size = base_min_cluster_size
-    current_min_samples = base_min_samples
-
-    for i in range(3):
-        logger.info("Running clustering iteration %s", i)
-        params = (current_min_cluster_size, current_min_samples)
-        if params in attempted:
-            break
-        attempted.add(params)
-
-        clusterer = hdbscan.HDBSCAN(
-            metric="euclidean",
-            min_cluster_size=current_min_cluster_size,
-            min_samples=current_min_samples,
-            cluster_selection_method=settings.face_recognition.hdbscan_cluster_selection_method,
-            cluster_selection_epsilon=settings.face_recognition.hdbscan_cluster_selection_epsilon,
-            algorithm="best",
-            # needed for relative_validity_ (DBCV) scoring below
-            gen_min_span_tree=True,
-        )
-        labels = clusterer.fit_predict(embeddings_reduced)
-
-        # Demote weakly attached members to noise; they can still be matched
-        # to the resulting persons in the leftover pass.
-        min_membership = float(
-            getattr(
-                settings.face_recognition,
-                "hdbscan_min_membership_probability",
-                0.0,
-            )
-        )
-        if min_membership > 0.0 and len(labels) > 0:
-            weak = (labels >= 0) & (clusterer.probabilities_ < min_membership)
-            if np.any(weak):
-                labels = labels.copy()
-                labels[weak] = -1
-                logger.debug(
-                    "HDBSCAN demoted %d weak members to noise", int(np.sum(weak))
-                )
-
-        # Score attempts with DBCV (density-based cluster validity). The old
-        # np.mean(probabilities_) counted noise points as 0, which rewarded
-        # cramming everything into clusters — i.e. exactly the over-merging
-        # we are trying to avoid.
-        if len(labels) > 0:
-            try:
-                current_score = float(clusterer.relative_validity_)
-            except Exception:
-                non_noise = labels >= 0
-                if np.any(non_noise):
-                    current_score = float(
-                        np.mean(clusterer.probabilities_[non_noise])
-                    ) - float(np.mean(labels == -1))
-                else:
-                    current_score = -1.0
-        else:
-            current_score = -1.0
-
-        non_noise_mask = labels >= 0
-        cluster_count = int(np.unique(labels[non_noise_mask]).size)
-        noise_ratio = float(np.mean(labels == -1))
-
-        logger.debug(
-            "HDBSCAN attempt clusters=%d noise=%.2f score=%.3f",
-            cluster_count,
-            noise_ratio,
-            current_score,
-        )
-
-        if best_score is None or current_score > best_score:
-            best_score = current_score
-            best_labels = labels
-
-        should_relax = current_min_cluster_size > min_faces_required and (
-            cluster_count == 0
-            or (
-                cluster_count <= 1
-                and noise_ratio > 0.85
-                and sample_count >= min_faces_required * 3
-            )
-            or noise_ratio >= 0.95
-        )
-
-        if should_relax:
-            current_min_cluster_size = max(2, current_min_cluster_size // 2)
-            current_min_samples = max(1, current_min_samples // 2)
-        else:
-            break
-    return best_labels if best_labels is not None else np.full(len(embeddings), -1)
+from .clustering_algorithms import _cluster_embeddings_hdbscan
 
 
-def _group_faces_by_cluster(
-    labels: np.ndarray, face_ids: list[int], embeddings: np.ndarray
-) -> dict[int, tuple[list[int], list[np.ndarray]]]:
-    clusters: dict[int, tuple[list[int], list[np.ndarray]]] = {}
-    for face, label, emb in zip(face_ids, labels, embeddings):
-        if label == -1:
-            continue
-        clusters.setdefault(label, ([], []))
-        clusters[label][0].append(face)
-        clusters[label][1].append(emb)
-    return clusters
+from .clustering_algorithms import group_faces_by_cluster as _group_faces_by_cluster
 
 
-def _summarize_labels(labels: np.ndarray) -> tuple[int, float]:
-    if labels.size == 0:
-        return 0, 1.0
-    non_noise = labels[labels >= 0]
-    cluster_count = int(np.unique(non_noise).size)
-    noise_ratio = float(np.mean(labels == -1))
-    return cluster_count, noise_ratio
+from .clustering_algorithms import _summarize_labels
 
 
-def _run_clustering(
-    *,
-    embeddings: np.ndarray,
-    face_ids: list[int],
-) -> tuple[np.ndarray, int, float, float]:
-    started = time.monotonic()
-    labels = _cluster_embeddings(
-        embeddings,
-        face_ids=face_ids,
-    )
-    elapsed = time.monotonic() - started
-    cluster_count, noise_ratio = _summarize_labels(labels)
-    return labels, cluster_count, noise_ratio, elapsed
+from .clustering_algorithms import run_clustering as _run_clustering
 
 
 def rebuild_person_embedding(session: Session, person_id: int) -> None:
@@ -537,56 +151,16 @@ def rebuild_person_embedding(session: Session, person_id: int) -> None:
         )
 
 
-def _merge_person_pair(
-    session: Session, id_a: int, id_b: int
-) -> tuple[int, int] | None:
+def _merge_person_pair(session: Session, id_a: int, id_b: int) -> tuple[int, int] | None:
     if id_a == id_b:
         return None
-
-    person_a = session.get(Person, id_a)
-    person_b = session.get(Person, id_b)
+    person_a, person_b = session.get(Person, id_a), session.get(Person, id_b)
     if not person_a or not person_b:
         return None
-
-    count_a = int(person_a.appearance_count or 0)
-    count_b = int(person_b.appearance_count or 0)
-    if count_b > count_a:
-        keep, drop = person_b, person_a
-    else:
-        keep, drop = person_a, person_b
-
-    keep_id = int(keep.id)
-    drop_id = int(drop.id)
-    if keep_id == drop_id:
-        return None
-
-    session.exec(
-        update(Face).where(Face.person_id == drop_id).values(
-            **face_assignment_values(keep_id, FaceAssignmentSource.CLUSTER)
-        )
-    )
-    session.exec(
-        text(
-            "UPDATE face_embeddings SET person_id = :keep WHERE person_id = :drop"
-        ).bindparams(keep=keep_id, drop=drop_id)
-    )
-
-    if drop.profile_face_id and not keep.profile_face_id:
-        keep.profile_face_id = drop.profile_face_id
-        session.add(keep)
-
-    session.exec(
-        update(TimelineEvent)
-        .where(TimelineEvent.person_id == drop_id)
-        .values(person_id=keep_id)
-    )
-
-    remove_person(drop_id, session, reason="merge-source", target_id=keep_id)
-
-    safe_commit(session)
-    recalculate_person_appearance_counts(session, [keep_id])
-    rebuild_person_embedding(session, keep_id)
-    safe_commit(session)
+    keep, drop = (person_b, person_a) if int(person_b.appearance_count or 0) > int(person_a.appearance_count or 0) else (person_a, person_b)
+    keep_id, drop_id = int(keep.id), int(drop.id)
+    from app.persons import merge_person_into
+    merge_person_into(session, drop_id, keep_id, assignment_source=FaceAssignmentSource.CLUSTER)
     return keep_id, drop_id
 
 
@@ -667,181 +241,9 @@ def merge_person_with_similar(
     return merged_ids
 
 
-def merge_similar_persons(
-    task_id: str, candidate_person_ids: Iterable[int] | None = None
-) -> int:
-    logger.debug("Merging similar persons")
-
-    percent_threshold = float(
-        getattr(
-            settings.face_recognition,
-            "person_merge_percent_similarity",
-            75.0,
-        )
-    )
-    logger.debug("Person merge threshold set to: %s", percent_threshold)
-    unique_candidate_ids = {
-        int(pid) for pid in (candidate_person_ids or []) if pid is not None
-    }
-    candidate_ids: deque[int] = deque(unique_candidate_ids)
-    search_limit = max(
-        1,
-        int(
-            getattr(
-                settings.face_recognition,
-                "person_merge_search_k",
-                20,
-            )
-        ),
-    )
-    set_task_progress(
-        task_id,
-        current_step="merging_similar_persons",
-        current_item=None,
-    )
-    total_merged = 0
-    try:
-        if candidate_ids:
-            merge_processed = 0
-            merge_started = time.monotonic()
-            last_merge_log = merge_started
-
-            # Progress for this phase is published only via the merge_*
-            # fields of set_task_progress. Deliberately do NOT overwrite the
-            # task's DB processed/total: those carry the clustering-phase
-            # numbers, and clobbering them with merge counts corrupted the
-            # progress display for the rest of the run.
-            def update_progress() -> None:
-                nonlocal last_merge_log
-                pending_count = len(candidate_ids)
-                total_work = merge_processed + pending_count
-                if total_work <= 0:
-                    total_work = max(merge_processed, pending_count)
-                now = time.monotonic()
-                elapsed = now - merge_started
-                merge_rate = merge_processed / max(0.1, elapsed)
-                set_task_progress(
-                    task_id,
-                    current_step="merging_similar_persons",
-                    current_item=(
-                        f"queued: {pending_count} (merged {total_merged}, "
-                        f"{merge_rate:.1f}/s, {elapsed:.0f}s)"
-                    ),
-                    merge_processed=merge_processed,
-                    merge_total=total_work,
-                    merge_pending=pending_count,
-                )
-
-                if (now - last_merge_log) >= 15.0:
-                    logger.info(
-                        "Merging similar persons: processed=%d pending=%d merged=%d"
-                        " (%.1f/s)",
-                        merge_processed,
-                        pending_count,
-                        total_merged,
-                        merge_rate,
-                    )
-                    last_merge_log = now
-
-            if candidate_ids:
-                update_progress()
-            while candidate_ids:
-                person_id = candidate_ids.popleft()
-                merge_processed += 1
-                update_progress()
-                with Session(db.engine) as session:
-                    task = session.get(ProcessingTask, task_id)
-                    if task and task.status in {"cancelled", "interrupted"}:
-                        return total_merged
-
-                    person_obj = session.get(Person, person_id)
-                    if not person_obj:
-                        logger.debug(
-                            "Skipping merge candidate %s because person no longer exists",
-                            person_id,
-                        )
-                        continue
-
-                    person_embedding = session.exec(
-                        text(
-                            "SELECT person_id, embedding FROM person_embeddings WHERE"
-                            " person_id=:pid"
-                        ).bindparams(pid=person_id)
-                    ).all()
-                    if not person_embedding:
-                        logger.debug(
-                            "No embedding found for existing person %s; rebuilding",
-                            person_id,
-                        )
-                        rebuild_person_embedding(session, int(person_id))
-                        safe_commit(session)
-                        person_embedding = session.exec(
-                            text(
-                                "SELECT person_id, embedding FROM person_embeddings"
-                                " WHERE person_id=:pid"
-                            ).bindparams(pid=person_id)
-                        ).all()
-                        if not person_embedding:
-                            logger.debug(
-                                "Skipping person %s after rebuild; still no embedding",
-                                person_id,
-                            )
-                            continue
-
-                    rows = session.exec(
-                        text(
-                            """
-                            SELECT person_id, distance
-                              FROM person_embeddings
-                             WHERE embedding MATCH vec_f32((
-                                SELECT embedding 
-                                FROM person_embeddings
-                                WHERE person_id = :pid))
-                             AND person_id != :pid
-                             AND k=:limit_val
-                          ORDER BY distance 
-                            """
-                        ).bindparams(
-                            pid=person_id,
-                            limit_val=search_limit,
-                        )  # type: ignore
-                    ).all()  # type: ignore
-                    candidate_pairs = _reduce_candidates_by_threshold(
-                        percent_threshold, rows
-                    )
-
-                    logger.debug("Got %s candidates", len(candidate_pairs))
-                    merged_this_round = False
-                    for candidate_id, similarity in candidate_pairs:
-                        logger.debug(
-                            "Merging candidate persons %s and %s (similarity %.2f %%)",
-                            person_id,
-                            candidate_id,
-                            similarity,
-                        )
-                        merge_result = _merge_person_pair(
-                            session, int(person_id), int(candidate_id)
-                        )
-                        if merge_result is not None:
-                            keep_id, _ = merge_result
-                            total_merged += 1
-                            candidate_ids.appendleft(keep_id)
-                            update_progress()
-                            merged_this_round = True
-                            break
-
-                    if merged_this_round:
-                        continue
-                    update_progress()
-            if total_merged:
-                logger.info(
-                    "Merged %d newly created person clusters after targeted pass",
-                    total_merged,
-                )
-            return total_merged
-
-    finally:
-        clear_task_progress(task_id)
+def merge_similar_persons(task_id, candidate_person_ids=None):
+    from .person_merging import merge_similar_persons as merge
+    return merge(task_id, candidate_person_ids)
 
 
 def _reduce_candidates_by_threshold(percent_threshold, rows):
@@ -866,7 +268,7 @@ def _assign_faces_to_clusters(
     new_person_ids: list[int] = []
     min_face_count = int(settings.face_recognition.person_min_face_count)
     max_radius = float(settings.face_recognition.person_cluster_max_l2_radius)
-    for face_ids, embeddings in tqdm(clusters.values()):
+    for face_ids, embeddings in clusters.values():
         if len(face_ids) < min_face_count:
             continue
 
@@ -980,24 +382,7 @@ def _assign_faces_to_clusters(
     return created, new_person_ids
 
 
-def _get_face_total(session: Session, *, quality_seed_only: bool = False) -> int:
-    quality_filter = ""
-    params: dict[str, float] = {}
-    if quality_seed_only:
-        quality_filter, params = _quality_seed_filter()
-    sql = text(
-        f"""
-        SELECT COUNT(*)
-          FROM face            AS f
-          JOIN face_embeddings AS fe ON fe.face_id = f.id
-         WHERE f.person_id IS NULL
-           {quality_filter}
-        """
-    )
-    if params:
-        sql = sql.bindparams(**params)
-    row = session.exec(sql).first()
-    return int(row[0]) if row else 0
+from .clustering_queries import get_face_total as _get_face_total
 
 
 def _is_task_cancelled(session: Session, task_id: str) -> bool:
@@ -1015,180 +400,14 @@ def _is_task_cancelled(session: Session, task_id: str) -> bool:
     return row[0] in {"cancelled", "interrupted"}
 
 
-def _match_unassigned_to_existing(
-    session: Session,
-    face_ids: list[int],
-    embeddings: np.ndarray,
-    task_id: str,
-    prototypes: tuple[np.ndarray, np.ndarray] | None = None,
-) -> list[int]:
-    """
-    Attempts to assign faces to existing persons by comparing against
-    per-person pose prototypes. Returns a list of face_ids that were NOT
-    assigned and still need clustering. ``prototypes`` allows callers that
-    loop over batches to load the (person_ids, matrix) pair once.
-    """
-    if not face_ids:
-        return []
-
-    if prototypes is None:
-        prototypes = _load_person_prototype_matrix(session)
-    person_ids, person_matrix = prototypes
-    if person_matrix.size == 0:
-        logger.info("No existing persons found, skipping to clustering!")
-        return face_ids
-    if (
-        embeddings.ndim != 2
-        or person_matrix.ndim != 2
-        or embeddings.shape[1] != person_matrix.shape[1]
-    ):
-        logger.warning(
-            "Skipping single-face match due to embedding dim mismatch"
-            " (faces=%s persons=%s)",
-            tuple(embeddings.shape),
-            tuple(person_matrix.shape),
-        )
-        return face_ids
-
-    threshold_cosine, min_margin = matching_thresholds()
-    index = PrototypeIndex(person_ids, person_matrix, {})
-
-    unassigned_after_match = []
-    assignments: dict[int, int] = {}
-    chunk_size = 512
-    cancel_check_every = max(
-        1,
-        int(getattr(settings.face_recognition, "matching_cancel_check_every", 8)),
-    )
-    cancelled = False
-
-    logger.info("Attempting to match %d faces to existing persons...", len(face_ids))
-    total_faces = len(face_ids)
-    for start in range(0, total_faces, chunk_size):
-        end = min(start + chunk_size, total_faces)
-        chunk_number = (start // chunk_size) + 1
-        if (
-            start == 0 or chunk_number % cancel_check_every == 0
-        ) and _is_task_cancelled(session, task_id):
-            logger.info(
-                "Task %s cancelled during matching; stopping at %d/%d faces.",
-                task_id,
-                start,
-                total_faces,
-            )
-            unassigned_after_match.extend(int(fid) for fid in face_ids[start:])
-            cancelled = True
-            break
-
-        chunk_face_ids = face_ids[start:end]
-        matches = score_faces(
-            index, chunk_face_ids, embeddings[start:end], [None] * len(chunk_face_ids)
-        )
-        accepted = {
-            match.face_id: match.person_id
-            for match in matches
-            if match.score >= threshold_cosine and match.margin >= min_margin
-        }
-        assignments.update(accepted)
-        unassigned_after_match.extend(
-            int(face_id) for face_id in chunk_face_ids if face_id not in accepted
-        )
-
-        if start == 0 or (start // chunk_size) % 8 == 0:
-            set_task_progress(
-                task_id,
-                current_step="matching_known_persons",
-                current_item=f"Matching face {end}/{total_faces} in current batch",
-            )
-
-    if assignments:
-        proposed = assignments
-        assignments = _bulk_assign_faces_to_persons(session, proposed)
-        # The caller derives this worker's matched count from the remaining
-        # ids; a manual assignment that won the race is not an auto match.
-        unassigned_after_match.extend(fid for fid in proposed if fid not in assignments)
-        refresh_persons(session, set(assignments.values()))
-        safe_commit(session)
-        logger.info("Matched %d faces to existing persons.", len(assignments))
-    if cancelled:
-        logger.info("Matching was cancelled; leaving remaining faces unassigned.")
-
-    return unassigned_after_match
+def _match_unassigned_to_existing(session, face_ids, embeddings, task_id, prototypes=None):
+    from .face_matching import _match_unassigned_to_existing as match
+    return match(session, face_ids, embeddings, task_id, prototypes=prototypes, _hooks=globals())
 
 
-def _match_remaining_single_faces(
-    task_id: str, *, batch_size: int
-) -> tuple[int, int, bool]:
-    total_scanned = 0
-    total_matched = 0
-    last_id = 0
-    cancelled = False
-
-    set_task_progress(
-        task_id,
-        current_step="matching_known_persons",
-        current_item="starting leftover single-face pass",
-    )
-    # Load per-person prototypes once for the whole pass instead of once per
-    # batch (persons do not change during matching). Also repoint the task's
-    # processed/total at this phase — the merge phase left them at its own
-    # counts, which made the progress bar meaningless for the rest of the run.
-    with Session(db.engine) as session:
-        prototypes = _load_person_prototype_matrix(session)
-        remaining_total = _get_face_total(session)
-        task = session.get(ProcessingTask, task_id)
-        if task and task.status == "running":
-            task.processed = 0
-            task.total = remaining_total
-            session.add(task)
-            safe_commit(session)
-    while True:
-        with Session(db.engine) as session:
-            face_ids, embeddings = _fetch_faces_and_embeddings(
-                session, limit=batch_size, last_id=last_id
-            )
-            if not face_ids:
-                break
-            last_id = face_ids[-1]
-
-            still_unassigned_ids = _match_unassigned_to_existing(
-                session,
-                face_ids,
-                embeddings,
-                task_id,
-                prototypes=prototypes,
-            )
-            if _is_task_cancelled(session, task_id):
-                cancelled = True
-
-        scanned = len(face_ids)
-        matched = scanned - len(still_unassigned_ids)
-        total_scanned += scanned
-        total_matched += matched
-
-        set_task_progress(
-            task_id,
-            current_step="matching_known_persons",
-            current_item=(
-                f"leftover pass scanned={total_scanned} matched={total_matched}"
-            ),
-        )
-        with Session(db.engine) as progress_session:
-            task = progress_session.get(ProcessingTask, task_id)
-            if task and task.status == "running":
-                task.processed = total_scanned
-                progress_session.add(task)
-                safe_commit(progress_session)
-
-        if cancelled:
-            logger.info(
-                "Task %s cancelled during leftover matching; stopping pass.", task_id
-            )
-            break
-        if scanned < batch_size:
-            break
-
-    return total_matched, total_scanned, cancelled
+def _match_remaining_single_faces(task_id, *, batch_size):
+    from .face_matching import _match_remaining_single_faces as match
+    return match(task_id, batch_size=batch_size, _hooks=globals())
 
 
 def run_person_clustering(task_id: str) -> None:

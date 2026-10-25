@@ -18,6 +18,7 @@ interface ConfirmDialogProps {
   cancelLabel?: string;
   confirmColor?: "primary" | "error" | "warning";
   loading?: boolean;
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onClose: () => void;
 }
@@ -34,6 +35,7 @@ export default function ConfirmDialog({
   cancelLabel = "Cancel",
   confirmColor = "error",
   loading = false,
+  confirmDisabled = false,
   onConfirm,
   onClose,
 }: ConfirmDialogProps) {
@@ -42,7 +44,7 @@ export default function ConfirmDialog({
   const confirming = useRef(false);
   if (!open) confirming.current = false;
   const confirm = async () => {
-    if (loading || confirming.current) return;
+    if (loading || confirmDisabled || confirming.current) return;
     confirming.current = true;
     try { await onConfirm(); } finally { confirming.current = false; }
   };
@@ -75,7 +77,7 @@ export default function ConfirmDialog({
           onClick={() => void confirm()}
           color={confirmColor}
           variant="contained"
-          disabled={loading}
+          disabled={loading || confirmDisabled}
           startIcon={loading ? <CircularProgress size={16} /> : undefined}
         >
           {confirmLabel}

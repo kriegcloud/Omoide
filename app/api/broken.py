@@ -9,6 +9,7 @@ from app.api._media_filters import exclude_missing
 from app.config import settings
 from app.database import get_session
 from app.models import Media, Scene
+from app.pagination import count_rows, paginate
 from app.schemas.broken import (
     BrokenMediaItem,
     BrokenMediaPage,
@@ -17,7 +18,7 @@ from app.schemas.broken import (
     BrokenRetryRequest,
     BrokenRetryResponse,
 )
-from app.utils import generate_thumbnail
+from app.thumbnails import generate_thumbnail
 
 router = APIRouter()
 
@@ -51,21 +52,14 @@ def list_broken_media(
     """Paginated list of media that could not be processed, ordered newest-first."""
     base_filter = _broken_filter()
 
-    total = (
-        session.exec(select(func.count(Media.id)).where(base_filter)).first() or 0
+    total = count_rows(session, Media.id, base_filter)
+    rows, next_cursor = paginate(
+        session,
+        select(Media).where(base_filter),
+        [(Media.id, False)],
+        cursor=cursor,
+        limit=limit,
     )
-
-    query = select(Media).where(base_filter).order_by(Media.id.desc())
-
-    if cursor:
-        try:
-            cursor_id = int(cursor)
-            query = query.where(Media.id < cursor_id)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid cursor format.")
-
-    rows = session.exec(query.limit(limit)).all()
-    next_cursor = str(rows[-1].id) if len(rows) == limit else None
 
     return BrokenMediaPage(
         items=[BrokenMediaItem.from_media(m) for m in rows],
@@ -102,11 +96,7 @@ def retry_broken(
     as `after_id` to continue past attempted items, including persistent failures.
     """
     if settings.general.presentation_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Not allowed in presentation mode.",
-        )
-
+        raise HTTPException(status_code=403, detail="Not allowed in presentation mode.")
     base_filter = _broken_filter()
     if request.after_id is not None:
         base_filter = base_filter & (Media.id > request.after_id)

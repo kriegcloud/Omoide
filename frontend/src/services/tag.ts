@@ -3,7 +3,7 @@ import { Tag } from "../types";
 import { CursorPage } from "../types";
 
 export const getTags = async (
-  cursor: string | null
+  cursor: string | null | undefined
 ): Promise<CursorPage<Tag>> => {
   const params = new URLSearchParams();
   if (cursor) {

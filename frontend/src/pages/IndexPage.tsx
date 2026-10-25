@@ -151,7 +151,7 @@ export default function IndexPage() {
 
   useListInvalidation(mediaListKey);
   const listState = useListStore((state) => state.lists[mediaListKey]);
-  const items: MediaPreview[] = listState?.items ?? [];
+  const items: MediaPreview[] = useMemo(() => listState?.items ?? [], [listState?.items]);
   const orderedIds = useMemo(() => items.map(item => item.id), [items]);
   const hasMore = listState?.hasMore ?? defaultListState.hasMore;
   const isLoading = listState?.isLoading ?? defaultListState.isLoading;

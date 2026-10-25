@@ -11,8 +11,7 @@ Python Dependencies (from `pyproject.toml`)
 - `ffmpeg-python`
 - `hdbscan`
 - `imagehash`
-- `onnxruntime`
-- `open-clip-torch`
+- `onnxruntime` / `onnxruntime-directml` (Windows)
 - `opencv-python`
 - `insightface`
 - `cmake`
@@ -27,9 +26,13 @@ Python Dependencies (from `pyproject.toml`)
 - `sqlalchemy-vectorstores`
 - `sqlite-vec`
 - `sqlmodel`
+- `tokenizers`
+- `open-clip-torch`
 - `torch`
 - `torchvision`
 - `transformers`
+- `umap-learn`
+- `webauthn`
 - `uvicorn`
 - `watchdog`
 
@@ -66,7 +69,7 @@ Special Compliance Notes
   - The Docker image installs `ffmpeg` from Debian packages. FFmpeg’s licensing depends on build configuration (LGPL/GPL options). Debian packages include their license documentation in the image, typically under `/usr/share/doc/ffmpeg/`.
   - When redistributing the image, preserve those license files and comply with any additional terms for enabled codecs.
 
-- Apache-2.0 Components (e.g., `transformers`, possibly others):
+- Apache-2.0 Components (e.g., `tokenizers`, possibly others):
   - Preserve license texts and include upstream NOTICE contents if present. If a dependency includes a `NOTICE` file, ensure it is included in your binary distribution.
 
 - Model Weights:
@@ -86,6 +89,7 @@ Special Compliance Notes
     Apache-2.0. Exact artifact checksums and source URLs are recorded in the
     Omoide annotation workflow manifest; redistribution must preserve the
     upstream license and any accompanying notices.
+  - CLIP weights are OpenCLIP models (LAION) downloaded at runtime as ONNX exports from the `immich-app` Hugging Face organization.
 
 How to Regenerate a Full License Inventory
 - Python: generate a third‑party license report for the exact environment

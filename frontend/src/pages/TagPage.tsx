@@ -27,6 +27,7 @@ export default function TagsPage() {
   const [error, setError] = useState<string | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const selection = useEntitySelection<number>();
+  const {pruneTo} = selection;
   const { marqueeRect, onItemClick } = useGridSelection<number>({
     containerRef: gridRef,
     selecting: selection.selectionMode,
@@ -54,8 +55,8 @@ export default function TagsPage() {
     [removeItem, listKey]
   );
   useEffect(() => {
-    selection.pruneTo(items.map((tag) => tag.id));
-  }, [items, selection.pruneTo]);
+    pruneTo(items.map((tag) => tag.id));
+  }, [items, pruneTo]);
 
   const handleDeleteSelected = async () => {
     setIsDeleting(true);

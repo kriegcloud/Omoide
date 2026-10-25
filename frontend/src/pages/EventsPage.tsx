@@ -50,6 +50,7 @@ export default function EventsPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
   const selection = useEntitySelection<number>();
+  const {pruneTo} = selection;
   const { marqueeRect, onItemClick } = useGridSelection<number>({
     containerRef: gridRef,
     itemSelector: "[data-selectable-id]",
@@ -92,8 +93,8 @@ export default function EventsPage() {
   }, [inView, hasMore, isLoading, error, cursor]);
 
   useEffect(() => {
-    selection.pruneTo(items.map((item) => item.id));
-  }, [items, selection.pruneTo]);
+    pruneTo(items.map((item) => item.id));
+  }, [items, pruneTo]);
 
   const handleRebuild = async () => {
     try {

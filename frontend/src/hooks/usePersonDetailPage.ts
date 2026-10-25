@@ -151,7 +151,7 @@ export const usePersonDetailPage = () => {
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     message: string;
-    severity: "success" | "error";
+    severity: "success" | "error" | "info";
   }>({ open: false, message: "", severity: "success" });
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -374,6 +374,7 @@ export const usePersonDetailPage = () => {
 
   useEffect(() => {
     const controller = new AbortController();
+    const activeRequests = requests.current;
 
     const initialLoad = async () => {
       if (!id) {
@@ -417,10 +418,10 @@ export const usePersonDetailPage = () => {
 
     return () => {
       controller.abort();
-      requests.current.detail += 1;
-      requests.current.suggestions += 1;
-      requests.current.similar += 1;
-      requests.current.relationships += 1;
+      activeRequests.detail += 1;
+      activeRequests.suggestions += 1;
+      activeRequests.similar += 1;
+      activeRequests.relationships += 1;
     };
   }, [
     id,

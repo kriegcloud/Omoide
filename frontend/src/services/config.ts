@@ -74,10 +74,13 @@ export const reloadConfig = async (
     const people = String(!!latest.general.enable_people);
     const meme = String(!!latest.general.meme_mode);
     window.runtimeConfig = {
+      VITE_API_IS_DOCKER: window.runtimeConfig?.VITE_API_IS_DOCKER ?? "false",
+      APP_VERSION: window.runtimeConfig?.APP_VERSION ?? "",
       ...(window.runtimeConfig ?? {}),
       VITE_API_PRESENTATION_MODE: ro,
       VITE_API_ENABLE_PEOPLE: people,
       VITE_API_MEME_MODE: meme,
+      VIDEO_CONVERT_ON_THE_FLY: String(!!latest.video?.convert_on_the_fly),
       VITE_API_REPAIRS_ENABLED: String(!!latest.repairs.enabled),
       PERSON_RELATIONSHIP_MAX_NODES: String(
         latest.general.person_relationship_max_nodes ?? 100
