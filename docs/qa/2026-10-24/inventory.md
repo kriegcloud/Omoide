@@ -603,7 +603,7 @@ Review notes/limits: current observer cleanup cancels its scheduled frame, guard
 - `testsNeeded`: Queued rotation/history/crop edit before correction; next reads retry or settle; accepted correction acknowledges exactly once; repeated callback evaluation does not double scale; real new crop wins; pending cleanup remains inert
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: pending
+- `fixedCommit`: 27f376be98a55bff95d389e7b5175e32f1df6ea6
 
 Limits: This scheduling interleaving is deterministic dependency/adapter evidence, not claimed Chrome-reproduced. No hidden provider state or impossible crop was injected: display fit and rotation use installed reducers. Parent Chrome has already proved public persistent-viewport resize→Undo→Flip→Save copy with original intact. Direct scheduling may be difficult to force through public controls, so the regression provides the race proof while browser acceptance proves the composed settled workflow. Existing external-model/platform/load coverage limits remain accurately recorded. Similar no-embedding UX and broad CJS lint tooling remain nonblocking backlog. Protected annotation files remain unchanged in the actual76-file diff. Documentation's dated R1 count199 in the coverage row is historical evidence; current gate210 is explicit in rounds.md, not a claim that every scenario is tested. No warning suppression or blanket every-feature browser pass is asserted.
 
@@ -626,6 +626,27 @@ Limits: This scheduling interleaving is deterministic dependency/adapter evidenc
 - `testsNeeded`: Runtime callback interleaving over real SQLite commit; changed and unchanged destination controls; retained original/encoded versions and no foreign inode overwrite/unlink.
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: pending
+- `fixedCommit`: 27f376be98a55bff95d389e7b5175e32f1df6ea6
 
 No other required runtime/quality issue reproduced in this bounded round. R3 source-binding regressions pass; task lifecycle and documented acceptance limits remain supported by permanent tests and ledger. This review does not claim power-loss atomicity, arbitrary external-write exclusion, external inference quality or desktop platform proof.
+
+### R5-API-01: Legacy conversion worker deletes encoded recovery retained after a committed destination conflict
+
+- `round`: 5
+- `reviewer`: API/domain reviewer — rotated conversion publication/caller contract review
+- `label`: issue
+- `blockingStatus`: blocking
+- `severity`: P1-high
+- `doctrineBucket`: not-doctrine
+- `sourceRefs`: `docs/qa/2026-10-24/inventory.md` R4-RUNTIME-01 requires retained original and encoded recovery after committed destination conflict; `docs/qa/2026-10-24/rounds.md` Round 4 acceptance makes the same claim; `AGENTS.md` failing-test-first synthetic safety rule.
+- `affectedFiles`: `app/tasks/conversion.py:389`, `app/tasks/conversion.py:405`; focused worker-level conversion regressions.
+- `evidence`: `PYTHONPATH=. TMPDIR=/tmp .venv/bin/python /tmp/omoide-qa-round5-legacy-recovery-probe.py` fails one preservation assertion. Real `_run_conversion` uses synthetic files/SQLite and mocked FFmpeg. The real completion helper commits catalog/task; the callback then atomically replaces the published AVI→MP4 output. `publish_replacement` correctly detects this and logs original backup/encoded recovery paths. Its caller then sets `preserve_output = False` unconditionally at line 389, causing its finally block to unlink the encoded recovery at lines 405–406. Probe verifies task remains completed, catalog points to destination, newer destination and original source survive, but prints `encoded_recovery_exists False`; remaining file bytes are only `[b'newer user output', b'original source', b'original source']`. Full log: `/tmp/omoide-qa-round5-legacy-recovery-probe.log`. This is deterministic caller cleanup after a detected conflict, not the accepted stat/mutation race.
+- `impact`: The encoded recovery promised by R4 and named in the warning is deleted in the actual legacy task entry point. Original source bytes remain recoverable after the R4 helper fix, so this report does not claim loss of the original. The published encoded version is nevertheless unavailable after a user/output conflict, and the warning points at a missing recovery artifact. Direct helper tests do not cover this caller cleanup.
+- `suggestedFix`: Preserve publication's cleanup/retention decision in `_run_conversion`. Once ownership of encoded cleanup is handed to `publish_replacement`, do not unconditionally unlink any encoded artifact the helper deliberately retained after success/conflict/cleanup failure. A narrow removal of the unconditional preservation reset may suffice because ordinary successful publication already cleans its encoded staging file. Keep durable completed catalog/task semantics, newer destination/source bytes and original backup retention unchanged.
+- `recommendedSkillOrAgent`: Conversion storage/runtime fixer
+- `fixerGroup`: `app/tasks/conversion.py`, worker-level conversion regression tests
+- `acceptanceCommands`: `PYTHONPATH=. TMPDIR=/tmp .venv/bin/python /tmp/omoide-qa-round5-legacy-recovery-probe.py`; permanent worker-level postcommit conflict tests; `TMPDIR=/tmp .venv/bin/python -m unittest discover -s tests -p 'test_runtime_transaction_safety.py' -v`; analogous source-version and lifecycle suites; root canonical backend verification.
+- `testsNeeded`: Failing-first real worker entry-point regression for postcommit destination atomic replacement and in-place edit in AVI/MP4 modes; assert retained encoded/original recovery, newer bytes unchanged, committed task/catalog state, truthful warning paths. Ordinary unchanged conversions must still clean their owned temporary files.
+- `dependencies`: none
+- `status`: fixed
+- `fixedCommit`: pending

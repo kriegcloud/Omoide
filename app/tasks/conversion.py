@@ -386,7 +386,9 @@ def _run_conversion(task_id: str, media_path: str, media_id: int):
                 commit=lambda: _finish_task(session, task, "completed"),
                 expected_source_identity=source_identity,
             )
-            preserve_output = False
+            # Publication owns encoded cleanup after handoff. Any encoded file
+            # it retains is recovery data (for example, a postcommit conflict),
+            # even when the catalog/task was durably completed.
         except Exception as e:
             logger.error(f"Conversion task {task_id} failed: {e}")
             session.rollback()

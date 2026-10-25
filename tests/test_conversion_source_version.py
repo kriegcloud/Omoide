@@ -114,6 +114,66 @@ class ConversionSourceVersionTests(unittest.TestCase):
                 with self.subTest(route=route, suffix=suffix):
                     self.run_case(route, suffix, "unchanged")
 
+    def test_worker_retains_recovery_after_committed_destination_conflict(self):
+        for suffix in (".avi", ".mp4"):
+            for change in ("inplace", "atomic"):
+                with self.subTest(suffix=suffix, change=change):
+                    directory = self.root / f"postcommit-{suffix[1:]}-{change}"
+                    directory.mkdir()
+                    source = directory / f"video{suffix}"
+                    source.write_bytes(b"original source")
+                    destination = source.with_suffix(".mp4")
+                    with Session(self.engine) as session:
+                        media = Media(path=str(source), filename=source.name, size=15)
+                        task = ProcessingTask(task_type="convert", status="pending")
+                        session.add_all([media, task])
+                        session.commit()
+                        media_id, task_id = media.id, task.id
+                    process = Mock()
+                    process.poll.return_value = 0
+                    process.returncode = 0
+                    process.communicate.return_value = ("", "")
+                    encoded_paths = []
+
+                    def launch(command, **_):
+                        encoded = Path(command[-1])
+                        encoded.write_bytes(b"encoded source")
+                        encoded_paths.append(encoded)
+                        return process
+
+                    finish = worker._finish_task
+
+                    def committed_then_changed(session, task, status):
+                        result = finish(session, task, status)
+                        if status == "completed" and result is not False:
+                            if change == "atomic":
+                                replacement = directory / "external-edit"
+                                replacement.write_bytes(b"newer user output")
+                                replacement.replace(destination)
+                            else:
+                                destination.write_bytes(b"newer user output")
+                        return result
+
+                    with patch.object(worker, "popen_silent", side_effect=launch), \
+                         patch.object(worker, "ensure_ffmpeg_available", return_value=Path("/usr/bin/ffmpeg")), \
+                         patch.object(worker.ffmpeg, "probe", return_value={}), \
+                         patch.object(worker, "get_ffmpeg_accel_config", return_value=SimpleNamespace(video_encoder="libx264", hwaccel_args=[])), \
+                         patch.object(worker, "_finish_task", side_effect=committed_then_changed), \
+                         self.assertLogs(conversion.logger, level="WARNING") as messages:
+                        worker._run_conversion(task_id, str(source), media_id)
+
+                    with Session(self.engine) as session:
+                        self.assertEqual(session.get(ProcessingTask, task_id).status, "completed")
+                        self.assertEqual(session.get(Media, media_id).path, str(destination))
+                    self.assertEqual(destination.read_bytes(), b"newer user output")
+                    if suffix == ".avi":
+                        self.assertEqual(source.read_bytes(), b"original source")
+                    self.assertTrue(any(path.read_bytes() == b"original source" for path in directory.glob("*.backup")))
+                    self.assertTrue(encoded_paths[0].exists(), "worker must retain the promised encoded recovery")
+                    self.assertEqual(encoded_paths[0].read_bytes(), b"encoded source")
+                    self.assertTrue(any("identity conflict" in message.lower() and str(encoded_paths[0]) in message
+                                        for message in messages.output))
+
 
 if __name__ == "__main__":
     unittest.main()

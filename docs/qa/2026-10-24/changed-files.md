@@ -1,6 +1,6 @@
 # Changed files
 
-QA changes relative to starting commit `76a91c7f55c4814d86a286768cccf3e70e376550`. Includes baseline remediation and four fixer rounds. Protected annotation implementation files were not modified.
+QA changes relative to starting commit `76a91c7f55c4814d86a286768cccf3e70e376550`. Includes baseline remediation and five fixer rounds. Protected annotation implementation files were not modified.
 
 - `README.md`
 - `alembic.ini`
@@ -27,6 +27,7 @@ QA changes relative to starting commit `76a91c7f55c4814d86a286768cccf3e70e376550
 - `app/tasks/dataset_frame_mining.py`
 - `app/tasks/export.py`
 - `app/tasks/image_repair.py`
+- `docs/qa/2026-10-24/backlog.md`
 - `docs/qa/2026-10-24/changed-files.md`
 - `docs/qa/2026-10-24/coverage.md`
 - `docs/qa/2026-10-24/inventory.md`
