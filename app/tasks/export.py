@@ -126,6 +126,14 @@ def run_person_media_export(
             return
         task.total = len(media_items)
         task.processed = 0
+        exported = skipped = 0
+        samples: list[dict[str, str]] = []
+        def persist_outcomes() -> None:
+            task.result = {**(task.result or {}), "mode": mode,
+                           "attempted": task.processed, "remaining": max(0, task.total - task.processed),
+                           "exported": exported, "skipped": skipped,
+                           "failure_count": skipped, "failure_samples": list(samples)}
+        persist_outcomes()
         session.add(task)
         safe_commit(session)
 
@@ -147,10 +155,16 @@ def run_person_media_export(
                     person_id,
                     exc,
                 )
-                reason = str(exc)
+                reason = str(exc) or type(exc).__name__
             if reason:
+                skipped += 1
                 record_task_failure(task_id, media.filename, reason)
+                samples.append({"path": media.filename, "reason": reason})
+                samples = samples[-500:]
+            else:
+                exported += 1
             task.processed += 1
+            persist_outcomes()
             session.add(task)
             safe_commit(session)
 

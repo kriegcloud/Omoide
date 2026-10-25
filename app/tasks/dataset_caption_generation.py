@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime
 
 from sqlmodel import Session, select
 
@@ -23,6 +22,7 @@ from app.models import (
     ProcessingTask,
     Status,
 )
+from app.tasks.common import _start_task, _finish_task
 from app.tasks.state import clear_task_progress, set_task_progress
 
 
@@ -59,6 +59,8 @@ def generate_dataset_captions(
         if task is None:
             logger.error("Dataset caption task %s is missing", task_id)
             return
+        if not _start_task(session, task):
+            return
         items = list(
             session.exec(
                 select(DatasetItem)
@@ -66,8 +68,6 @@ def generate_dataset_captions(
                 .order_by(DatasetItem.position, DatasetItem.id)
             ).all()
         )
-        task.status = Status.RUNNING
-        task.started_at = datetime.now()
         task.total = len(items)
         task.result = {
             "dataset_id": dataset_id,
@@ -80,7 +80,7 @@ def generate_dataset_captions(
 
         for index, item in enumerate(items, start=1):
             session.refresh(task)
-            if task.status == Status.CANCELLED:
+            if task.status != Status.RUNNING:
                 break
             set_task_progress(
                 task_id,
@@ -94,6 +94,9 @@ def generate_dataset_captions(
             else:
                 attempt = None
                 for retry in range(_BUSY_RETRIES + 1):
+                    session.refresh(task)
+                    if task.status != Status.RUNNING:
+                        break
                     try:
                         attempt = create_annotation_attempt(
                             session,
@@ -149,9 +152,6 @@ def generate_dataset_captions(
 
         task = session.get(ProcessingTask, task_id)
         if task is not None:
-            cancelled = task.status == Status.CANCELLED
-            task.status = Status.CANCELLED if cancelled else Status.COMPLETED
-            task.finished_at = datetime.now()
             task.result = {
                 "generated": generated,
                 "skipped": skipped,
@@ -159,4 +159,5 @@ def generate_dataset_captions(
             }
             session.add(task)
             safe_commit(session)
+            _finish_task(session, task, "completed")
         clear_task_progress(task_id)

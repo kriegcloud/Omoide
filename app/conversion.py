@@ -13,6 +13,7 @@ of three ways:
 from __future__ import annotations
 
 import os
+import errno
 import shutil
 import subprocess
 import tempfile
@@ -181,6 +182,101 @@ def _available_name(path: Path) -> Path:
         index += 1
 
 
+def publish_replacement(
+    session: Session, media: Media, encoded: Path, destination: Path,
+    *, commit: Callable[[], object] | None = None,
+) -> Path:
+    """Publish encoded bytes with rollback compensation until catalog commit.
+
+    An extension-changing conversion retains its original until commit. A
+    same-path replacement keeps a private original backup until commit. Failed
+    publication preserves the encoded file for recovery and restores the catalog
+    path and original bytes; backup restoration failures expose the backup path.
+    """
+    source = Path(media.path)
+    original = (media.path, media.filename, media.size)
+    backup: Path | None = None
+    published = False
+    published_identity = None
+    try:
+        if destination == source:
+            descriptor, name = tempfile.mkstemp(prefix=".omoide-original-", suffix=".backup", dir=source.parent)
+            os.close(descriptor)
+            backup = Path(name)
+            backup.unlink()
+            try:
+                os.link(source, backup)
+            except OSError:
+                shutil.copy2(source, backup)
+            encoded.replace(destination)
+        else:
+            # Hard-link publication is atomic and refuses a racing destination.
+            # Encoded files are staged in the source filesystem.
+            try:
+                os.link(encoded, destination)
+            except OSError as exc:
+                if exc.errno == errno.EEXIST:
+                    raise
+                # FAT-like media roots may not support hard links. Exclusive
+                # creation still protects an unrelated destination.
+                with destination.open("xb") as target, encoded.open("rb") as data:
+                    stat = os.fstat(target.fileno())
+                    published_identity = (stat.st_dev, stat.st_ino)
+                    published = True
+                    shutil.copyfileobj(data, target)
+                    target.flush()
+                    os.fsync(target.fileno())
+        published = True
+        stat = destination.stat()
+        published_identity = (stat.st_dev, stat.st_ino)
+        media.path = str(destination)
+        media.filename = destination.name
+        media.size = destination.stat().st_size
+        session.add(media)
+        if commit is None:
+            session.commit()
+        elif commit() is False:
+            raise ConversionError("Conversion task is no longer running.")
+    except Exception as exc:
+        session.rollback()
+        if published:
+            if backup is not None:
+                # Retain converted bytes before restoring the original inode.
+                try:
+                    if not encoded.exists():
+                        os.link(destination, encoded)
+                except OSError:
+                    try:
+                        shutil.copy2(destination, encoded)
+                    except OSError:
+                        logger.warning("Could not preserve converted output %s", encoded)
+                try:
+                    backup.replace(source)
+                except OSError as restore_exc:
+                    raise ConversionError(
+                        f"Original recovery backup: {backup}; converted output: {encoded}; "
+                        f"could not restore {source}: {restore_exc}"
+                    ) from exc
+            elif destination.exists():
+                stat = destination.stat()
+                if (stat.st_dev, stat.st_ino) == published_identity:
+                    destination.unlink()
+        if backup is not None:
+            backup.unlink(missing_ok=True)
+        media.path, media.filename, media.size = original
+        raise ConversionError(f"Conversion publication failed; recovered output: {encoded}: {exc}") from exc
+
+    # Cleanup is after the durable boundary. A cleanup failure leaves a safe
+    # extra original/encoded copy, not a failed transaction with missing media.
+    for obsolete in (backup, source if destination != source else None, encoded):
+        if obsolete is not None:
+            try:
+                obsolete.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning("Converted media committed; retained recovery file %s: %s", obsolete, exc)
+    return destination
+
+
 def convert_media(
     session: Session,
     media: Media,
@@ -218,31 +314,21 @@ def convert_media(
     final = source.with_suffix(".mp4")
     if final != source:
         final = _available_name(final)
-    preserve_staging = False
     try:
         if cancelled and cancelled():
             raise ConversionError("Conversion cancelled.")
         if before_publish:
             before_publish()
         settings.general.ensure_media_path_writable(source)
-        preserve_staging = True
-        staging.replace(final)
-        preserve_staging = False
-        if final != source:
-            source.unlink()
-    except Exception as exc:
-        if preserve_staging and staging.exists():
-            raise ConversionError(f"Could not publish conversion; recovered output: {staging}: {exc}") from exc
+    except Exception:
         staging.unlink(missing_ok=True)
         raise
-    media.path = str(final)
-    media.filename = final.name
-    media.size = final.stat().st_size
-    session.add(media)
-    session.commit()
-    # The original is gone; a kept copy of it would now be stale.
-    converted_copy_path(media.id).unlink(missing_ok=True)
-    return final
+    result = publish_replacement(session, media, staging, final)
+    try:
+        converted_copy_path(media.id).unlink(missing_ok=True)
+    except OSError as exc:
+        logger.warning("Converted media committed; stale playback copy could not be removed: %s", exc)
+    return result
 
 
 def stream_converted(source: Path, start_seconds: float = 0.0) -> Iterator[bytes]:

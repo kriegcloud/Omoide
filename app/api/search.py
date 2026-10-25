@@ -299,7 +299,7 @@ def _find_by_filename(query: str, session: Session) -> list[Media]:
 @allow_in_presentation_mode
 def search_by_image(
     file: UploadFile = File(...),
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=500),
     session: Session = Depends(get_session),
 ):
     image_bytes = file.file.read()
@@ -340,7 +340,7 @@ def search_by_image(
 )
 def search_combined(
     query: str = Query("", description="Free-text or embedding query"),
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=500),
     cursor: str | None = Query(None, description="Opaque cursor from previous page"),
     order_by: str = Query(
         "relevance",
@@ -521,7 +521,7 @@ def search_combined(
 )
 def search_scenes(
     query: str = Query("", description="Free-text query for scene search"),
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=500),
     cursor: str | None = Query(
         None, description="Opaque cursor returned from previous request"
     ),

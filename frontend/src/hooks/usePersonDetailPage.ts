@@ -152,9 +152,17 @@ export const usePersonDetailPage = () => {
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
     message: string;
-    severity: "success" | "error" | "info";
+    severity: "success" | "error" | "info" | "warning";
   }>({ open: false, message: "", severity: "success" });
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{id: number; name: string} | null>(null);
+  const [isDeletingPerson, setIsDeletingPerson] = useState(false);
+  const deletingPerson = useRef(false);
+  const deleteGeneration = useRef(0);
+  const confirmDelete = deleteTarget !== null;
+  const setConfirmDelete = useCallback((open: boolean) => {
+    if (deletingPerson.current) return;
+    setDeleteTarget(open && person && String(person.id) === id ? {id: person.id, name: person.name ?? "Unnamed person"} : null);
+  }, [person, id]);
 
   const showMessage = useCallback(
     (message: string, severity: "success" | "error" = "success") => {
@@ -376,6 +384,7 @@ export const usePersonDetailPage = () => {
   useEffect(() => {
     const controller = new AbortController();
     const activeRequests = requests.current;
+    const deleteVersion = ++deleteGeneration.current;
 
     const initialLoad = async () => {
       if (!id) {
@@ -385,6 +394,7 @@ export const usePersonDetailPage = () => {
       }
 
       setPerson(null);
+      setDeleteTarget(null); deletingPerson.current = false; setIsDeletingPerson(false);
       setLoadError(null);
       setOptimisticFaceIds([]);
       setForm({ name: "" });
@@ -419,6 +429,7 @@ export const usePersonDetailPage = () => {
 
     return () => {
       controller.abort();
+      if (deleteGeneration.current === deleteVersion) deleteGeneration.current += 1;
       activeRequests.detail += 1;
       activeRequests.suggestions += 1;
       activeRequests.similar += 1;
@@ -736,16 +747,19 @@ export const usePersonDetailPage = () => {
   };
 
   const handleDeletePerson = async () => {
-    if (!id) return;
+    if (!deleteTarget || routeId.current !== String(deleteTarget.id) || deletingPerson.current) return;
+    const target = deleteTarget.id, version = deleteGeneration.current;
+    const current = () => routeId.current === String(target) && deleteGeneration.current === version;
+    deletingPerson.current = true; setIsDeletingPerson(true);
     try {
-      await deletePersonService(Number(id));
-      showMessage("Person deleted");
-      navigate("/people");
-    } catch (err) {
-      console.error("Failed to delete person:", err);
-      showMessage("Failed to delete person", "error");
+      await deletePersonService(target);
+      if (!current()) return;
+      setDeleteTarget(null); showMessage("Person deleted"); navigate("/people");
+    } catch (error) {
+      if (current()) { console.error("Failed to delete person:", error); showMessage("Failed to delete person", "error"); }
+    } finally {
+      if (current()) {deletingPerson.current = false; setIsDeletingPerson(false);}
     }
-    setConfirmDelete(false);
   };
 
   const handleTagAddedToPerson = (newTag: Tag) => {
@@ -842,6 +856,8 @@ export const usePersonDetailPage = () => {
     snackbar,
     setSnackbar,
     confirmDelete,
+    deleteTarget,
+    isDeletingPerson,
     setConfirmDelete,
     loadMoreDetectedFaces,
     refreshSuggestedFaces,

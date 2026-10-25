@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import delete
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
+from app.api._media_filters import exclude_missing
 from app.api._cursor_validation import validate_tag_cursor
 from app.config import require_mutation_allowed, settings
 from app.database import get_session, safe_commit
@@ -36,8 +38,25 @@ def list_tags(
         cursor=cursor,
         limit=limit,
     )
-    return CursorPage(next_cursor=next_cursor, items=results)
+    return CursorPage(next_cursor=next_cursor, items=_tag_reads(session, results))
 
+
+
+def _tag_reads(session: Session, tags: list[Tag]) -> list[TagRead]:
+    """Project visible tag members without changing persisted relationships."""
+    if not tags:
+        return []
+    visible_media: dict[int, list[Media]] = {tag.id: [] for tag in tags}
+    rows = session.exec(
+        exclude_missing(select(MediaTagLink.tag_id, Media))
+        .join(Media, Media.id == MediaTagLink.media_id)
+        .where(MediaTagLink.tag_id.in_(visible_media))
+        .order_by(MediaTagLink.tag_id, Media.id)
+    ).all()
+    for tag_id, media in rows:
+        visible_media[tag_id].append(media)
+    return [TagRead(id=tag.id, name=tag.name, media=visible_media[tag.id], persons=tag.persons)
+            for tag in tags]
 
 def get_or_create_tag(name: str, session: Session) -> Tag:
     name = name.lower()
@@ -119,8 +138,7 @@ def get_tag(tag_id: int, session: Session = Depends(get_session)):
     tag = session.get(Tag, tag_id)
     if not tag:
         raise HTTPException(status_code=404, detail="Tag not found")
-    # relationships media & persons auto‑loaded
-    return tag
+    return _tag_reads(session, [tag])[0]
 
 
 # Assign / remove on Media
@@ -163,8 +181,11 @@ def add_tag_to_person(
         raise HTTPException(404, "Person not found")
     if not session.get(Tag, tag_id):
         raise HTTPException(404, "Tag not found")
-    link = PersonTagLink(person_id=person_id, tag_id=tag_id)
-    session.add(link)
+    session.exec(
+        insert(PersonTagLink)
+        .values(person_id=person_id, tag_id=tag_id)
+        .on_conflict_do_nothing(index_elements=["person_id", "tag_id"])
+    )
     safe_commit(session)
 
 

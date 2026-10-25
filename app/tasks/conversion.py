@@ -376,15 +376,12 @@ def _run_conversion(task_id: str, media_path: str, media_id: int):
             destination = media_path_obj.with_suffix(".mp4")
             if destination != media_path_obj:
                 destination = _available_name(destination)
-            new_file = temp_output_path.replace(destination)
-            if destination != media_path_obj:
-                media_path_obj.unlink()
+            from app.conversion import publish_replacement
+            publish_replacement(
+                session, media, temp_output_path, destination,
+                commit=lambda: _finish_task(session, task, "completed"),
+            )
             preserve_output = False
-            media.path = str(new_file)
-            media.filename = new_file.name
-            media.size = new_file.stat().st_size
-            session.add(media)
-            _finish_task(session, task, "completed")
         except Exception as e:
             logger.error(f"Conversion task {task_id} failed: {e}")
             session.rollback()

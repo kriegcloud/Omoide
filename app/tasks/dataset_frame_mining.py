@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 import cv2
@@ -20,6 +20,7 @@ from app.services.frame_mining import (
     select_candidates,
 )
 from app.services.media_files import MediaFileError
+from app.tasks.common import _start_task, _finish_task
 from app.tasks.state import clear_task_progress, record_task_failure, set_task_progress
 from app.utils import generate_perceptual_hash, generate_thumbnail
 
@@ -111,12 +112,13 @@ def mine_dataset_frames(
         if task is None:
             logger.error("Dataset frame mining task %s is missing", task_id)
             return
+        if not _start_task(session, task):
+            return
         if dataset is None:
-            task.status = Status.FAILED
-            task.finished_at = datetime.now()
             task.result = {"dataset_id": dataset_id, "error": "Dataset not found"}
             session.add(task)
             safe_commit(session)
+            _finish_task(session, task, "failed")
             return
 
         summaries = dataset_videos(session, dataset)
@@ -128,8 +130,6 @@ def mine_dataset_frames(
             ]
         else:
             video_ids = list(dict.fromkeys(video_media_ids))
-        task.status = Status.RUNNING
-        task.started_at = datetime.now()
         task.total = len(video_ids)
         task.result = {"dataset_id": dataset_id, "created_media_ids": []}
         session.add(task)
@@ -137,7 +137,7 @@ def mine_dataset_frames(
 
         for index, video_id in enumerate(video_ids, start=1):
             session.refresh(task)
-            if task.status == Status.CANCELLED:
+            if task.status != Status.RUNNING:
                 break
             video = session.get(Media, video_id)
             set_task_progress(
@@ -167,6 +167,9 @@ def mine_dataset_frames(
                 if not chosen:
                     skipped += 1
                 for candidate in chosen:
+                    session.refresh(task)
+                    if task.status != Status.RUNNING:
+                        break
                     media = _register_frame(session, dataset, video, candidate)
                     created_ids.append(int(media.id))
             except (MediaFileError, FileExistsError, OSError, ValueError) as exc:
@@ -200,9 +203,6 @@ def mine_dataset_frames(
         task = session.get(ProcessingTask, task_id)
         if task is None:
             return
-        cancelled = task.status == Status.CANCELLED
-        task.status = Status.CANCELLED if cancelled else Status.COMPLETED
-        task.finished_at = datetime.now()
         task.result = {
             "dataset_id": dataset_id,
             "created_media_ids": created_ids,
@@ -211,8 +211,10 @@ def mine_dataset_frames(
         }
         session.add(task)
 
+        safe_commit(session)
+        completed = _finish_task(session, task, "completed")
         processor_task_id: str | None = None
-        if created_ids and not cancelled:
+        if created_ids and completed:
             processor_task = ProcessingTask(
                 task_type="run_processor_for_media", total=len(created_ids), processed=0
             )
@@ -220,9 +222,6 @@ def mine_dataset_frames(
             safe_commit(session)
             session.refresh(processor_task)
             processor_task_id = processor_task.id
-        else:
-            safe_commit(session)
-
     clear_task_progress(task_id)
     if processor_task_id is not None:
         from app.tasks.media_processing import (

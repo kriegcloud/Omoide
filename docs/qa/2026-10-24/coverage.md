@@ -1,33 +1,33 @@
 # Feature coverage ledger
 
-38 explicit frontend paths and256 API declarations were inventoried. Counts are a source census, not an assertion of exhaustive behavioral coverage. Runtime proofs use generated fixtures only. Every row requires explicit evidence or a named limitation.
+38 explicit frontend paths and256 API declarations were inventoried. Counts are a source census, not exhaustive behavioral coverage. All27feature families received automated contract review and the specific Chrome checks below. UI interactions used the Chrome extension on disposable fixtures at127.0.0.1:18126; production was not mutated. Listed tests run in the canonical suite; see rounds.md for exact results. Limitations are coverage limits, not waivers for confirmed defects.
 
 | Feature family | Automated contract evidence | Chrome/workflow evidence | Residual coverage limit |
 |---|---|---|---|
-| Library/images/videos/favorites/folders | Baseline suite; round review pending | Pending | Pending |
-| Home widgets/memories/highlights | Baseline suite; round review pending | Pending | Pending |
-| Media detail/modal/neighbors/similar | Baseline suite; round review pending | Pending | Pending |
-| Rename/move/delete/edit/bulk files | Baseline suite; round review pending | Pending | Pending |
-| Video scenes/conversion/streaming | Baseline suite; round review pending | Pending | Pending |
-| Semantic/image/person/tag search | Baseline suite; round review pending | Pending | Pending |
-| Tags and associations | Baseline suite; round review pending | Pending | Pending |
-| People/hidden/demographics/social links | Baseline suite; round review pending | Pending | Pending |
-| Face assignment/orphans/suggestions/undo | Baseline suite; round review pending | Pending | Pending |
-| Merges/pair decisions/relationships/timeline | Baseline suite; round review pending | Pending | Pending |
-| Person media attachment/export | Baseline suite; round review pending | Pending | Pending |
-| Albums | Baseline suite; round review pending | Pending | Pending |
-| Events and event-to-album | Baseline suite; round review pending | Pending | Pending |
-| Maps/geotagger/places | Baseline suite; round review pending | Pending | Pending |
-| Statistics/camera filters | Baseline suite; round review pending | Pending | Pending |
-| Maintenance/review/missing files | Baseline suite; round review pending | Pending | Pending |
-| Tasks/processors/cancel/resume | Baseline suite; round review pending | Pending | Pending |
-| Dataset membership/triage/crops | Baseline suite; round review pending | Pending | Pending |
-| Dataset analysis/augmentation/frame mining | Baseline suite; round review pending | Pending | Pending |
-| Captions/export/history | Baseline suite; round review pending | Pending | Pending |
-| Training/samples/likeness/evaluation | Baseline suite; round review pending | Pending | Pending |
-| Repairs and output lineage | Baseline suite; round review pending | Pending | Pending |
-| Annotations/history/revisions | Baseline suite; round review pending | Pending | Pending |
-| Curation/authority/passkeys/frozen exports | Baseline suite; round review pending | Pending | Pending |
-| Configuration/profiles | Baseline suite; round review pending | Pending | Pending |
-| Shell/theme/hotkeys/selection/confirmation | Baseline suite; round review pending | Pending | Pending |
-| Hosting/health/assets/origin guards | Baseline suite; round review pending | Pending | Pending |
+| Library/images/videos/favorites/folders | visibility, folders, media_folder_paths, upstream_api_sync_contracts | Chrome /, /images, /videos, /favorites; folder controls and generated fixture grids | Production-scale scroll/memory behavior not load-tested |
+| Home widgets/memories/highlights | config, upstream API contracts; frontend suites | Home widgets and highlights rendered; all widget configuration controls inspected | No prior-year personal memories used |
+| Media detail/modal/neighbors/similar | frontend media tests; pipeline_search | Media dialog; eight CLIP-similar fixtures; people/tags/EXIF/processors/annotations tabs | Similarity quality not scored using synthetic fixtures |
+| Rename/move/delete/edit/bulk files | media_files, image_edits, image_limits, bulk_delete_routes, safety_filenames/paths, delete_record | Traversal rename rejected; valid rename persisted; action menus/confirmation boundaries inspected | Move/delete/edit storage faults proved in isolated tests, not destructive production UI |
+| Video scenes/conversion/streaming | safety_conversion_lifecycle, runtime_transaction_safety, frame_mining | Scene timeline; keep-original conversion completed; video readyState4 and full3.018s playback | Codec/platform matrix not exhaustive |
+| Semantic/image/person/tag search | pipeline_search, upstream API contracts; frontend search tests | Media query navigates correctly and empty state renders; people search filters; tag detail | Image-upload search contract-tested; semantic ranking not quality-scored |
+| Tags and associations | api_domain_contracts, visibility | Literal markup escaped; tag listing and linked people/media rendered | Concurrent retry covered by conflict-safe insert contract, not UI double-click timing |
+| People/hidden/demographics/social links | person_demographics, person_hidden, social_links, api_domain_contracts | Visible/hidden pages; Bob favorite persists; name search filters | Demographic/social-link write boundaries tested with synthetic API contracts |
+| Face assignment/orphans/suggestions/undo | face_assignment_provenance, face_suggestions, orphans, pipeline_suggestions | Two orphan fixtures render; person Faces and Similar People tabs | Synthetic identity vectors only; recognition accuracy not asserted |
+| Merges/pair decisions/relationships/timeline | merge_queue, round6_persons, provenance | Relationship graph; timeline media; recurring synthetic annual event created | Merge correctness and ownership races automated, not personal-data mutation |
+| Person media attachment/export | person_media_bulk, person_export_accounting, safety_exports | Person export/detail controls reviewed; exact totals frontend regression | Large failures tested550items without actual production export |
+| Albums | frontend round1-ui; API contracts | Whitespace create blocked; literal markup name escaped; membership removal and immediate Undo restore | Delayed cross-route responses simulated deterministically |
+| Events and event-to-album | frontend round1-ui; upstream API contracts | Event conversion confirmation; new album preserves6members and event removed | Concurrent stale completion covered by regression tests |
+| Maps/geotagger/places | api_domain_contracts GPS; frontend task-pages | Paris lookup -> Pa clears obsolete results; Chicago4-item place; geographic rejection live API | No browser geolocation permission or personal coordinates used |
+| Statistics/camera filters | upstream_api_sync_contracts | Statistics counts/charts and QA Camera Fixture One rendered | Statistics catalog counts include missing records by current definition |
+| Maintenance/review/missing files | round6 review/missing/duplicates/broken/folders tests | All8maintenance pages plus no-persons/orphans render populated/empty states | Destructive confirmation and FK cleanup automated with isolated data |
+| Tasks/processors/cancel/resume | task_feed, task_resume, runtime_transaction_safety, scan_accounting, face_model_bootstrap | Fixture scan completed incl malformed image; export/conversion tasks completed; processor controls inspected | Long-running inference cancellation fault-injected, not personal-library jobs |
+| Dataset membership/triage/crops | datasets, triage, dataset_item_update | Dataset5items/1excluded; triage Keep then Undo restored0reviewed; crop controls | Crop image quality not exhaustively evaluated |
+| Dataset analysis/augmentation/frame mining | composition, burst_dedupe, frame_mining, pose_prototypes, background_swap | Analysis distributions/clusters/gaps/outliers rendered; unavailable Add0 disabled | Heavy augmentation/model quality not run |
+| Captions/export/history | caption_review, pipeline_datasets, runtime_transaction_safety | Caption edit persisted and trigger warning cleared; completed export4included items and manifest link | Actual Comfy generation unavailable in fixture; contract tests cover history/revisions |
+| Training/samples/likeness/evaluation | training_runs/presets, likeness, eval_kit, runtime_transaction_safety | Train dialog populated from completed export; missing-launcher status shown; cancelled before launch | No actual LoRA training, sample generation or quality evaluation |
+| Repairs and output lineage | image_repairs, pipeline_repairs, comfy_bridge suites | Repairs empty state; disabled repair actions explained | Comfy backend deliberately absent; generation tested by contracts |
+| Annotations/history/revisions | annotations, annotation_history_outbox, annotation_coordination | Media annotation tab shows explicit unavailable-backend status | Protected implementation unmodified; real external inference not exercised |
+| Curation/authority/passkeys/frozen exports | curation* suites; realstdio MCP9/9 | Still-review disabled boundary displayed; anonymous authority GET401 | No real passkey ceremony, privileged operator registration or personal export |
+| Configuration/profiles | config, pipeline_profile | All10configuration tabs inspected without changing settings | Profile persistence/import tested through isolated contracts |
+| Shell/theme/hotkeys/selection/confirmation | frontend199 tests; hotkeys76; selection46 | Keyboard help; dialog scope; album selection/Undo; triage Undo; destructive target regression | No exhaustive accessibility or viewport/device audit |
+| Hosting/health/assets/origin guards | same_origin_guard, migration_health, safety_deploy, workstation_backup | QA health200 and e0f1a2b3c4d5; loaded built SPA through Chrome extension | No new production deployment or cross-platform desktop build |

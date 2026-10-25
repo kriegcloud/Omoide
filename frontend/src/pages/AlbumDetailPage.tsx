@@ -1,5 +1,6 @@
+import ConfirmDialog from "../components/ConfirmDialog";
 import { useUndo, useUndoRefresh } from "../context/UndoContext";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -42,24 +43,29 @@ export default function AlbumDetailPage() {
   const { push, refreshVisible } = useUndo();
   const { selectedIds, clear, isSelecting } = useSelection();
 
-  const [album, setAlbum] = useState<Album | null>(null);
+  const [loadedAlbum, setAlbum] = useState<Album | null>(null);
+  const album = loadedAlbum?.id === albumId ? loadedAlbum : null;
+  const routeId = useRef(albumId); routeId.current = albumId;
+  const generation = useRef(0);
+  const actionBusy = useRef(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Album | null>(null);
   const [newName, setNewName] = useState("");
   const [refreshToken, setRefreshToken] = useState(0);
   const [snackbar, setSnackbar] = useState("");
 
   useEffect(() => {
-    if (!Number.isFinite(albumId)) return;
-    getAlbum(albumId)
-      .then((data) => {
-        setAlbum(data);
-        setNewName(data.name);
-      })
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : "Failed to load album")
-      );
+    const version = ++generation.current;
+    const controller = new AbortController();
+    const current = () => !controller.signal.aborted && generation.current === version && routeId.current === albumId;
+    setAlbum(null); setError(null); actionBusy.current = false; setBusy(false);
+    setRenameOpen(false); setDeleteTarget(null);
+    if (Number.isFinite(albumId)) getAlbum(albumId, controller.signal)
+      .then((data) => { if (current()) { setAlbum(data); setNewName(data.name); } })
+      .catch((error) => { if (current()) setError(error instanceof Error ? error.message : "Failed to load album"); });
+    return () => { controller.abort(); if (generation.current === version) generation.current += 1; };
   }, [albumId, refreshToken]);
 
   const fetcher = useCallback(
@@ -68,26 +74,38 @@ export default function AlbumDetailPage() {
     [albumId]
   );
 
-  useUndoRefresh(`album-info:${albumId}`, async () => { setAlbum(await getAlbum(albumId)); });
+  useUndoRefresh(`album-info:${albumId}`, async () => {
+    const version = generation.current;
+    const result = await getAlbum(albumId);
+    if (routeId.current === albumId && generation.current === version) setAlbum(result);
+  });
 
   const handleRename = async () => {
     const trimmed = newName.trim();
-    if (!trimmed || !album) return;
+    if (!trimmed || !album || actionBusy.current) return;
+    const target = album.id, version = generation.current;
+    actionBusy.current = true; setBusy(true);
     try {
-      const updated = await updateAlbum(albumId, { name: trimmed });
-      setAlbum(updated);
-      setRenameOpen(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to rename album");
+      const updated = await updateAlbum(target, {name: trimmed});
+      if (routeId.current !== target || generation.current !== version) return;
+      setAlbum(updated); setRenameOpen(false);
+    } catch (error) {
+      if (routeId.current === target && generation.current === version) setError(error instanceof Error ? error.message : "Failed to rename album");
+    } finally {
+      if (routeId.current === target && generation.current === version) {actionBusy.current = false; setBusy(false);}
     }
   };
-
   const handleDelete = async () => {
+    if (!deleteTarget || deleteTarget.id !== routeId.current || actionBusy.current) return;
+    const target = deleteTarget.id, version = generation.current;
+    actionBusy.current = true; setBusy(true);
     try {
-      await deleteAlbum(albumId);
-      navigate("/albums");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete album");
+      await deleteAlbum(target);
+      if (routeId.current === target && generation.current === version) {setDeleteTarget(null); navigate("/albums");}
+    } catch (error) {
+      if (routeId.current === target && generation.current === version) setError(error instanceof Error ? error.message : "Failed to delete album");
+    } finally {
+      if (routeId.current === target && generation.current === version) {actionBusy.current = false; setBusy(false);}
     }
   };
 
@@ -98,13 +116,16 @@ export default function AlbumDetailPage() {
   };
 
   const handleRemoveSelected = async () => {
-    if (selectedIds.size === 0) return;
+    if (selectedIds.size === 0 || !album || actionBusy.current) return;
+    const target = album.id, version = generation.current;
+    actionBusy.current = true; setBusy(true);
     const mediaIds = Array.from(selectedIds);
     try {
       const updated = await removeMediaFromAlbum(
         albumId,
         mediaIds
       );
+      if (routeId.current !== target || generation.current !== version) return;
       setAlbum(updated);
       clear();
       setRefreshToken((t) => t + 1);
@@ -117,7 +138,9 @@ export default function AlbumDetailPage() {
         },
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to remove media");
+      if (routeId.current === target && generation.current === version) setError(err instanceof Error ? err.message : "Failed to remove media");
+    } finally {
+      if (routeId.current === target && generation.current === version) {actionBusy.current = false; setBusy(false);}
     }
   };
 
@@ -168,7 +191,7 @@ export default function AlbumDetailPage() {
             </IconButton>
           </Tooltip>
           <Tooltip title="Delete album (keeps the media)">
-            <IconButton color="error" onClick={() => setDeleteOpen(true)}>
+            <IconButton color="error" disabled={!album || busy} onClick={() => setDeleteTarget(album)}>
               <DeleteIcon />
             </IconButton>
           </Tooltip>
@@ -225,28 +248,16 @@ export default function AlbumDetailPage() {
             variant="contained"
             disableElevation
             onClick={handleRename}
-            disabled={!newName.trim()}
+            disabled={busy || !newName.trim() || !album}
           >
             Rename
           </Button>
         </DialogActions>
       </Dialog>
 
-      <Dialog open={deleteOpen} onClose={() => setDeleteOpen(false)}>
-        <DialogTitle>Delete album?</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2">
-            "{album?.name}" will be deleted. The media itself stays in your
-            library.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDeleteOpen(false)}>Cancel</Button>
-          <Button color="error" variant="contained" disableElevation onClick={handleDelete}>
-            Delete
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <ConfirmDialog open={deleteTarget !== null} title="Delete album?"
+        message={`"${deleteTarget?.name ?? ""}" will be deleted. The media itself stays in your library.`}
+        confirmLabel="Delete" loading={busy} onConfirm={handleDelete} onClose={() => setDeleteTarget(null)} />
 
       <Snackbar
         open={!!snackbar}

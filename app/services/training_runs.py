@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
@@ -151,10 +153,27 @@ def create_run(
         "run_id": run.id,
         "created_at": run.created_at.isoformat(),
     }
-    (run_dir / "REQUESTED").write_text(
-        json.dumps(requested, indent=2) + "\n", encoding="utf-8"
-    )
-    session.commit()
+    descriptor, temporary_name = tempfile.mkstemp(prefix=".request-", suffix=".tmp", dir=run_dir)
+    temporary_request = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps(requested, indent=2) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        # The host watcher consumes REQUESTED independently of the database.
+        # Only expose it after its run is durably admitted.
+        session.commit()
+        try:
+            temporary_request.replace(run_dir / "REQUESTED")
+        except OSError as exc:
+            run.status = TrainingRunStatus.FAILED
+            run.error = f"Could not publish training request: {exc}"
+            run.finished_at = datetime.now()
+            session.add(run)
+            session.commit()
+            raise
+    finally:
+        temporary_request.unlink(missing_ok=True)
     session.refresh(run)
     return run
 

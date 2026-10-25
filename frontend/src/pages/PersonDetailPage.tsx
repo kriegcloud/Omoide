@@ -9,7 +9,7 @@ import {
   DialogTitle,
   Typography,
 } from "@mui/material";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Snackbar from "@mui/material/Snackbar";
 import { PersonContentTabs } from "../components/PersonContentTabs";
@@ -20,7 +20,6 @@ import PersonPicker from "../components/PersonPicker";
 import { pickDirectory } from "../services/config";
 import { exportPersonMedia } from "../services/personActions";
 import { getTask } from "../services/task";
-import { getTaskFailures } from "../services/taskActions";
 import { Task } from "../types";
 
 const EXPORT_POLL_INTERVAL_MS = 1500;
@@ -58,6 +57,8 @@ export default function PersonDetailPage() {
     snackbar,
     setSnackbar,
     confirmDelete,
+    deleteTarget,
+    isDeletingPerson,
     setConfirmDelete,
     loadSimilar,
     loadRelationshipGraph,
@@ -89,13 +90,23 @@ export default function PersonDetailPage() {
     fetchFacesForMedia,
   } = usePersonDetailPage();
 
+  const exportGeneration = useRef(0);
+  const exportPersonId = useRef(person?.id); exportPersonId.current = person?.id;
+  useEffect(() => {
+    exportGeneration.current += 1;
+    setExportTask(null); setExportDialogOpen(false); setExportDestination(null); setExportingMedia(false);
+    return () => { exportGeneration.current += 1; };
+  }, [person?.id]);
+
   const selectExportDestination = async () => {
+    const version = exportGeneration.current;
     try {
       const selectedDirectory = await pickDirectory();
-      if (!selectedDirectory) return;
+      if (!selectedDirectory || version !== exportGeneration.current) return;
       setExportDestination(selectedDirectory);
       setExportDialogOpen(true);
     } catch (error) {
+      if (version !== exportGeneration.current) return;
       console.error("Failed to select export folder:", error);
       setSnackbar({
         open: true,
@@ -128,15 +139,17 @@ export default function PersonDetailPage() {
           });
           return;
         }
-        const skipped = (await getTaskFailures(updated.id)).length;
-        if (cancelled) return;
-        const exported = updated.processed - skipped;
+        const result = updated.result;
+        const exported = result?.exported, skipped = result?.skipped;
+        const count = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+        if (!count(exported) || !count(skipped)) {
+          setSnackbar({open: true, message: "Media export completed; outcome counts are unavailable.", severity: "warning"});
+          return;
+        }
         setSnackbar({
           open: true,
-          message: `Exported ${exported} media file${exported === 1 ? "" : "s"}${
-            skipped ? `; skipped ${skipped}` : ""
-          }.`,
-          severity: skipped && exported === 0 ? "error" : "success",
+          message: `Exported ${exported} media file${exported === 1 ? "" : "s"}${skipped ? `; skipped ${skipped}` : ""}.`,
+          severity: exported === 0 && skipped > 0 ? "error" : skipped > 0 ? "warning" : "success",
         });
       } catch (error) {
         if (cancelled) return;
@@ -151,14 +164,17 @@ export default function PersonDetailPage() {
   }, [exportTask, setSnackbar]);
 
   const exportMedia = async (mode: "copy" | "move") => {
-    if (!exportDestination) return;
+    if (!exportDestination || !person) return;
+    const target = person.id, version = exportGeneration.current;
+    const current = () => exportPersonId.current === target && exportGeneration.current === version;
     setExportingMedia(true);
     try {
       const task = await exportPersonMedia(
-        person?.id ?? 0,
+        target,
         exportDestination,
         mode,
       );
+      if (!current()) return;
       setExportTask(task);
       setSnackbar({
         open: true,
@@ -168,6 +184,7 @@ export default function PersonDetailPage() {
       setExportDialogOpen(false);
       setExportDestination(null);
     } catch (error) {
+      if (!current()) return;
       console.error(`Failed to ${mode} person media:`, error);
       setSnackbar({
         open: true,
@@ -176,7 +193,7 @@ export default function PersonDetailPage() {
         severity: "error",
       });
     } finally {
-      setExportingMedia(false);
+      if (current()) setExportingMedia(false);
     }
   };
 
@@ -281,7 +298,8 @@ export default function PersonDetailPage() {
       <ConfirmDialog
         open={confirmDelete}
         title="Confirm Deletion"
-        message="Are you sure you want to delete this person?"
+        message={`Delete "${deleteTarget?.name ?? "this person"}"?`}
+        loading={isDeletingPerson}
         confirmLabel="Delete"
         onConfirm={handleDeletePerson}
         onClose={() => setConfirmDelete(false)}

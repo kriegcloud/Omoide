@@ -151,8 +151,8 @@ class MediaDetail(SQLModel):
 
 
 class GeoUpdate(SQLModel):
-    latitude: float
-    longitude: float
+    latitude: float = PydanticField(ge=-90, le=90, allow_inf_nan=False)
+    longitude: float = PydanticField(ge=-180, le=180, allow_inf_nan=False)
 
 
 class FavoriteUpdate(SQLModel):

@@ -418,7 +418,7 @@ def get_orphans(
     cursor: str | None = Query(
         None, description="Opaque cursor from the previous page's `next_cursor`"
     ),
-    limit: int = 48,
+    limit: int = Query(48, ge=1, le=200),
 ):
     orphans, next_cursor = paginate(
         session,

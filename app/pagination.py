@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import base64
 import json
+import math
+from enum import Enum
 from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Any
@@ -55,16 +57,50 @@ def encode_cursor(tag: str, values: Sequence[Any]) -> str:
     return base64.urlsafe_b64encode(raw).decode()
 
 
-def decode_cursor(cursor: str, tag: str, key_count: int) -> list[Any]:
+def _cursor_python_type(expression: ColumnElement) -> type:
+    sql_type = expression.type
+    while True:
+        try:
+            return sql_type.python_type
+        except NotImplementedError:
+            # SQLModel AutoString wraps String without implementing python_type.
+            wrapped = getattr(sql_type, "impl", None)
+            if wrapped is None or wrapped is sql_type:
+                raise ValueError("Sort key has no declared Python type") from None
+            sql_type = wrapped
+
+
+def _typed_cursor_value(value: Any, expression: ColumnElement) -> Any:
+    expected = _cursor_python_type(expression)
+    if issubclass(expected, Enum):
+        if isinstance(value, bool):
+            raise ValueError("Boolean is not an enum cursor key")
+        return expected(value)
+    if expected is int:
+        valid = type(value) is int and -(2**63) <= value < 2**63
+    elif expected is float:
+        valid = type(value) in (int, float) and math.isfinite(float(value))
+    else:
+        valid = type(value) is expected
+    if not valid:
+        raise ValueError("Cursor key type does not match its sort")
+    return value
+
+
+def decode_cursor(cursor: str, tag: str, key_count: int, *,
+                  keys: Sequence[SortKey] | None = None) -> list[Any]:
     try:
         decoded = json.loads(base64.urlsafe_b64decode(cursor.encode()))
-        if not isinstance(decoded, list):
-            raise ValueError("cursor is not a list")
+        if not isinstance(decoded, list) or not decoded:
+            raise ValueError("cursor is not a nonempty list")
         values = [_decode_value(v) for v in decoded[1:]]
-    except (ValueError, TypeError) as exc:
+        if len(values) != key_count or decoded[0] != tag:
+            raise ValueError("Cursor does not match the requested sort")
+        if keys is not None:
+            values = [_typed_cursor_value(value, expression)
+                      for value, (expression, _) in zip(values, keys)]
+    except (ValueError, TypeError, OverflowError) as exc:
         raise HTTPException(400, "Invalid cursor format") from exc
-    if len(values) != key_count or decoded[0] != tag:
-        raise HTTPException(400, "Cursor does not match the requested sort")
     return values
 
 
@@ -93,10 +129,12 @@ def paginate(
     ORDER BY; ordering comes from ``keys``. The key values are selected along
     with each row, so the next cursor never re-derives them in Python.
     """
+    if type(limit) is not int or limit < 1:
+        raise HTTPException(400, "Page limit must be positive")
     labelled = [expr.label(f"_page_key_{i}") for i, (expr, _) in enumerate(keys)]
     query = stmt.add_columns(*labelled)
     if cursor:
-        query = query.where(keyset_after(keys, decode_cursor(cursor, tag, len(keys))))
+        query = query.where(keyset_after(keys, decode_cursor(cursor, tag, len(keys), keys=keys)))
     query = query.order_by(
         *(expr.asc() if ascending else expr.desc() for expr, ascending in keys)
     )

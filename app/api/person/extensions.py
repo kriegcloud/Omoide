@@ -1,3 +1,5 @@
+from ._validation import validate_profile_face
+
 from collections import deque
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -596,7 +598,7 @@ def get_social_link_suggestions(
 @router.post("/{person_id}/profile_face", response_model=Person)
 def set_profile_face(
     person_id: int,
-    face_id: int | None,
+    face_id: int | None = None,
     session: Session = Depends(get_session),
 ):
     if settings.general.presentation_mode:
@@ -607,6 +609,7 @@ def set_profile_face(
     person = session.get(Person, person_id)
     if not person:
         raise HTTPException(404, "Person not found")
+    validate_profile_face(session, person_id, face_id)
     person.profile_face_id = face_id
     session.add(person)
     safe_commit(session)

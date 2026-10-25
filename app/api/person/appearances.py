@@ -133,7 +133,7 @@ def get_faces(
     cursor: str | None = Query(None),
     sort_by: str = Query("id_desc"),
     media_id: int | None = Query(None),
-    limit: int = 10,
+    limit: int = Query(10, ge=1, le=200),
 ):
     person = session.get(Person, person_id)
     if not person:
@@ -172,7 +172,7 @@ def get_appearances(
     tags: list[str] | None = Query(
         None, description="Filter by tag name(s), comma-separated"
     ),
-    limit: int = 30,
+    limit: int = Query(30, ge=1, le=200),
     cursor: str | None = Query(
         None, description="Opaque cursor from the previous page's `next_cursor`"
     ),

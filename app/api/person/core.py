@@ -5,6 +5,8 @@ from .extensions import (
     update_person_demographics,
 )
 
+from ._validation import validate_profile_face
+
 from typing import Literal
 
 from fastapi import (
@@ -17,6 +19,8 @@ from fastapi import (
 from sqlalchemy import (
     ColumnElement,
     case,
+    String,
+    type_coerce,
     func,
     union_all,
 )
@@ -76,7 +80,7 @@ def _person_sort_keys(sort: PersonSort) -> list[tuple[ColumnElement, bool]]:
         unnamed = case((name == "", 1), else_=0)
         return [
             (unnamed, True),
-            (func.lower(name), ascending),
+            (type_coerce(func.lower(name), String()), ascending),
             (Person.id, ascending),
         ]
     if sort == "views_desc":
@@ -107,7 +111,7 @@ def list_persons(
     cursor: str | None = Query(
         None, description="Opaque cursor from the previous page's `next_cursor`"
     ),
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=500),
     hidden: bool = Query(False),
     gender: str | None = Query(None),
     session: Session = Depends(get_session),
@@ -209,6 +213,8 @@ def update_person(
     if not person:
         raise HTTPException(404, "Person not found")
     updates = data.model_dump(exclude_unset=True)
+    if "profile_face_id" in updates:
+        validate_profile_face(session, person_id, updates["profile_face_id"])
     if "gender" in updates:
         requested_gender = updates.pop("gender")
         if requested_gender is None:

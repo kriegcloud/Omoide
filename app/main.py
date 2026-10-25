@@ -2,6 +2,7 @@ import asyncio
 import io
 import json
 import logging
+import math
 import mimetypes
 import multiprocessing
 import os
@@ -84,6 +85,8 @@ if _webview2_runtime_path:
 from anyio import to_thread
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -669,6 +672,28 @@ except Exception:
     pass
 
 app = FastAPI(lifespan=lifespan, redoc_url=None, dependencies=[Depends(require_mutation_allowed)])
+
+
+def _json_safe_validation_input(value):
+    """Keep rejected nonfinite input representable in a JSON error response."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, dict):
+        return {key: _json_safe_validation_input(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_validation_input(item) for item in value]
+    return value
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
+    # Preserve FastAPI's normal error shape. Never log the request body or its
+    # validation inputs; only sanitize values that JSONResponse cannot encode.
+    return JSONResponse(status_code=422, content={
+        "detail": jsonable_encoder(_json_safe_validation_input(exc.errors())),
+    })
+
+
 install_curation_guard(app)
 origins = [os.environ.get("DOMAIN", ""), "http://localhost:5173"]
 app.add_middleware(

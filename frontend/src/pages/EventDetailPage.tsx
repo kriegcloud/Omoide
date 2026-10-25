@@ -1,14 +1,10 @@
-import React, { useCallback, useEffect, useState } from "react";
+import ConfirmDialog from "../components/ConfirmDialog";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Box,
   Button,
   Container,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogContentText,
-  DialogTitle,
   IconButton,
   TextField,
   Typography,
@@ -32,21 +28,29 @@ export default function EventDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const eventId = Number(id);
-  const [event, setEvent] = useState<EventItem | null>(null);
+  const [loadedEvent, setEvent] = useState<EventItem | null>(null);
+  const event = loadedEvent?.id === eventId ? loadedEvent : null;
+  const routeId = useRef(eventId); routeId.current = eventId;
+  const generation = useRef(0);
+  const actionBusy = useRef(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [isSavingTitle, setIsSavingTitle] = useState(false);
-  const [convertOpen, setConvertOpen] = useState(false);
+  const [convertTarget, setConvertTarget] = useState<EventItem | null>(null);
   const [isConverting, setIsConverting] = useState(false);
 
   useEffect(() => {
-    if (!Number.isFinite(eventId)) return;
-    getEvent(eventId)
-      .then(setEvent)
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : "Failed to load event")
-      );
+    const version = ++generation.current;
+    const controller = new AbortController();
+    const current = () => !controller.signal.aborted && generation.current === version && routeId.current === eventId;
+    setEvent(null); setError(null); actionBusy.current = false; setBusy(false);
+    setIsRenaming(false); setConvertTarget(null); setIsSavingTitle(false); setIsConverting(false);
+    if (Number.isFinite(eventId)) getEvent(eventId, controller.signal)
+      .then((data) => { if (current()) { setEvent(data);  } })
+      .catch((error) => { if (current()) setError(error instanceof Error ? error.message : "Failed to load event"); });
+    return () => { controller.abort(); if (generation.current === version) generation.current += 1; };
   }, [eventId]);
 
   const fetcher = useCallback(
@@ -76,34 +80,29 @@ export default function EventDetailPage() {
 
   const saveTitle = async () => {
     const title = titleDraft.trim();
-    if (!title || !event) {
-      setIsRenaming(false);
-      return;
-    }
-    setIsSavingTitle(true);
+    if (!title || !event || actionBusy.current) return;
+    const target = event.id, version = generation.current;
+    actionBusy.current = true; setBusy(true); setIsSavingTitle(true);
     try {
-      const updated = await updateEvent(event.id, title);
-      setEvent(updated);
-      setIsRenaming(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to rename event");
+      const updated = await updateEvent(target, title);
+      if (routeId.current === target && generation.current === version) {setEvent(updated); setIsRenaming(false);}
+    } catch (error) {
+      if (routeId.current === target && generation.current === version) setError(error instanceof Error ? error.message : "Failed to rename event");
     } finally {
-      setIsSavingTitle(false);
+      if (routeId.current === target && generation.current === version) {actionBusy.current = false; setBusy(false); setIsSavingTitle(false);}
     }
   };
-
   const handleConvert = async () => {
-    if (!event) return;
-    setIsConverting(true);
+    if (!convertTarget || convertTarget.id !== routeId.current || actionBusy.current) return;
+    const target = convertTarget.id, version = generation.current;
+    actionBusy.current = true; setBusy(true); setIsConverting(true);
     try {
-      const album = await convertEventToAlbum(event.id);
-      navigate(`/album/${album.id}`);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to convert event"
-      );
-      setIsConverting(false);
-      setConvertOpen(false);
+      const album = await convertEventToAlbum(target);
+      if (routeId.current === target && generation.current === version) navigate(`/album/${album.id}`);
+    } catch (error) {
+      if (routeId.current === target && generation.current === version) setError(error instanceof Error ? error.message : "Failed to convert event");
+    } finally {
+      if (routeId.current === target && generation.current === version) {actionBusy.current = false; setBusy(false); setIsConverting(false); setConvertTarget(null);}
     }
   };
 
@@ -153,7 +152,7 @@ export default function EventDetailPage() {
             variant="outlined"
             size="small"
             startIcon={<PhotoAlbumIcon />}
-            onClick={() => setConvertOpen(true)}
+            disabled={busy} onClick={() => setConvertTarget(event)}
           >
             Convert to album
           </Button>
@@ -181,29 +180,9 @@ export default function EventDetailPage() {
         }
       />
 
-      <Dialog open={convertOpen} onClose={() => setConvertOpen(false)}>
-        <DialogTitle>Convert event to album?</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            This creates a new album with this event&apos;s media and removes
-            the event. This can&apos;t be undone (though a future
-            &quot;Rebuild events&quot; run may recreate a similar event from
-            the same media).
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setConvertOpen(false)} disabled={isConverting}>
-            Cancel
-          </Button>
-          <Button
-            onClick={handleConvert}
-            variant="contained"
-            disabled={isConverting}
-          >
-            Convert
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <ConfirmDialog open={convertTarget !== null} title="Convert event to album?"
+        message={`Convert "${convertTarget?.title ?? ""}" to an album and remove this event? This cannot be undone.`}
+        confirmLabel="Convert" loading={isConverting} onConfirm={handleConvert} onClose={() => setConvertTarget(null)} />
     </Container>
   );
 }

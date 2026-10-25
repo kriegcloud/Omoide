@@ -1,4 +1,4 @@
-import { readCachedList, useListStore } from "./useListStore";
+import { useListStore } from "./useListStore";
 import type { Person, PersonReadSimple } from "../types";
 
 /**
@@ -37,37 +37,15 @@ export const removePeopleFromGrids = (ids: number[]) => {
   peopleGridKeys().forEach((key) => removeItems(key, ids));
 };
 
-/**
- * Patch a person's fields (name, count, gender, hidden state) into every
- * cached grid and re-sort so the grid matches what the backend would return.
- */
-export const patchPersonInGrids = (person: Person | PersonReadSimple) => {
-  useListStore.setState((state) => {
-    let changed = false;
-    const lists = { ...state.lists };
-    for (const key of Object.keys(lists)) {
-      if (!key.startsWith(PEOPLE_GRID_PREFIX)) continue;
-      const list = readCachedList<GridPerson>({lists}, key)!;
-      const index = list.items.findIndex(
-        (item: GridPerson) => item.id === person.id,
-      );
-      if (index === -1) continue;
-      const items = [...list.items];
-      items[index] = { ...items[index], ...person };
-      lists[key] = { ...list, items: sortPeople(items) };
-      changed = true;
-    }
-    return changed ? { lists } : state;
-  });
+/** Detail changes may affect sort order, filter membership and cursor boundaries.
+ * Those invariants belong to the server; discard variants instead of applying
+ * the default comparator to name/favorite/filtered grids. */
+export const patchPersonInGrids = (_person: Person | PersonReadSimple) => {
+  void _person;
+  clearPeopleGrids();
 };
 
-/** Re-sort a single grid after local count changes. */
+/** A local count change can alter cursor boundaries; reload server order. */
 export const resortPeopleGrid = (listKey: string) => {
-  useListStore.setState((state) => {
-    const list = readCachedList<GridPerson>(state, listKey);
-    if (!list) return state;
-    return {
-      lists: { ...state.lists, [listKey]: { ...list, items: sortPeople(list.items) } },
-    };
-  });
+  useListStore.getState().clearList(listKey);
 };

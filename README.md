@@ -116,17 +116,18 @@ The profile builds a small local image from the exact Omoide v0.7.0 image. The
 local image overlays the patched backend modules and rebuilds the frontend used
 by this profile. It leaves the upstream image unchanged.
 
-The profile binds two source libraries under `/app/media` read-only and tells
-the patched backend to treat the entire media root as read-only. It also
-disables automatic cleanup and keeps every duplicate. Omoide can index the
-libraries, but it cannot delete or modify source media through this profile. If
-a manual duplicate-file deletion is blocked by the read-only guard, the
-unresolved group remains available for review.
+The profile binds the removable-media mount parent under `/app/media` with
+write access and mount propagation, so reattached drives become visible without
+recreating the container. The backend media read-only guard is disabled in this
+profile. Rename, move, conversion, metadata edits, and deletion can therefore
+modify source files. Automatic scan cleanup is disabled and duplicates default
+to keep; these defaults do not prevent manual file mutations. Keep backups of
+source media before using those actions.
 
 The runtime also uses a read-only container filesystem, a non-root user, no
 Linux capabilities, `no-new-privileges`, a PID ceiling, bounded local logs, no
-core dumps, and a private scratch tmpfs. Only `/app/data` is persistently
-writable. The HTTP port is published on `127.0.0.1` only; Omoide does not provide
+core dumps, and a private scratch tmpfs. `/app/data` and the mounted media
+root are persistently writable. The HTTP port is published on `127.0.0.1` only; Omoide does not provide
 authentication and must not be exposed directly to a LAN or the internet.
 The workstation image also rejects non-loopback Host headers, cross-origin
 browser mutations, and framing. Those controls prevent ordinary CSRF, DNS
@@ -154,8 +155,9 @@ cp omoide.workstation.env.example omoide.env
 This workstation example keeps face detection and person clustering available,
 but leaves scans, cleanup, and clustering operator-initiated. It also keeps all
 duplicate files. `PRESENTATION_MODE=false` is intentional because scanning and
-processing tasks must remain callable; source-media immutability comes from the
-read-only bind mount and the backend's matching media-directory setting.
+processing tasks must remain callable. This profile permits source-media writes;
+for a read-only deployment, both the media bind mount and the backend's
+`DOCKER_MEDIA_READ_ONLY` setting must be changed together before deployment.
 
 The pinned upstream image is the CPU build, so the example sets
 `PREFER_GPU=false`. It also disables image embeddings and automatic tagging to
