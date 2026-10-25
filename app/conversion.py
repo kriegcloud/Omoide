@@ -307,10 +307,13 @@ def publish_replacement(
                 logger.warning("Conversion retained publication temporary %s: %s", swap, exc)
 
     expected = published_identity if destination == source else source_identity
-    if _file_identity(source) != expected:
+    if (_file_identity(source) != expected
+            or _file_identity(destination) != published_identity):
+        # Commit already succeeded: keep that durable catalog/task state, but
+        # retain all recovery versions when either pathname changed during it.
         logger.warning(
-            "Conversion identity conflict after commit; newer source preserved: %s; "
-            "original backup: %s; encoded recovery: %s", source, backup, encoded,
+            "Conversion identity conflict after commit; newer source/output preserved: %s / %s; "
+            "original backup: %s; encoded recovery: %s", source, destination, backup, encoded,
         )
         return destination
     # Only observed-owned originals are removed. Cleanup failures retain safe

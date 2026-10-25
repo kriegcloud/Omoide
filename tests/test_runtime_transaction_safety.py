@@ -277,6 +277,43 @@ class RuntimeTransactionSafetyTests(unittest.TestCase):
             self.assertFalse(destination.exists())
             self.assertEqual(encoded.read_bytes(),b'converted')
 
+    def test_postcommit_destination_conflict_preserves_recovery_and_durable_status(self):
+        for suffix in ('.avi', '.mp4'):
+            for change in ('replace', 'inplace'):
+                with self.subTest(suffix=suffix, change=change), Session(self.engine) as session:
+                    case = self.root / f'destination-{suffix[1:]}-{change}'
+                    case.mkdir()
+                    source = case / ('source' + suffix)
+                    source.write_bytes(b'original')
+                    encoded = case / 'encoded.mp4'
+                    encoded.write_bytes(b'converted')
+                    destination = source.with_suffix('.mp4')
+                    media = Media(path=str(source), filename=source.name, size=8)
+                    task = ProcessingTask(task_type='convert', status='running')
+                    session.add_all([media, task]); session.commit()
+                    def committed_then_changed():
+                        task.status = 'completed'; session.add(task); session.commit()
+                        if change == 'replace':
+                            newer = case / 'newer-output'
+                            newer.write_bytes(b'newer user output')
+                            newer.replace(destination)
+                        else:
+                            destination.write_bytes(b'newer user output')
+                    with self.assertLogs(conversion.logger, level='WARNING') as messages:
+                        result = conversion.publish_replacement(
+                            session, media, encoded, destination, commit=committed_then_changed,
+                        )
+                    self.assertEqual(result, destination)
+                    self.assertEqual(destination.read_bytes(), b'newer user output')
+                    if suffix == '.avi':
+                        self.assertEqual(source.read_bytes(), b'original')
+                    self.assertEqual(encoded.read_bytes(), b'converted')
+                    self.assertTrue(any(p.read_bytes() == b'original' for p in case.glob('*.backup')))
+                    session.refresh(task); session.refresh(media)
+                    self.assertEqual(task.status, 'completed')
+                    self.assertEqual(media.path, str(destination))
+                    self.assertTrue(any('identity conflict' in message.lower() for message in messages.output))
+
     def test_training_commit_failure_cannot_publish_request(self):
         with Session(self.engine) as session:
             export=session.get(DatasetExport,self.export());dataset=session.get(TrainingDataset,self.dataset_id)

@@ -66,6 +66,7 @@ type FilerobotUpdateState = (
 ) => void;
 
 interface FilerobotStoreState {
+  omoideFitRevision?: number;
   pastDesignStates?: FilerobotDesignState[];
   futureDesignStates?: FilerobotDesignState[];
   adjustments?: FilerobotDesignState["adjustments"];
@@ -288,9 +289,10 @@ export default function ImageEditorDialog({
         return state ? {
           adjustments: state.adjustments, shownImageDimensions: state.shownImageDimensions,
           pastDesignStates: state.pastDesignStates, futureDesignStates: state.futureDesignStates,
+          omoideFitRevision: state.omoideFitRevision,
         } : null;
       },
-      update => updateStateRef.current?.(current => update({adjustments: current.adjustments, shownImageDimensions: current.shownImageDimensions, pastDesignStates: current.pastDesignStates, futureDesignStates: current.futureDesignStates}) ?? null),
+      update => updateStateRef.current?.(current => update({adjustments: current.adjustments, shownImageDimensions: current.shownImageDimensions, pastDesignStates: current.pastDesignStates, futureDesignStates: current.futureDesignStates, omoideFitRevision: current.omoideFitRevision}) ?? null),
       callback => window.requestAnimationFrame(callback),
       frame => window.cancelAnimationFrame(frame),
     );
@@ -753,7 +755,9 @@ export default function ImageEditorDialog({
               getCurrentImgDataFnRef={currentImgDataRef}
               updateStateFnRef={updateStateRef}
               onModify={(nextState) => {
-                setDesignState(nextState);
+                const nextDesignState = { ...nextState };
+                delete nextDesignState.omoideFitRevision;
+                setDesignState(nextDesignState);
                 setHasChanges(true);
                 setError(null);
                 if (faceGuides || aspectGuides || compareHeld || comparePinned) {

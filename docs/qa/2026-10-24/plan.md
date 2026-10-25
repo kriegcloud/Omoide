@@ -21,7 +21,7 @@ Protected annotation files remain read-only. No matching thresholds are changed.
 - `.venv/bin/alembic heads` (one head).
 - `node --test-isolation=none --test frontend/tests/selection.test.cjs`.
 - Every `frontend/src/hotkeys/tests/*.test.cjs` via Node.
-- Additional feature-specific tests and curation MCP tests where their dependencies are available.
+- Additional feature-specific tests and curation MCP tests: `cd tools/curation-mcp && uv run python -m unittest discover -s tests -v` in the adapter environment (the application environment does not include the MCP SDK).
 
 ## Adapted reviewer panel
 

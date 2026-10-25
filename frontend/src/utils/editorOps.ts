@@ -129,6 +129,8 @@ export function refitEditorCrop(previous: FilerobotDesignState | null, current: 
 }
 
 export interface FilerobotFitState extends FilerobotDesignState {
+  /** Internal provider-store acknowledgement; never a serialized edit field. */
+  omoideFitRevision?: number;
   pastDesignStates?: FilerobotDesignState[];
   futureDesignStates?: FilerobotDesignState[];
 }

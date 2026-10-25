@@ -3,7 +3,7 @@ fixture-mode Omoide curation server.
 
 Run with the adapter's own environment, from `tools/curation-mcp`:
 
-    uv run python -m unittest discover -s tests -t . -v
+    uv run python -m unittest discover -s tests -v
 
 The fixture server needs the Omoide interpreter and its extra dependency path:
 

@@ -21,7 +21,7 @@ Baseline items precede reviewer round 1. No blockers are implicitly waived.
 - `testsNeeded`: runtime/type
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: baseline commit (see rounds.md)
+- `fixedCommit`: 0bd3091a8ca8fae5b61d4cfe68f152185dfa0e50
 
 ### B02: Obsolete map search responses repopulate results
 
@@ -42,7 +42,7 @@ Baseline items precede reviewer round 1. No blockers are implicitly waived.
 - `testsNeeded`: runtime/browser
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: baseline commit (see rounds.md)
+- `fixedCommit`: 0bd3091a8ca8fae5b61d4cfe68f152185dfa0e50
 
 ### B03: Curation preview byte-bound test depended on random artifact order
 
@@ -63,7 +63,7 @@ Baseline items precede reviewer round 1. No blockers are implicitly waived.
 - `testsNeeded`: fixture/integration
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: baseline commit (see rounds.md)
+- `fixedCommit`: 0bd3091a8ca8fae5b61d4cfe68f152185dfa0e50
 
 ### B04: Alembic omitted current path separator option
 
@@ -84,7 +84,7 @@ Baseline items precede reviewer round 1. No blockers are implicitly waived.
 - `testsNeeded`: configuration
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: baseline commit (see rounds.md)
+- `fixedCommit`: 0bd3091a8ca8fae5b61d4cfe68f152185dfa0e50
 
 ### R1-API-01: Tag browse endpoints expose media explicitly flagged missing
 
@@ -536,7 +536,7 @@ No source or test file was edited during this review. Temporary synthetic harnes
 - `testsNeeded`: Permanent failing-first regressions for source edits during encoding for same-path and extension-changing replacement, covering shared `convert_media` and legacy `_run_conversion` entry points; assert newer bytes survive, no stale catalog publication/completed task, and usable encoded recovery is retained/reported. Include both in-place edits and inode replacements where practical; preserve successful ordinary conversion coverage.
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: pending
+- `fixedCommit`: 9c7a75983a9495dbcf2c98434675055ebb9db6ac
 
 ### R3-RUNTIME-01: Unprepared profile globals admit ordinary requests before activation succeeds
 
@@ -557,7 +557,7 @@ No source or test file was edited during this review. Temporary synthetic harnes
 - `testsNeeded`: Runtime interleaving at migration and vector stages, successful/rejected candidate reads/writes, explicit migration URL/dimensions, same-db failure degradation and preserved old runtime/pools; CLI migration backward compatibility.
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: pending
+- `fixedCommit`: 9c7a75983a9495dbcf2c98434675055ebb9db6ac
 
 No additional evidence-backed protected-file/quality gate blocker was identified. Existing warning/platform/external-inference limits remain as recorded; no warning suppression or implied external acceptance.
 
@@ -580,6 +580,52 @@ No additional evidence-backed protected-file/quality gate blocker was identified
 - `testsNeeded`: Live and past/future full and partial crop coordinates through repeated fits; actual installed Undo/Redo reducers and export geometry; explicit resize preservation; unchanged user edits; observer lifecycle and reducer replay checks
 - `dependencies`: none
 - `status`: fixed
-- `fixedCommit`: pending
+- `fixedCommit`: 9c7a75983a9495dbcf2c98434675055ebb9db6ac
 
 Review notes/limits: current observer cleanup cancels its scheduled frame, guards a pending asynchronous capture after cleanup, and uses pure conditional correction callbacks; no additional blocker reproduced in these paths. Caption ignored-abort and unmount regressions and dataset export identity regression substantiate their specific scenarios; source inspection found no new required issue in the reviewed caption/dataset guards. Their lightweight hook harness does not simulate concurrent React scheduling. R2 wording that StrictMode callback safety is regression-covered is broader than the existing tests (they exercise the pure geometry helper, not the effect lifecycle); add direct adapter lifecycle/replay evidence with this fix or narrow that claim. Canonical src lint choice matches AGENTS and plan. Broad CJS lint scope and no-embedding Similar wording remain documented tooling/UX backlog, not new blockers. Existing922backend/206frontend/76hotkey/9MCP gates were not redundantly rerun for read-only review.
+
+### UI-R4-001: Rejected queued fit correction is permanently forgotten
+
+- `round`: 4
+- `reviewer`: UI/contracts
+- `label`: issue
+- `blockingStatus`: blocking
+- `severity`: P1-high
+- `doctrineBucket`: not-doctrine
+- `sourceRefs`: `docs/qa/2026-10-24/plan.md` asynchronous boundaries and correctness; `frontend/node_modules/react-filerobot-image-editor/lib/actions/updateState.js` queued functional UPDATE_STATE reducer; installed React18 `dispatchReducerAction`; R3 observer acceptance contract
+- `affectedFiles`: `frontend/src/utils/editorFitObserver.ts:18`, `frontend/tests/editorHistory.test.cjs:29`
+- `evidence`: `/tmp/omoide-r4-observer-race.cjs` uses actual installed SET_SHOWN_IMAGE_DIMENSIONS, CHANGE_ROTATION and export hook. Observer reads640×480 source/display, then fitted400×300 and queues its correction. Before the correction reducer executes, user rotation changes the adjustments object; stale-snapshot guard correctly rejects the callback. However previous already advances to400×300 plus the uncommitted corrected crop. Next read has400×300 with old640×480 crop, so no correction is attempted. Provider renders768×1024; saving throws `editor expects768×1024...replay480×640`. Installed useReducer schedules callback evaluation, so apply need not synchronously commit. Existing test proves rejection but never continues another frame to check recovery.
+- `impact`: A user edit overlapping an automatic viewport fit can leave permanent stale crop/history coordinates and a blocked save, even after the editor settles. The guard prevents an incorrect write but the retry contract is incomplete.
+- `suggestedFix`: Retain/acknowledge pending fit ownership until a correction is accepted, or reconcile coordinate basis atomically with the current provider state. Re-read and retry rejected corrections while preserving newer user edits; do not double-scale history after a successful commit or reducer replay, and do not repeatedly correct an unchanged stable state. Keep cleanup guards and output mismatch protection.
+- `recommendedSkillOrAgent`: frontend provider-adapter concurrency fixer
+- `fixerGroup`: editor fit observer/geometry adapter and focused tests
+- `acceptanceCommands`: Permanent queued-callback rejection→next-read regression first; full frontend/hotkeys, strict build, canonical src lint; targeted observer replay/no-spin/history tests; parent Chrome public viewport/editor actions if timing permits
+- `testsNeeded`: Queued rotation/history/crop edit before correction; next reads retry or settle; accepted correction acknowledges exactly once; repeated callback evaluation does not double scale; real new crop wins; pending cleanup remains inert
+- `dependencies`: none
+- `status`: fixed
+- `fixedCommit`: pending
+
+Limits: This scheduling interleaving is deterministic dependency/adapter evidence, not claimed Chrome-reproduced. No hidden provider state or impossible crop was injected: display fit and rotation use installed reducers. Parent Chrome has already proved public persistent-viewport resize→Undo→Flip→Save copy with original intact. Direct scheduling may be difficult to force through public controls, so the regression provides the race proof while browser acceptance proves the composed settled workflow. Existing external-model/platform/load coverage limits remain accurately recorded. Similar no-embedding UX and broad CJS lint tooling remain nonblocking backlog. Protected annotation files remain unchanged in the actual76-file diff. Documentation's dated R1 count199 in the coverage row is historical evidence; current gate210 is explicit in rounds.md, not a claim that every scenario is tested. No warning suppression or blanket every-feature browser pass is asserted.
+
+### R4-RUNTIME-01: Extension-changing conversion discards recovery despite a changed committed destination
+
+- `round`: 4
+- `reviewer`: Quality/runtime — independent conversion publication/commit/recovery review
+- `label`: issue
+- `blockingStatus`: blocking
+- `severity`: P1-high
+- `doctrineBucket`: not-doctrine
+- `sourceRefs`: R2-RUNTIME-01 identity-conflict retention contract in inventory/rounds; docs/qa/2026-10-24/plan.md synthetic destructive safety; app/conversion.py:publish_replacement postcommit ownership check
+- `affectedFiles`: app/conversion.py:postcommit expected/source identity check and obsolete-file cleanup
+- `evidence`: publish AVI->MP4 with real SQLite. Commit callback durably commits catalog, then atomically replaces published MP4 with a newer unrelated inode. Helper returns success and preserves that newer destination, but deletes original AVI, independent original backup and encoded recovery. Reproducer prints published_returned=True, newer_output_preserved=True, original_source_exists=False, encoded_recovery_exists=False, original_recovery_backups=0. Postcommit code checks destination only for same-path MP4; extension-changing output checks old source only. This is missing verification across the complete publication-to-commit window, not a race between the final stat and unlink.
+- `impact`: A destination identity conflict during the commit window is silently treated as fully owned success. Neither original source nor independently encoded result survives for recovery once the published destination was replaced. Existing source-change and pre-encoding tests do not exercise this distinct output-side interleaving.
+- `suggestedFix`: Check the published destination against its bound publication identity after durable commit, as well as the source identity. On either conflict preserve the newer destination/source and independent original/encoded recovery, and report conflict consistently. Keep committed catalog/task semantics explicit rather than claiming database rollback after a durable commit.
+- `recommendedSkillOrAgent`: conversion storage safety fixer
+- `fixerGroup`: app/conversion.py and focused conversion regressions only
+- `acceptanceCommands`: Failing postcommit destination-replacement/in-place-edit tests for extension-changing and same-path modes; verify recovery retention, newer bytes untouched, explicit durable catalog/task semantics; run test_runtime_transaction_safety.py, test_conversion_source_version.py, safety_conversion_lifecycle, safety_paths and full canonical backend suite.
+- `testsNeeded`: Runtime callback interleaving over real SQLite commit; changed and unchanged destination controls; retained original/encoded versions and no foreign inode overwrite/unlink.
+- `dependencies`: none
+- `status`: fixed
+- `fixedCommit`: pending
+
+No other required runtime/quality issue reproduced in this bounded round. R3 source-binding regressions pass; task lifecycle and documented acceptance limits remain supported by permanent tests and ledger. This review does not claim power-loss atomicity, arbitrary external-write exclusion, external inference quality or desktop platform proof.
