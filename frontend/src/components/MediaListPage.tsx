@@ -1,3 +1,4 @@
+import { readCachedList } from "../stores/useListStore";
 import ListStateView from "./ListState";
 import { useListInvalidation } from "../stores/useListStore";
 import { useUndoRefresh } from "../context/UndoContext";
@@ -71,7 +72,7 @@ export default function MediaListPage({
     [listKeyPrefix, sortOrder]
   );
   const { items, hasMore, isLoading, error } = useListStore(
-    (state) => state.lists[listKey] || defaultListState
+    (state) => readCachedList<Media>(state, listKey) || defaultListState
   );
   const fetchInitial = useListStore(state => state.fetchInitial);
 const loadMore = useListStore(state => state.loadMore);

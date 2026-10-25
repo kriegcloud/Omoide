@@ -1,3 +1,4 @@
+import { readCachedList } from "../stores/useListStore";
 import { useUndoRefresh } from "../context/UndoContext";
 import { refreshCachedList } from "../stores/useListStore";
 import React, { useState, useEffect, useRef } from "react";
@@ -5,7 +6,7 @@ import { Box, CircularProgress, Autocomplete, TextField } from "@mui/material";
 import Masonry from "react-masonry-css";
 import { useInView } from "react-intersection-observer";
 
-import { Person, PersonReadSimple, Tag } from "../types";
+import { Media, Person, PersonReadSimple, Tag } from "../types";
 import MediaCard from "./MediaCard";
 import { useListStore, defaultListState } from "../stores/useListStore";
 import { getPeople, getPersonMediaAppearances } from "../services/person";
@@ -50,7 +51,7 @@ export default function MediaAppearances({
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
 
   const { items, hasMore, isLoading } = useListStore(
-    (state) => state.lists[mediaListKey] || defaultListState
+    (state) => readCachedList<Media>(state, mediaListKey) || defaultListState
   );
   const fetchInitial = useListStore(state => state.fetchInitial);
   const loadMore = useListStore(state => state.loadMore);

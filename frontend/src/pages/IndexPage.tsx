@@ -1,3 +1,4 @@
+import { readCachedList } from "../stores/useListStore";
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useInView } from "react-intersection-observer";
 import { useLocation, useSearchParams } from "react-router-dom";
@@ -150,7 +151,7 @@ export default function IndexPage() {
   }, [sortOrder, tags, viewMode, currentFolder, camera]);
 
   useListInvalidation(mediaListKey);
-  const listState = useListStore((state) => state.lists[mediaListKey]);
+  const listState = useListStore((state) => readCachedList<MediaPreview>(state, mediaListKey));
   const items: MediaPreview[] = useMemo(() => listState?.items ?? [], [listState?.items]);
   const orderedIds = useMemo(() => items.map(item => item.id), [items]);
   const hasMore = listState?.hasMore ?? defaultListState.hasMore;

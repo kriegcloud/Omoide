@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import socket
 import sys
 from pathlib import Path
@@ -49,7 +50,10 @@ SHAPES = (('#3366aa', 'ellipse'), ('#aa6633', 'rectangle'), ('#33aa66', 'ellipse
 
 def draw_fixture(path: Path, colour: str, shape: str) -> None:
     """Deterministic generated geometry, large enough to exercise the byte bound."""
-    image = Image.new('RGB', (256, 192), '#e8eadb')
+    # A seeded texture keeps even the rectangle above the 1024-byte preview
+    # bound after the application's PNG normalization, regardless of UUID order.
+    pixels = random.Random(20261024).randbytes(256 * 192 * 3)
+    image = Image.frombytes('RGB', (256, 192), pixels)
     canvas = ImageDraw.Draw(image)
     for row in range(0, 192, 12):
         for column in range(0, 256, 12):

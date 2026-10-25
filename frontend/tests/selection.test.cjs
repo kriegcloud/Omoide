@@ -26,6 +26,10 @@ function hooks() {
         if (!Object.is(value, slots[i])) { slots[i] = value; dirty = true; }
       }];
     },
+    useReducer(reducer, initial) {
+      const [value, setValue] = api.useState(initial);
+      return [value, action => setValue(previous => reducer(previous, action))];
+    },
     useCallback(fn, deps) {
       const i = cursor++;
       if (!slots[i] || !equal(slots[i].deps, deps)) slots[i] = { deps, fn };
@@ -659,4 +663,56 @@ test('modal viewer grids cannot replace the background selection owner', () => {
   assert.equal(viewer.type, SelectionProvider,
     'the viewer needs a separate selection owner: its Similar grid must not clear selected background images');
   assert.ok(viewer.props.children, 'the viewer remains inside the isolated context');
+});
+
+test('marquee listeners follow late grid attachment, replacement and detachment without duplicate bindings', (t) => {
+  const env = dom(t);
+  const runtime = hooks();
+  const { useGridSelection } = load('hooks/useMarqueeSelection.ts', runtime);
+  const options = { containerRef: { current: null }, selecting: false, selectedIds: new Set(), onSelectionChange() {} };
+  const render = () => runtime.render(() => useGridSelection(options));
+  render();
+  const first = new ElementStub();
+  options.containerRef.current = first;
+  render();
+  assert.equal(first.listeners.get('pointerdown')?.size, 1);
+  render();
+  assert.equal(first.listeners.get('pointerdown')?.size, 1, 'settled rerenders preserve a single listener');
+  const second = new ElementStub();
+  options.containerRef.current = second;
+  render();
+  assert.equal(first.listeners.get('pointerdown')?.size, 0, 'replacement detaches the prior grid');
+  assert.equal(second.listeners.get('pointerdown')?.size, 1);
+  options.containerRef.current = null;
+  render();
+  assert.equal(second.listeners.get('pointerdown')?.size, 0, 'detaching a grid removes its listeners');
+  env.cleanups.push(() => runtime.unmount());
+});
+
+test('roving focus follows asynchronously attached and replaced grids and cleans up their observers', (t) => {
+  const env = dom(t);
+  const runtime = hooks();
+  const { useRovingGridFocus } = load('hooks/useRovingGridFocus.ts', runtime);
+  const ref = { current: null };
+  const render = () => runtime.render(() => useRovingGridFocus(ref));
+  render();
+  const first = new ElementStub(); first.children = [new ElementStub()];
+  ref.current = first;
+  render();
+  assert.equal(first.children[0].tabIndex, 0);
+  assert.equal(first.listeners.get('keydown')?.size, 1);
+  render();
+  assert.equal(first.listeners.get('keydown')?.size, 1);
+  const previousObserver = env.observers.at(-1);
+  const second = new ElementStub(); second.children = [new ElementStub()];
+  ref.current = second;
+  render();
+  assert.equal(first.listeners.get('keydown')?.size, 0);
+  assert.equal(previousObserver.disconnected, true);
+  assert.equal(second.children[0].tabIndex, 0);
+  ref.current = null;
+  render();
+  assert.equal(second.listeners.get('keydown')?.size, 0);
+  assert.equal(env.observers.at(-1).disconnected, true);
+  env.cleanups.push(() => runtime.unmount());
 });

@@ -466,10 +466,15 @@ class CurationFlowTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256(base64.b64decode(image.data)).hexdigest(),
                              payload['disclosure']['sha256'])
 
-            bounded = await human.call_tool('preview', {
-                'dataset_id': SERVER.dataset_id, 'target': 'artifact',
-                'target_id': artifact_id, 'include_bytes': True, 'max_bytes': 1024})
-            self.assertEqual(error_code(bounded), 'response_too_large')
+            self.assertGreater(payload['disclosure']['byte_count'], 1024,
+                               'the normalized fixture must exercise the requested byte bound')
+            # Artifact ids are random UUIDs, so item ordering cannot choose which
+            # fixture exercises the transport bound. Every fixture must exceed it.
+            for bounded_artifact_id in artifacts:
+                bounded = await human.call_tool('preview', {
+                    'dataset_id': SERVER.dataset_id, 'target': 'artifact',
+                    'target_id': bounded_artifact_id, 'include_bytes': True, 'max_bytes': 1024})
+                self.assertEqual(error_code(bounded), 'response_too_large')
 
             source_metadata = structured(await human.call_tool('preview', {
                 'dataset_id': SERVER.dataset_id, 'target': 'source',

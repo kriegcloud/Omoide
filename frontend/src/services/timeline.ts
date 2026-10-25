@@ -1,7 +1,7 @@
 import { format } from "date-fns";
 import {
   CursorPage,
-  TimelineDisplayItem,
+  TimelineEntry,
   TimelineEvent,
   TimelineEventCreate,
   TimelineEventUpdate,
@@ -12,8 +12,8 @@ export const getPersonTimeline = async (
   personId: number,
   cursor: string | null | undefined,
   signal?: AbortSignal
-): Promise<CursorPage<TimelineDisplayItem>> =>
-  apiFetch<CursorPage<TimelineDisplayItem>>(
+): Promise<CursorPage<TimelineEntry>> =>
+  apiFetch<CursorPage<TimelineEntry>>(
     `/api/person/${personId}/timeline`,
     {
       query: { cursor },

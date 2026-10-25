@@ -38,7 +38,11 @@ function load(relative, runtime, modules={}) {
   const output=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true},fileName:filename}).outputText;
   const module={exports:{}};
   new Function('require','module','exports',output)(name=>{
-    if(name in defaults)return defaults[name];
+    if(name in defaults) {
+      const value = defaults[name];
+      if(name === "../stores/useListStore") return {readCachedList: (state, key) => state.lists[key], ...value};
+      return value;
+    }
     if(name==='react/jsx-runtime')return require(name);
     if(name.startsWith('@mui/'))return {__esModule:true,default:name};
     return new Proxy({__esModule:true,default:name},{get:(target,key)=>target[key]??key});

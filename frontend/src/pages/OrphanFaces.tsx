@@ -1,3 +1,4 @@
+import { readCachedList } from "../stores/useListStore";
 import config from "../config";
 import { useHotkey } from "../hotkeys/useHotkey";
 import { SelectionHotkeyDialogs } from "../hotkeys/SelectionHotkeyDialogs";
@@ -36,7 +37,7 @@ import {
   deleteAllOrphanFaces,
 } from "../services/faceActions";
 import PersonPicker from "../components/PersonPicker";
-import { Person } from "../types";
+import { FaceRead, Person } from "../types";
 import { FaceGrid } from "../components/FaceGrid"; // Import our DUMB grid component
 import ConfirmDialog from "../components/ConfirmDialog";
 import OrphanFaceSuggestions from "../components/OrphanFaceSuggestions";
@@ -96,7 +97,7 @@ function AllOrphanFaces() {
     hasMore,
     isLoading,
     error,
-  } = useListStore((state) => state.lists[listKey] || defaultListState);
+  } = useListStore((state) => readCachedList<FaceRead>(state, listKey) || defaultListState);
   const fetchInitial = useListStore((state) => state.fetchInitial);
   const loadMore = useListStore((state) => state.loadMore);
   const clearList = useListStore((state) => state.clearList);

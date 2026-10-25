@@ -36,7 +36,7 @@ function load(file,h,overrides={}) {
   const src=fs.readFileSync(path.resolve(__dirname,'../src',file),'utf8').replaceAll('import.meta.env.DEV','false');
   const code=ts.transpileModule(src,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText;
   const mod={exports:{}};
-  new Function('require','module','exports',code)(id=>{if(id in modules)return modules[id];if(id.startsWith('../components/')||id.startsWith('@mui/icons-material/'))return new Proxy({__esModule:true,default:id},{get:(v,k)=>v[k]??k}); if(id.startsWith('../hooks/')||id.startsWith('../stores/'))return load(id.slice(3)+'.ts',h,overrides); return require(id);},mod,mod.exports);
+  new Function('require','module','exports',code)(id=>{if(id in modules)return id==='../stores/useListStore'?{readCachedList:(state,key)=>state.lists[key],...modules[id]}:modules[id];if(id.startsWith('../components/')||id.startsWith('@mui/icons-material/'))return new Proxy({__esModule:true,default:id},{get:(v,k)=>v[k]??k}); if(id.startsWith('../hooks/')||id.startsWith('../stores/'))return load(id.slice(3)+'.ts',h,overrides); return require(id);},mod,mod.exports);
   return mod.exports;
 }
 function find(node,predicate){if(!node||typeof node!=='object')return; if(predicate(node))return node; for(const child of [node.props?.children].flat(Infinity)){const match=find(child,predicate);if(match)return match;}}
@@ -81,7 +81,7 @@ test('Search suspends pagination after failure while sentinel stays visible',asy
 });
 test('Map geocoder ignores an old response when query was shortened',async()=>{
   env();const timers=[];const original=global.setTimeout,originalClear=global.clearTimeout;global.setTimeout=fn=>{timers.push(fn);return timers.length;};global.clearTimeout=noop;const first=deferred();global.fetch=()=>first.promise;
-  try{const h=harness();const {default:Page}=load('pages/MapEditorPage.tsx',h,{'../services/mapEditor':{getMissingGeoMedia:async()=>({items:[]})}});const render=()=>h.render(Page);let tree=render();find(tree,n=>n.type==='Autocomplete').props.onInputChange(null,'Paris');render();timers.shift()();tree=render();find(tree,n=>n.type==='Autocomplete').props.onInputChange(null,'Pa');render();first.resolve({ok:true,json:async()=>[{display_name:'old'}]});await tick();tree=render();assert.deepEqual(find(tree,n=>n.type==='Autocomplete').props.options,[]);h.unmount();}finally{global.setTimeout=original;global.clearTimeout=originalClear;delete global.fetch;}
+  try{const h=harness();const {default:Page}=load('pages/MapEditorPage.tsx',h,{'../services/mapEditor':{getMissingGeoMedia:async()=>({items:[]}),getMissingGeoFolders:async()=>({folders:[]})},'../leafletSetup':{},leaflet:{},'../hooks/usePagedList':{usePagedList:()=>({items:[],hasMore:false,isLoading:false,error:null,loaderRef:noop,removeItems:noop})}});const render=()=>h.render(Page);let tree=render();find(tree,n=>n.type==='Autocomplete').props.onInputChange(null,'Paris');render();timers.shift()();tree=render();find(tree,n=>n.type==='Autocomplete').props.onInputChange(null,'Pa');render();first.resolve({ok:true,json:async()=>[{display_name:'old'}]});await tick();tree=render();assert.deepEqual(find(tree,n=>n.type==='Autocomplete').props.options,[]);h.unmount();}finally{global.setTimeout=original;global.clearTimeout=originalClear;delete global.fetch;}
 });
 
 test('Highlights removes a deleted card while an old refresh is still pending', async () => {
@@ -167,4 +167,48 @@ test('image-search invalidation removes missing media and refreshes surviving pr
   env();const h=harness(),bus=mutationChannel();const location={key:'image',state:{searchType:'image',items:[{id:1,thumbnail_path:'1'},{id:2,thumbnail_path:'2'}]}};
   const {default:Page}=load('pages/SearchResultPage.tsx',h,{'react-router-dom':{useSearchParams:()=>[new URLSearchParams(),noop],useLocation:()=>location},'../stores/mutationBus':{mutationBus:bus},'../services/search':{},'../services/media':{getMedia:async id=>{if(id==='1')throw Object.assign(Error('missing'),{status:404});return {media:{id:2,thumbnail_path:'fresh'}};}}});
   const render=()=>h.render(Page);render();bus.emit({type:'list:invalidate',prefix:''});await tick();const tree=render();assert.equal(find(tree,n=>n.props?.media)?.props.media.id,2);assert.equal(find(tree,n=>n.props?.media)?.props.media.thumbnail_path,'fresh');h.unmount();
+});
+
+test('Map geocoder ignores an aborted older query even when fetch still resolves', async () => {
+  env(); const timers=[]; const original=global.setTimeout, originalClear=global.clearTimeout;
+  global.setTimeout=fn=>{timers.push(fn);return timers.length;}; global.clearTimeout=noop;
+  const pending=[deferred(),deferred()]; let requests=0;
+  global.fetch=()=>pending[requests++].promise; // Deliberately ignores AbortSignal.
+  try {
+    const h=harness();
+    const {default:Page}=load('pages/MapEditorPage.tsx',h,{
+      '../services/mapEditor':{getMissingGeoFolders:async()=>({folders:[]})},
+      '../leafletSetup':{},leaflet:{},
+      '../hooks/usePagedList':{usePagedList:()=>({items:[],hasMore:false,isLoading:false,error:null,loaderRef:noop,removeItems:noop})},
+    });
+    const render=()=>h.render(Page);
+    find(render(),n=>n.type==='Autocomplete').props.onInputChange(null,'Paris'); render(); timers.shift()();
+    find(render(),n=>n.type==='Autocomplete').props.onInputChange(null,'Parma'); render(); timers.shift()();
+    pending[1].resolve({ok:true,json:async()=>[{display_name:'current'}]}); await tick();
+    pending[0].resolve({ok:true,json:async()=>[{display_name:'obsolete'}]}); await tick();
+    assert.deepEqual(find(render(),n=>n.type==='Autocomplete').props.options,[{display_name:'current'}]);
+    h.unmount();
+  } finally {global.setTimeout=original;global.clearTimeout=originalClear;delete global.fetch;}
+});
+
+test('Map geocoder does not write state after its page unmounts', async () => {
+  env(); const timers=[]; const original=global.setTimeout, originalClear=global.clearTimeout;
+  global.setTimeout=fn=>{timers.push(fn);return timers.length;}; global.clearTimeout=noop;
+  const pending=deferred(); global.fetch=()=>pending.promise;
+  try {
+    const h=harness(); let unmounted=false, lateWrites=0;
+    const useState=h.api.useState;
+    h.api.useState=initial=>{const [value,setValue]=useState(initial);return [value,next=>{if(unmounted)lateWrites++;setValue(next);}];};
+    const {default:Page}=load('pages/MapEditorPage.tsx',h,{
+      '../services/mapEditor':{getMissingGeoFolders:async()=>({folders:[]})},
+      '../leafletSetup':{},leaflet:{},
+      '../hooks/usePagedList':{usePagedList:()=>({items:[],hasMore:false,isLoading:false,error:null,loaderRef:noop,removeItems:noop})},
+    });
+    const render=()=>h.render(Page);
+    find(render(),n=>n.type==='Autocomplete').props.onInputChange(null,'Paris'); render(); timers.shift()();
+    await tick(); // Settle unrelated folder loading before unmounting.
+    h.unmount(); unmounted=true;
+    pending.resolve({ok:true,json:async()=>[{display_name:'obsolete'}]}); await tick();
+    assert.equal(lateWrites,0);
+  } finally {global.setTimeout=original;global.clearTimeout=originalClear;delete global.fetch;}
 });

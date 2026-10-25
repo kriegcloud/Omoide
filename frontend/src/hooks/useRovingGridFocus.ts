@@ -1,6 +1,6 @@
 import { useHotkeys } from "../hotkeys/useHotkey";
 import { gridBindings, isHotkeyAllowed } from "../hotkeys/keymap";
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useReducer, useRef, type RefObject } from "react";
 
 /** One tab stop per face grid; measure rows again after responsive layout changes. */
 export function useRovingGridFocus(containerRef: RefObject<HTMLElement | null>) {
@@ -8,9 +8,15 @@ export function useRovingGridFocus(containerRef: RefObject<HTMLElement | null>) 
     scope: "page", local: true,
     when: event => !!containerRef.current?.contains(event.target as Node),
   });
-  const [container, setContainer] = useState<HTMLElement | null>(null);
+  // Refs attach after render, including when an asynchronous grid appears.
+  // Dispatch every commit; returning the same node bails out without rebinding
+  // listeners or restarting an in-progress marquee on ordinary rerenders.
+  const [container, syncContainer] = useReducer(
+    (_previous: HTMLElement | null, next: HTMLElement | null) => next,
+    null,
+  );
   const focused = useRef<HTMLElement | null>(null);
-  useEffect(() => { setContainer(containerRef.current); });
+  useEffect(() => { syncContainer(containerRef.current); });
   useEffect(() => {
     if (!container) return;
     const tiles = () => Array.from(container.querySelectorAll<HTMLElement>("[data-roving-tile]"));

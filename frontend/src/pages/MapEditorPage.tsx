@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Link as RouterLink, useSearchParams } from "react-router-dom";
 import {
   MapContainer,
@@ -187,25 +187,33 @@ export default function MapEditorPage() {
   }>({ open: false, message: "", severity: "success" });
   const theme = useTheme();
 
-  // Debounced search for locations using Nominatim API
+  const searchGeneration = useRef(0);
+  // Debounce requests, then invalidate both transport and callbacks whenever
+  // the query changes or the page unmounts. A fetch implementation may still
+  // resolve after abort, so only the current generation can update the UI.
   useEffect(() => {
-    if (searchInput.length < 3) {
-      setSearchResults([]);
-      return;
-    }
+    const generation = ++searchGeneration.current;
+    const controller = new AbortController();
+    const isCurrent = () => searchGeneration.current === generation && !controller.signal.aborted;
+    setSearchResults([]);
+    setSearchLoading(false);
+    if (searchInput.length < 3) return () => controller.abort();
     const handler = setTimeout(() => {
       setSearchLoading(true);
       fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
-          searchInput
-        )}`
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchInput)}`,
+        { signal: controller.signal },
       )
         .then((res) => res.json())
-        .then((data: NominatimResult[]) => setSearchResults(data))
-        .catch(console.error)
-        .finally(() => setSearchLoading(false));
+        .then((data: NominatimResult[]) => { if (isCurrent()) setSearchResults(data); })
+        .catch((error) => { if (isCurrent()) console.error(error); })
+        .finally(() => { if (isCurrent()) setSearchLoading(false); });
     }, 500);
-    return () => clearTimeout(handler);
+    return () => {
+      clearTimeout(handler);
+      controller.abort();
+      if (searchGeneration.current === generation) searchGeneration.current += 1;
+    };
   }, [searchInput]);
 
   const updateFilter = (key: "folder" | "sort", value: string | null) => {

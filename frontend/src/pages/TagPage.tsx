@@ -1,3 +1,5 @@
+import type { Tag } from "../types";
+import { readCachedList } from "../stores/useListStore";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button, Container, Typography, Box, CircularProgress } from "@mui/material";
 import Grid from "@mui/material/Grid";
@@ -16,7 +18,7 @@ export default function TagsPage() {
   const listKey = "tags-all";
 
   const { items, hasMore, isLoading } = useListStore(
-    (state) => state.lists[listKey] || defaultListState
+    (state) => readCachedList<Tag>(state, listKey) || defaultListState
   );
   const fetchInitial = useListStore(state => state.fetchInitial);
   const loadMore = useListStore(state => state.loadMore);

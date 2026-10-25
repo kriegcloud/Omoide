@@ -1,3 +1,4 @@
+import { readCachedList } from "../stores/useListStore";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -51,7 +52,7 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange }: {
 }) {
   const listKey = `orphan-face-suggestions:${minScore.toFixed(2)}`;
   const { items: cachedItems, hasMore, isLoading, error }: ListState<SuggestionItem> = useListStore(
-    (state) => state.lists[listKey] || defaultListState,
+    (state) => readCachedList<SuggestionItem>(state, listKey) || defaultListState,
   );
   const clearList = useListStore((state) => state.clearList);
   const fetchInitial = useListStore((state) => state.fetchInitial);

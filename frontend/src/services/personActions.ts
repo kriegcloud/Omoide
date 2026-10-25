@@ -2,6 +2,9 @@ import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
 import {
   MergeCandidatesPage,
+  FaceRead,
+  CursorPage,
+  SimilarPersonWithDetails,
   Person,
   PersonPairDecision,
   PersonPairDecisionCreate,
@@ -368,7 +371,7 @@ export const getSuggestedFaces = async (
   personId: number,
   limit: number = 100,
   signal?: AbortSignal
-): Promise<any[]> => {
+): Promise<FaceRead[]> => {
   const res = await fetch(
     `${API}/api/person/${personId}/suggest-faces?limit=${limit}`,
     { signal }
@@ -380,7 +383,7 @@ export const getSuggestedFaces = async (
 export const getSimilarPersons = async (
   personId: number,
   signal?: AbortSignal
-): Promise<any[]> => {
+): Promise<SimilarPersonWithDetails[]> => {
   const res = await fetch(`${API}/api/person/${personId}/similarities`, {
     signal,
   });
@@ -414,7 +417,7 @@ export const getPersonFaces = async (
   limit: number,
   sortBy: string = "id_desc",
   mediaId?: number
-): Promise<any> => {
+): Promise<CursorPage<FaceRead>> => {
   const params = new URLSearchParams({
     limit: limit.toString(),
     sort_by: sortBy,

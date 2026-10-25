@@ -1,3 +1,4 @@
+import { readCachedList } from "../stores/useListStore";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useUndo, useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
@@ -122,7 +123,7 @@ export const usePersonDetailPage = () => {
     hasMore: hasMoreFaces,
     isLoading: loadingMoreFaces,
   } = useListStore(
-    (state) => state.lists[detectedFacesListKey] || defaultListState,
+    (state) => readCachedList<FaceRead>(state, detectedFacesListKey) || defaultListState,
   );
 
   const detectedFacesList = storedDetectedFacesList.filter((face) => !optimisticFaceIds.includes(face.id));

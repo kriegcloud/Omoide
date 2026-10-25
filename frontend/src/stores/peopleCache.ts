@@ -1,4 +1,4 @@
-import { useListStore } from "./useListStore";
+import { readCachedList, useListStore } from "./useListStore";
 import type { Person, PersonReadSimple } from "../types";
 
 /**
@@ -47,7 +47,7 @@ export const patchPersonInGrids = (person: Person | PersonReadSimple) => {
     const lists = { ...state.lists };
     for (const key of Object.keys(lists)) {
       if (!key.startsWith(PEOPLE_GRID_PREFIX)) continue;
-      const list = lists[key];
+      const list = readCachedList<GridPerson>({lists}, key)!;
       const index = list.items.findIndex(
         (item: GridPerson) => item.id === person.id,
       );
@@ -64,7 +64,7 @@ export const patchPersonInGrids = (person: Person | PersonReadSimple) => {
 /** Re-sort a single grid after local count changes. */
 export const resortPeopleGrid = (listKey: string) => {
   useListStore.setState((state) => {
-    const list = state.lists[listKey];
+    const list = readCachedList<GridPerson>(state, listKey);
     if (!list) return state;
     return {
       lists: { ...state.lists, [listKey]: { ...list, items: sortPeople(list.items) } },

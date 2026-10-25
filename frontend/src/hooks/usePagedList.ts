@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { useInView } from "react-intersection-observer";
 import {
   defaultListState,
+  readCachedList,
   ListState,
   useListStore,
   useListInvalidation,
@@ -105,7 +106,7 @@ export function usePagedList<T>(
   );
   const updateItems = useCallback(
     (update: (item: T) => T) => useListStore.setState(state => {
-      const list = state.lists[listKey];
+      const list = readCachedList<T>(state, listKey);
       return list ? {lists: {...state.lists, [listKey]: {...list, items: list.items.map(update)}}} : state;
     }),
     [listKey]

@@ -21,6 +21,10 @@ function hooks() {
         slots[index] = typeof value === "function" ? value(slots[index]) : value;
       }];
     },
+    useReducer(reducer, initial) {
+      const [value, setValue] = react.useState(initial);
+      return [value, action => setValue(previous => reducer(previous, action))];
+    },
     useRef(initial) {
       const index = cursor++;
       slots[index] ??= { current: initial };

@@ -45,7 +45,7 @@ export interface ListState<T> {
 interface ListStoreState {
   // lists is a dictionary where the key is a unique string (e.g., an API endpoint)
   // and the value is the state of that list.
-  lists: Record<string, ListState<any>>;
+  lists: Record<string, ListState<unknown>>;
 
   // Generic actions that work with any data type T
   fetchInitial: <T>(
@@ -64,8 +64,15 @@ interface ListStoreState {
   updateItem: <T extends { id: unknown }>(listKey: string, item: T) => void;
 }
 
+/** The owning page uses one row schema for a cache key, matching its typed
+ * fetchInitial/loadMore fetchers. Keep heterogeneous storage unknown and put
+ * that key/schema assertion at this read boundary rather than across callers. */
+export function readCachedList<T>(state: Pick<ListStoreState, "lists">, listKey: string): ListState<T> | undefined {
+  return state.lists[listKey] as ListState<T> | undefined;
+}
+
 // The default state for any new list
-export const defaultListState: ListState<any> = {
+export const defaultListState: ListState<never> = {
   items: [],
   nextCursor: null,
   hasMore: true,
@@ -195,9 +202,10 @@ export const useListStore = create<ListStoreState>((set, get) => ({
       const currentList = state.lists[listKey];
       if (!currentList) return state; // If the list doesn't exist, do nothing
 
-      const updatedItems = currentList.items.filter((item: any) => {
+      const updatedItems = currentList.items.filter((item: unknown) => {
+        const row = item as {group_id?: unknown; id?: unknown};
         const itemIdentifier =
-          item.group_id !== undefined ? item.group_id : item.id;
+          row.group_id !== undefined ? row.group_id : row.id;
 
         return itemIdentifier !== itemId;
       });
@@ -222,7 +230,7 @@ export const useListStore = create<ListStoreState>((set, get) => ({
       // Create a Set of IDs for efficient lookup
       const idsToRemove = new Set(itemIds);
       const updatedItems = currentList.items.filter(
-        (item: any) => !idsToRemove.has(item.id)
+        (item: unknown) => !idsToRemove.has((item as {id: number | string}).id)
       );
 
       return {
@@ -248,7 +256,7 @@ export const useListStore = create<ListStoreState>((set, get) => ({
   // variants (e.g. the other sort order) refetch on their next mount.
   clearListsByPrefix: (prefix: string) => {
     set((state) => {
-      const newLists: Record<string, ListState<any>> = {};
+      const newLists: Record<string, ListState<unknown>> = {};
       for (const [key, value] of Object.entries(state.lists)) {
         if (!key.startsWith(prefix)) newLists[key] = value;
         else generations.set(key, (generations.get(key) ?? 0) + 1);

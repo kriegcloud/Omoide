@@ -1,3 +1,4 @@
+import { readCachedList } from "../stores/useListStore";
 import AddIcon from "@mui/icons-material/Add";
 import { Dialog, DialogTitle, DialogContent, ImageList, ImageListItem, ImageListItemBar, IconButton, Tooltip } from "@mui/material";
 import {
@@ -31,6 +32,7 @@ import {
   TimelineEvent,
   TimelineEventCreate,
   TimelineDisplayItem,
+  TimelineEntry,
 } from "../types";
 import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
@@ -45,7 +47,7 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia,
   const [dayToView, setDayToView] = useState<MediaPreview[] | null>(null);
   const listKey = useMemo(() => `person-${person.id}-timeline`, [person.id]);
   const { items, hasMore, isLoading } = useListStore(
-    (state) => state.lists[listKey] || defaultListState
+    (state) => readCachedList<TimelineEntry>(state, listKey) || defaultListState
   );
   const fetchInitial = useListStore((state) => state.fetchInitial);
   const loadMore = useListStore((state) => state.loadMore);

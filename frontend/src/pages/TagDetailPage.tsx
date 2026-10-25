@@ -1,3 +1,4 @@
+import { readCachedList } from "../stores/useListStore";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link as RouterLink } from "react-router-dom";
 import { useInView } from "react-intersection-observer";
@@ -62,7 +63,7 @@ export default function TagDetailPage() {
   const tagName = tag?.name ?? null;
   const listKey = tagName ? `tag-media-${tagName}` : "";
   const listState = useListStore((state) =>
-    listKey ? state.lists[listKey] : undefined
+    listKey ? readCachedList<Media>(state, listKey) : undefined
   );
   const mediaItems = listState?.items ?? defaultListState.items;
   const hasMore = listState?.hasMore ?? defaultListState.hasMore;

@@ -1,6 +1,6 @@
 import { useHotkeyRegistry } from "../hotkeys/useHotkey";
 import { selectAllBindings } from "../hotkeys/keymap";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useSelection, useSelectionList } from "../context/SelectionContext";
 
@@ -102,7 +102,13 @@ export function useGridSelection<TId extends number | string = number>({
   const selectingRef = useRef(selecting);
   const onEnterSelectionRef = useRef(onEnterSelection);
   const cancelMarqueeRef = useRef<(() => void) | null>(null);
-  const [container, setContainer] = useState<HTMLElement | null>(null);
+  // Refs attach after render, including when an asynchronous grid appears.
+  // Dispatch every commit; returning the same node bails out without rebinding
+  // listeners or restarting an in-progress marquee on ordinary rerenders.
+  const [container, syncContainer] = useReducer(
+    (_previous: HTMLElement | null, next: HTMLElement | null) => next,
+    null,
+  );
   const [mountedCount, setMountedCount] = useState(0);
   const selection = useSelection();
   const { pathname } = useLocation();
@@ -122,7 +128,7 @@ export function useGridSelection<TId extends number | string = number>({
 
   // Some grids mount only after their asynchronous results arrive.
   useEffect(() => {
-    setContainer(containerRef.current);
+    syncContainer(containerRef.current);
   });
   useEffect(() => {
     selectingRef.current = selecting;
