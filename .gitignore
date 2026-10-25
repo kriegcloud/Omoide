@@ -146,3 +146,8 @@ omoide.env
 .data
 # Local frontend bundle analysis
 /frontend/bundle-stats.html
+
+# Private workstation state and linked agent checkouts
+/.idea/
+/.claude/worktrees/
+/omoide.env.bak-*

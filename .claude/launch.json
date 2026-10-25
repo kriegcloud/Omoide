@@ -1,0 +1,29 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "omoide-frontend-dev",
+      "runtimeExecutable": "zsh",
+      "runtimeArgs": [
+        "-ic",
+        "cd frontend && DOMAIN=http://127.0.0.1:8123/ VITE_API_BASE_URL= npm run dev -- --host 127.0.0.1 --port 5173 --strictPort"
+      ],
+      "port": 5173,
+      "url": "http://127.0.0.1:5173"
+    },
+    {
+      "name": "omoide-ux-dev",
+      "runtimeExecutable": "zsh",
+      "runtimeArgs": [
+        "-ic",
+        "cd /home/elpresidank/YeeBois/workstation-apps/Omoide-ux/frontend && DOMAIN=http://127.0.0.1:8123/ VITE_API_BASE_URL= npm run dev -- --host 127.0.0.1 --port 5174 --strictPort"
+      ],
+      "port": 5174,
+      "url": "http://127.0.0.1:5174"
+    },
+    {
+      "name": "omoide-workstation",
+      "url": "http://127.0.0.1:8123"
+    }
+  ]
+}
