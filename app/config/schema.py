@@ -19,6 +19,7 @@ from pydantic import (
 )
 
 from app.logger import configure_file_logging, logger
+from app.scan_scope import normalize_scope_list
 
 E = TypeVar("E", bound=Enum)
 IS_DOCKER = os.getenv("IS_DOCKER", False)
@@ -441,6 +442,13 @@ class ScanSettings(BaseModel):
     max_image_pixels: int = 400_000_000
     # Skip files that look like thumbnails while scanning media directories
     skip_thumbnails_on_scan: bool = True
+    # Scan scope, relative to each media directory (see app/scan_scope.py).
+    # Folders to scan; empty scans the whole media directory.
+    include_folders: list[str] = Field(default_factory=list)
+    # Folders never scanned, with everything below them. Wins over includes.
+    exclude_folders: list[str] = Field(default_factory=list)
+    # Folder-name globs skipped at any depth, case-insensitive (e.g. "@eaDir").
+    exclude_folder_patterns: list[str] = Field(default_factory=list)
     VIDEO_SUFFIXES: list[str] = [
         ".mp4",
         ".mov",
@@ -464,6 +472,16 @@ class ScanSettings(BaseModel):
         ".heif",
         ".webp",
     ]
+
+    @field_validator("include_folders", "exclude_folders", mode="before")
+    @classmethod
+    def _normalize_scope_folders(cls, value):
+        return normalize_scope_list(value, patterns=False)
+
+    @field_validator("exclude_folder_patterns", mode="before")
+    @classmethod
+    def _normalize_scope_patterns(cls, value):
+        return normalize_scope_list(value, patterns=True)
 
 
 class AISettings(BaseModel):

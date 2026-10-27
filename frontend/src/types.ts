@@ -1280,6 +1280,9 @@ export interface AppConfig {
     auto_cluster_on_scan: boolean;
     auto_rotate: boolean;
     skip_thumbnails_on_scan: boolean;
+    include_folders: string[];
+    exclude_folders: string[];
+    exclude_folder_patterns: string[];
     VIDEO_SUFFIXES: string[];
     IMAGE_SUFFIXES: string[];
   };

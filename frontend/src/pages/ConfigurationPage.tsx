@@ -1,4 +1,5 @@
 import VideoSection from "../components/configuration/VideoSection";
+import ScanScopeSettings from "../components/configuration/ScanScopeSettings";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   getConfig,
@@ -1373,6 +1374,12 @@ export default function ConfigurationPage() {
       label: "Scan",
       content: (
         <Grid container spacing={2}>
+          <Grid size={{ xs: 12 }}>
+            <ScanScopeSettings
+              config={config}
+              onValueChange={handleValueChange}
+            />
+          </Grid>
           <Grid size={{ xs: 12, sm: 6 }}>
             <TextField
               label="Scan Interval (minutes)"

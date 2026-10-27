@@ -5,7 +5,7 @@ from functools import wraps
 from copy import deepcopy
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -18,6 +18,7 @@ from app.presentation import ensure_writable
 from app.tagging import sanitize_custom_tag_list
 from app.tasks import schedule_custom_auto_tagging
 from app.records import delete_record
+from app.scan_scope import ScanScope, list_scope_folders, normalize_scope_list
 
 
 _profile_change_lock = threading.Lock()
@@ -196,6 +197,46 @@ async def save_settings_endpoint(
     if new_tags and settings_model.tagging.auto_tagging:
         schedule_custom_auto_tagging(new_tags)
     return settings_model
+
+
+class ScanFolderEntry(BaseModel):
+    name: str
+    path: str
+    has_subfolders: bool
+    status: str
+
+
+class ScanFolderListing(BaseModel):
+    parent: str
+    folders: list[ScanFolderEntry]
+
+
+@router.get("/scan-folders", response_model=ScanFolderListing)
+def list_scan_folders(
+    parent: str = Query("", description="Folder relative to the media directories."),
+    include: list[str] = Query([], description="Draft include_folders."),
+    exclude: list[str] = Query([], description="Draft exclude_folders."),
+    pattern: list[str] = Query([], description="Draft exclude_folder_patterns."),
+):
+    """List real subfolders of ``parent`` with how a scan would treat each.
+
+    The scope is passed in (the unsaved settings draft) so the folder picker
+    previews the edit with the same rule the scanner applies.
+    """
+    try:
+        scope = ScanScope(
+            include=tuple(normalize_scope_list(include, patterns=False)),
+            exclude=tuple(normalize_scope_list(exclude, patterns=False)),
+            patterns=tuple(normalize_scope_list(pattern, patterns=True)),
+        )
+        roots = [base for base, _ in settings.general.resolved_media_dirs()]
+        folders = list_scope_folders(roots, parent, scope)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    normalized_parent = "/".join(
+        part for part in parent.replace("\\", "/").split("/") if part
+    )
+    return ScanFolderListing(parent=normalized_parent, folders=folders)
 
 
 @router.get("/pick-directory")

@@ -19,6 +19,12 @@ from app.image_limits import apply_pillow_limits
 from app.database import safe_commit
 from app.logger import logger
 from app.models import Blacklist, Media, ProcessingTask
+from app.scan_scope import (
+    INTERNAL_SKIPPED_DIR_NAMES,
+    ScanScope,
+    is_internal_skipped_dir,
+    resolve_start_dir,
+)
 from app.utils import generate_thumbnail, process_file, save_thumbnail_image
 from .common import _finish_task, _start_task
 from .state import (
@@ -85,11 +91,8 @@ def _looks_like_thumbnail(path: Path) -> bool:
 # folder, the freedesktop trash on removable media (.Trash-<uid>, .Trash/<uid>)
 # and Windows recycle/system folders. Files a user moved to the trash were
 # being re-indexed as "new" and then flagged missing at their old path.
-_SKIPPED_DIR_NAMES = frozenset({".omoide", ".Trash", "$RECYCLE.BIN", "System Volume Information"})
-
-
-def _is_skipped_dir(name: str) -> bool:
-    return name in _SKIPPED_DIR_NAMES or name.startswith(".Trash-")
+_SKIPPED_DIR_NAMES = INTERNAL_SKIPPED_DIR_NAMES
+_is_skipped_dir = is_internal_skipped_dir
 
 
 def _scan_path_key(value: str | Path) -> str:
@@ -105,7 +108,15 @@ def _walk_media_candidates(
     *,
     skip_thumbnails: bool,
     on_error: Callable[[OSError], None] | None = None,
+    scope: ScanScope | None = None,
 ) -> Iterator[Path]:
+    """Yield media files under ``media_dirs`` that the scan scope admits.
+
+    Symlinks are never followed. With a scope, the walk starts at its include
+    folders (or the root) and prunes excluded folders and name patterns.
+    """
+    scope = scope or ScanScope()
+
     def on_walk_error(err: OSError) -> None:
         logger.warning(
             "Scan walk error in %s: %s", err.filename or "unknown", err
@@ -113,55 +124,64 @@ def _walk_media_candidates(
         if on_error is not None:
             on_error(err)
 
+    start_folders = scope.start_folders()
     for media_dir in media_dirs:
-        for root, dirs, files in os.walk(
-            media_dir,
-            topdown=True,
-            followlinks=False,
-            onerror=on_walk_error,
-        ):
-            root_path = Path(root)
-            safe_dirs: list[str] = []
-            for dirname in dirs:
-                if _is_skipped_dir(dirname):
-                    continue
+        for start_parts in start_folders:
+            start_dir = resolve_start_dir(Path(media_dir), start_parts)
+            if start_dir is None:
+                continue
+            for root, dirs, files in os.walk(
+                start_dir,
+                topdown=True,
+                followlinks=False,
+                onerror=on_walk_error,
+            ):
+                root_path = Path(root)
                 try:
-                    if (root_path / dirname).is_symlink():
-                        logger.debug(
-                            "Skipping symlinked media directory: %s",
-                            root_path / dirname,
-                        )
+                    root_parts = root_path.relative_to(Path(media_dir)).parts
+                except ValueError:
+                    root_parts = ()
+                safe_dirs: list[str] = []
+                for dirname in dirs:
+                    if scope.is_excluded((*root_parts, dirname)):
                         continue
-                except OSError as exc:
-                    if exc.filename is None:
-                        exc.filename = os.fspath(root_path / dirname)
-                    on_walk_error(exc)
-                    continue
-                safe_dirs.append(dirname)
-            dirs[:] = safe_dirs
+                    try:
+                        if (root_path / dirname).is_symlink():
+                            logger.debug(
+                                "Skipping symlinked media directory: %s",
+                                root_path / dirname,
+                            )
+                            continue
+                    except OSError as exc:
+                        if exc.filename is None:
+                            exc.filename = os.fspath(root_path / dirname)
+                        on_walk_error(exc)
+                        continue
+                    safe_dirs.append(dirname)
+                dirs[:] = safe_dirs
 
-            for fname in files:
-                suffix = os.path.splitext(fname)[1].lower()
-                if suffix not in allowed_suffixes:
-                    continue
-                try:
-                    candidate = root_path / fname
-                    if candidate.is_symlink():
-                        logger.debug(
-                            "Skipping symlinked media file: %s", candidate
+                for fname in files:
+                    suffix = os.path.splitext(fname)[1].lower()
+                    if suffix not in allowed_suffixes:
+                        continue
+                    try:
+                        candidate = root_path / fname
+                        if candidate.is_symlink():
+                            logger.debug(
+                                "Skipping symlinked media file: %s", candidate
+                            )
+                            continue
+                    except (OSError, ValueError) as exc:
+                        logger.warning(
+                            "Skipping %s in %s due to path error: %s",
+                            fname,
+                            root,
+                            exc,
                         )
                         continue
-                except (OSError, ValueError) as exc:
-                    logger.warning(
-                        "Skipping %s in %s due to path error: %s",
-                        fname,
-                        root,
-                        exc,
-                    )
-                    continue
-                if skip_thumbnails and _looks_like_thumbnail(candidate):
-                    continue
-                yield candidate
+                    if skip_thumbnails and _looks_like_thumbnail(candidate):
+                        continue
+                    yield candidate
 
 
 def run_scan(task_id: str) -> None:
@@ -270,6 +290,7 @@ def run_scan(task_id: str) -> None:
             allowed_suffixes,
             skip_thumbnails=settings.scan.skip_thumbnails_on_scan,
             on_error=on_unreadable_dir,
+            scope=ScanScope.from_settings(settings.scan),
         ):
             spath = os.fspath(path)
             path_key = _scan_path_key(spath)

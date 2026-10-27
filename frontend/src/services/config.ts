@@ -188,3 +188,46 @@ export const addExistingProfile = async (
     throw new Error(err.detail || "Failed to add profile");
   }
 };
+
+export type ScanFolderStatus = "scanned" | "partial" | "outside" | "excluded";
+
+export interface ScanFolderEntry {
+  name: string;
+  path: string;
+  has_subfolders: boolean;
+  status: ScanFolderStatus;
+}
+
+export interface ScanFolderListing {
+  parent: string;
+  folders: ScanFolderEntry[];
+}
+
+export interface ScanScopeDraft {
+  include_folders: string[];
+  exclude_folders: string[];
+  exclude_folder_patterns: string[];
+}
+
+/**
+ * Lists real subfolders of `parent` under the media directories, labelled with
+ * how a scan would treat each one under the given (unsaved) scope.
+ */
+export const listScanFolders = async (
+  parent: string,
+  scope: ScanScopeDraft,
+  signal?: AbortSignal
+): Promise<ScanFolderListing> => {
+  const params = new URLSearchParams({ parent });
+  scope.include_folders.forEach((v) => params.append("include", v));
+  scope.exclude_folders.forEach((v) => params.append("exclude", v));
+  scope.exclude_folder_patterns.forEach((v) => params.append("pattern", v));
+  const response = await fetch(`${API}/api/config/scan-folders?${params}`, {
+    signal,
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err?.detail || "Failed to list folders");
+  }
+  return response.json();
+};
