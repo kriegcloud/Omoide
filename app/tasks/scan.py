@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import codecs
 import os
 import re
 import time
+import unicodedata
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -102,6 +104,51 @@ def _scan_path_key(value: str | Path) -> str:
         return os.fspath(value)
 
 
+def _is_text_transport_stream_path(path: Path) -> bool:
+    """Recognize text using the ambiguous .ts extension with a bounded read.
+
+    TypeScript sources and declarations share their extension with MPEG
+    transport streams. Reject only confidently textual content; unreadable,
+    empty and binary files still reach normal processing and issue reporting.
+    Names (including .d.ts) alone do not establish the content type.
+    """
+    if path.suffix.lower() != ".ts":
+        return False
+    try:
+        # Avoid opening special files such as FIFOs during discovery.
+        if not path.is_file():
+            return False
+        with path.open("rb") as stream:
+            data = stream.read(8193)
+    except OSError:
+        return False
+    if not data:
+        return False
+    sample = data[:8192]
+    # Preserve recognizable TS (188), M2TS (192) and RS-coded TS (204)
+    # packet framing even if a stream happens to have printable payloads.
+    for packet_size in (188, 192, 204):
+        for offset in range(min(packet_size, len(sample))):
+            if offset + 2 * packet_size < len(sample) and all(
+                sample[offset + n * packet_size] == 0x47 for n in range(3)
+            ):
+                return False
+    try:
+        # An incomplete UTF-8 character at the sample boundary is not evidence
+        # of binary content. A BOM is common in source files and is stripped.
+        text = codecs.getincrementaldecoder("utf-8-sig")().decode(
+            sample, final=len(data) <= 8192
+        )
+    except UnicodeDecodeError:
+        return False
+    return bool(text) and all(
+        char.isprintable()
+        or char in "\t\r\n\f"
+        or unicodedata.category(char) in {"Cf", "Zl", "Zp"}
+        for char in text
+    )
+
+
 def _walk_media_candidates(
     media_dirs: Iterable[Path],
     allowed_suffixes: frozenset[str],
@@ -180,6 +227,8 @@ def _walk_media_candidates(
                         )
                         continue
                     if skip_thumbnails and _looks_like_thumbnail(candidate):
+                        continue
+                    if _is_text_transport_stream_path(candidate):
                         continue
                     yield candidate
 
