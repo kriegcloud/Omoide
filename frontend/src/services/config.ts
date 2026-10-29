@@ -247,6 +247,8 @@ export interface ScanFolderSearchResult {
   query: string;
   folders: ScanFolderMatch[];
   truncated: boolean;
+  /** False while the server's folder index builds; results come from a time-boxed walk. */
+  indexed: boolean;
 }
 
 /**

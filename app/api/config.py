@@ -20,8 +20,10 @@ from app.tasks import schedule_custom_auto_tagging
 from app.records import delete_record
 from app.scan_scope import (
     ScanScope,
+    folder_index_cache,
     list_scope_folders,
     normalize_scope_list,
+    search_folder_index,
     search_scope_folders,
 )
 
@@ -230,6 +232,9 @@ class ScanFolderSearchResult(BaseModel):
     query: str
     folders: list[ScanFolderMatch]
     truncated: bool
+    # False while the folder index is still being built and the answer came
+    # from a time-boxed live walk instead.
+    indexed: bool
 
 
 SCAN_FOLDER_SEARCH_MAX_LIMIT = 100
@@ -258,16 +263,21 @@ def search_scan_folders(
 
     Statuses are labelled against the passed-in draft scope, like
     ``/scan-folders``. Queries shorter than two characters return nothing.
+    Searches read the cached folder index; until it is built they fall back
+    to a time-boxed live walk and report ``indexed: false``.
     """
     try:
         scope = _draft_scan_scope(include, exclude, pattern)
         roots = [base for base, _ in settings.general.resolved_media_dirs()]
-        result = search_scope_folders(
-            roots, q, scope, limit=min(limit, SCAN_FOLDER_SEARCH_MAX_LIMIT)
-        )
+        capped = min(limit, SCAN_FOLDER_SEARCH_MAX_LIMIT)
+        index = folder_index_cache.lookup(roots)
+        if index is not None:
+            result = search_folder_index(index, q, scope, limit=capped)
+        else:
+            result = search_scope_folders(roots, q, scope, limit=capped)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return ScanFolderSearchResult(query=q, **result)
+    return ScanFolderSearchResult(query=q, indexed=index is not None, **result)
 
 
 @router.get("/scan-folders", response_model=ScanFolderListing)
@@ -286,6 +296,9 @@ def list_scan_folders(
         scope = _draft_scan_scope(include, exclude, pattern)
         roots = [base for base, _ in settings.general.resolved_media_dirs()]
         folders = list_scope_folders(roots, parent, scope)
+        if not parent.strip("/\\ "):
+            # The picker opened at the top: warm the index its search reads.
+            folder_index_cache.lookup(roots)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     normalized_parent = "/".join(

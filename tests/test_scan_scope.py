@@ -14,12 +14,15 @@ from pydantic import ValidationError  # noqa: E402
 
 from app import config  # noqa: E402
 from app.scan_scope import (  # noqa: E402
+    FolderIndexCache,
     ScanScope,
+    build_folder_index,
     folder_status,
     list_scope_folders,
     normalize_scope_folder,
-    search_scope_folders,
     normalize_scope_pattern,
+    search_folder_index,
+    search_scope_folders,
 )
 from app.tasks.scan import _walk_media_candidates  # noqa: E402
 
@@ -317,6 +320,42 @@ class SearchScopeFoldersTests(unittest.TestCase):
             self.assertEqual(paths.count("Holiday"), 1)
             self.assertTrue(result["folders"][0]["has_subfolders"])
 
+    def test_index_search_matches_live_walk(self) -> None:
+        index = build_folder_index([self.root])
+        self.assertTrue(index.complete)
+        scope = ScanScope(exclude=("Archive/raw",))
+        for query in ["holiday", "HOLIDAY", "projects/al", "/Work/", "work", "zz"]:
+            with self.subTest(query=query):
+                self.assertEqual(
+                    search_folder_index(index, query, scope),
+                    self._search(query, scope),
+                )
+        self.assertEqual(
+            search_folder_index(index, "holiday", scope, limit=2),
+            self._search("holiday", scope, limit=2),
+        )
+
+    def test_incomplete_index_reports_truncated(self) -> None:
+        index = build_folder_index([self.root], max_dirs=1)
+        self.assertFalse(index.complete)
+        result = search_folder_index(index, "holiday", ScanScope())
+        self.assertEqual(
+            [f["path"] for f in result["folders"]], ["Holiday", "Holidays 2024"]
+        )
+        self.assertTrue(result["truncated"])
+
+    def test_index_cache_serves_stale_index_until_rebuilt(self) -> None:
+        cache = FolderIndexCache(ttl_s=0, background=False)
+        self.assertIsNone(cache.lookup([self.root], prime=False))
+        self.assertIsNone(cache.lookup([self.root]))  # builds synchronously
+        first = cache.lookup([self.root], prime=False)
+        self.assertIsNotNone(first)
+        (self.root / "Holiday new").mkdir()
+        self.assertIs(cache.lookup([self.root]), first)  # stale: answers, then rebuilds
+        rebuilt = cache.lookup([self.root], prime=False)
+        self.assertIsNot(rebuilt, first)
+        self.assertIn(("Holiday new",), rebuilt.folders)
+
     def test_short_query_returns_nothing(self) -> None:
         for query in ["", " ", "h", " h ", "/"]:
             with self.subTest(query=query):
@@ -369,15 +408,21 @@ class ScanFolderSearchEndpointTests(unittest.TestCase):
         for i in range(120):
             (root / "Trips" / f"trip {i:03d}").mkdir(parents=True)
         (root / "Raw").mkdir()
-        self._patch = patch.object(
-            type(self.config_api.settings.general),
-            "resolved_media_dirs",
-            return_value=[(root, False)],
-        )
-        self._patch.start()
+        self.cache = FolderIndexCache(background=False)
+        self._patches = [
+            patch.object(
+                type(self.config_api.settings.general),
+                "resolved_media_dirs",
+                return_value=[(root, False)],
+            ),
+            patch.object(self.config_api, "folder_index_cache", self.cache),
+        ]
+        for p in self._patches:
+            p.start()
 
     def tearDown(self) -> None:
-        self._patch.stop()
+        for p in reversed(self._patches):
+            p.stop()
         self._tmp.cleanup()
 
     def _call(self, q: str, **kwargs):
@@ -394,6 +439,20 @@ class ScanFolderSearchEndpointTests(unittest.TestCase):
             [("Trips", "Trips", "excluded")],
         )
         self.assertFalse(result.truncated)
+
+    def test_falls_back_to_live_walk_until_the_index_is_built(self) -> None:
+        live = self._call("trip 01")
+        self.assertFalse(live.indexed)
+        indexed = self._call("trip 01")
+        self.assertTrue(indexed.indexed)
+        self.assertEqual(
+            [f.path for f in indexed.folders], [f.path for f in live.folders]
+        )
+        self.assertEqual(len(indexed.folders), 10)
+
+    def test_listing_the_top_level_primes_the_index(self) -> None:
+        self.config_api.list_scan_folders(parent="", include=[], exclude=[], pattern=[])
+        self.assertTrue(self._call("raw").indexed)
 
     def test_limit_is_capped_and_truncation_reported(self) -> None:
         result = self._call("trip ", limit=500)

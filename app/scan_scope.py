@@ -19,12 +19,13 @@ it only stops new files from being discovered there.
 from __future__ import annotations
 
 import os
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Iterable, Iterator, Literal
 
 from app.logger import logger
 
@@ -219,73 +220,170 @@ def list_scope_folders(
 
 
 MIN_SEARCH_QUERY_LENGTH = 2
+FOLDER_INDEX_TTL_S = 120.0
+FOLDER_INDEX_MAX_DIRS = 200_000
+FOLDER_INDEX_TIME_BUDGET_S = 300.0
 
 
-def search_scope_folders(
-    roots: Iterable[Path],
-    query: str,
-    scope: ScanScope,
-    *,
-    limit: int = 25,
-    max_dirs: int = 20000,
-    time_budget_s: float = 1.5,
-) -> dict:
-    """Find folders anywhere under the media roots whose name matches ``query``.
+def _walk_folder_tree(
+    roots: Iterable[Path], *, max_dirs: int, deadline: float, outcome: dict
+) -> Iterator[tuple[tuple[str, ...], str]]:
+    """Breadth-first ``(relative parts, absolute path)`` of every real folder.
 
-    A query containing ``/`` matches the relative path instead of the name.
-    Matching is a case-insensitive substring. The walk is breadth-first, never
-    follows symlinks and skips internal folders, but does enter scope-excluded
-    folders so a skipped folder can be found and un-skipped.
-
-    Results rank exact match, then prefix, then substring; then shallower
-    depth; then name. The walk stops after ``limit`` matches, ``max_dirs``
-    scanned folders or ``time_budget_s`` seconds, and ``truncated`` says
-    whether anything may have been left out.
+    Never follows symlinks and skips internal folders, but enters
+    scope-excluded ones. Sets ``outcome["truncated"]`` when ``max_dirs`` or
+    ``deadline`` (a ``time.monotonic()`` value) stops the walk early.
     """
-    raw = str(query).replace("\\", "/").strip()
-    match_path = "/" in raw
-    needle = raw.strip("/").casefold()
-    if len(needle) < MIN_SEARCH_QUERY_LENGTH:
-        return {"folders": [], "truncated": False}
-
-    deadline = time.monotonic() + max(time_budget_s, 0)
-    queue: deque[tuple[Path, tuple[str, ...]]] = deque(
-        (Path(root), ()) for root in roots
+    queue: deque[tuple[str, tuple[str, ...]]] = deque(
+        (str(root), ()) for root in roots
     )
-    matches: dict[tuple[str, ...], bool] = {}
     scanned = 0
-    truncated = False
     while queue:
         if scanned >= max_dirs or time.monotonic() >= deadline:
-            truncated = True
-            break
+            outcome["truncated"] = True
+            return
         directory, parts = queue.popleft()
         scanned += 1
+        children: list[tuple[str, str]] = []
         try:
             with os.scandir(directory) as it:
-                entries = sorted(it, key=lambda e: (e.name.casefold(), e.name))
+                for entry in it:
+                    try:
+                        if not entry.is_dir(follow_symlinks=False):
+                            continue
+                    except OSError:
+                        continue
+                    if not is_internal_skipped_dir(entry.name):
+                        children.append((entry.name, entry.path))
         except OSError:
             continue
-        for entry in entries:
-            try:
-                if not entry.is_dir(follow_symlinks=False):
-                    continue
-            except OSError:
-                continue
-            if is_internal_skipped_dir(entry.name):
-                continue
-            child = (*parts, entry.name)
-            queue.append((Path(entry.path), child))
-            haystack = "/".join(child) if match_path else entry.name
-            if needle not in haystack.casefold():
-                continue
-            if child not in matches and len(matches) >= limit:
-                truncated = True
-                break
-            matches[child] = matches.get(child, False) or _has_subfolders(entry.path)
-        if truncated:
-            break
+        children.sort(key=lambda child: (child[0].casefold(), child[0]))
+        for name, path in children:
+            child = (*parts, name)
+            queue.append((path, child))
+            yield child, path
 
+
+@dataclass(frozen=True)
+class FolderIndex:
+    """Every folder under the media roots, in breadth-first order.
+
+    ``folders`` maps relative parts to ``has_subfolders``, merged across roots.
+    ``complete`` is False when the build stopped at its own limits.
+    """
+
+    folders: dict[tuple[str, ...], bool]
+    complete: bool
+    built_at: float
+
+
+def build_folder_index(
+    roots: Iterable[Path],
+    *,
+    max_dirs: int = FOLDER_INDEX_MAX_DIRS,
+    time_budget_s: float = FOLDER_INDEX_TIME_BUDGET_S,
+) -> FolderIndex:
+    outcome = {"truncated": False}
+    folders: dict[tuple[str, ...], bool] = {}
+    for parts, _ in _walk_folder_tree(
+        roots,
+        max_dirs=max_dirs,
+        deadline=time.monotonic() + time_budget_s,
+        outcome=outcome,
+    ):
+        folders.setdefault(parts, False)
+        if len(parts) > 1:
+            folders[parts[:-1]] = True
+    return FolderIndex(
+        folders=folders, complete=not outcome["truncated"], built_at=time.monotonic()
+    )
+
+
+class FolderIndexCache:
+    """One folder index per root set, rebuilt in the background when stale.
+
+    Walking a large USB library takes seconds (listing the files dominates),
+    so the picker primes the index when it opens and searches read it. A
+    stale index keeps answering while its replacement builds.
+    """
+
+    def __init__(self, ttl_s: float = FOLDER_INDEX_TTL_S, *, background: bool = True) -> None:
+        self.ttl_s = ttl_s
+        self.background = background
+        self._lock = threading.Lock()
+        self._indexes: dict[tuple[str, ...], FolderIndex] = {}
+        self._building: set[tuple[str, ...]] = set()
+
+    @staticmethod
+    def _key(roots: Iterable[Path]) -> tuple[str, ...]:
+        return tuple(str(root) for root in roots)
+
+    def lookup(self, roots: Iterable[Path], *, prime: bool = True) -> FolderIndex | None:
+        """The current index (possibly stale), starting a rebuild if needed."""
+        key = self._key(roots)
+        with self._lock:
+            index = self._indexes.get(key)
+        if prime and (index is None or time.monotonic() - index.built_at > self.ttl_s):
+            self.prime(Path(root) for root in key)
+        return index
+
+    def prime(self, roots: Iterable[Path]) -> None:
+        """Build the index for ``roots`` unless a build is already running."""
+        key = self._key(roots)
+        with self._lock:
+            if key in self._building:
+                return
+            self._building.add(key)
+        if self.background:
+            threading.Thread(
+                target=self._build, args=(key,), name="scan-folder-index", daemon=True
+            ).start()
+        else:
+            self._build(key)
+
+    def _build(self, key: tuple[str, ...]) -> None:
+        started = time.monotonic()
+        try:
+            index = build_folder_index([Path(root) for root in key])
+        except Exception:  # pragma: no cover - defensive; the walk swallows OSError
+            logger.exception("Building the scan folder index failed")
+            index = None
+        finally:
+            with self._lock:
+                self._building.discard(key)
+        if index is None:
+            return
+        with self._lock:
+            self._indexes[key] = index
+        logger.info(
+            "Scan folder index: %d folders in %.1fs%s",
+            len(index.folders),
+            time.monotonic() - started,
+            "" if index.complete else " (stopped at its limit)",
+        )
+
+    def clear(self) -> None:
+        with self._lock:
+            self._indexes.clear()
+
+
+folder_index_cache = FolderIndexCache()
+
+
+def _parse_search_query(query: str) -> tuple[str, bool] | None:
+    raw = str(query).replace("\\", "/").strip()
+    needle = raw.strip("/").casefold()
+    if len(needle) < MIN_SEARCH_QUERY_LENGTH:
+        return None
+    return needle, "/" in raw
+
+
+def _rank_and_describe(
+    matches: dict[tuple[str, ...], bool],
+    needle: str,
+    match_path: bool,
+    scope: ScanScope,
+) -> list[dict]:
     def rank(parts: tuple[str, ...]) -> tuple:
         haystack = ("/".join(parts) if match_path else parts[-1]).casefold()
         kind = 0 if haystack == needle else 1 if haystack.startswith(needle) else 2
@@ -310,7 +408,79 @@ def search_scope_folders(
                 ],
             }
         )
-    return {"folders": folders, "truncated": truncated}
+    return folders
+
+
+def _is_match(parts: tuple[str, ...], needle: str, match_path: bool) -> bool:
+    return needle in ("/".join(parts) if match_path else parts[-1]).casefold()
+
+
+def search_scope_folders(
+    roots: Iterable[Path],
+    query: str,
+    scope: ScanScope,
+    *,
+    limit: int = 25,
+    max_dirs: int = 20000,
+    time_budget_s: float = 1.5,
+) -> dict:
+    """Find folders anywhere under the media roots whose name matches ``query``.
+
+    A query containing ``/`` matches the relative path instead of the name.
+    Matching is a case-insensitive substring. The walk is breadth-first, never
+    follows symlinks and skips internal folders, but does enter scope-excluded
+    folders so a skipped folder can be found and un-skipped.
+
+    Results rank exact match, then prefix, then substring; then shallower
+    depth; then name. The walk stops after ``limit`` matches, ``max_dirs``
+    scanned folders or ``time_budget_s`` seconds, and ``truncated`` says
+    whether anything may have been left out.
+    """
+    parsed = _parse_search_query(query)
+    if parsed is None:
+        return {"folders": [], "truncated": False}
+    needle, match_path = parsed
+    outcome = {"truncated": False}
+    matches: dict[tuple[str, ...], bool] = {}
+    for parts, path in _walk_folder_tree(
+        roots,
+        max_dirs=max_dirs,
+        deadline=time.monotonic() + max(time_budget_s, 0),
+        outcome=outcome,
+    ):
+        if not _is_match(parts, needle, match_path):
+            continue
+        if parts not in matches and len(matches) >= limit:
+            outcome["truncated"] = True
+            break
+        matches[parts] = matches.get(parts, False) or _has_subfolders(path)
+    return {
+        "folders": _rank_and_describe(matches, needle, match_path, scope),
+        "truncated": outcome["truncated"],
+    }
+
+
+def search_folder_index(
+    index: FolderIndex, query: str, scope: ScanScope, *, limit: int = 25
+) -> dict:
+    """``search_scope_folders`` over a prebuilt index: same matching and ranking."""
+    parsed = _parse_search_query(query)
+    if parsed is None:
+        return {"folders": [], "truncated": False}
+    needle, match_path = parsed
+    matches: dict[tuple[str, ...], bool] = {}
+    truncated = not index.complete
+    for parts, has_subfolders in index.folders.items():
+        if not _is_match(parts, needle, match_path):
+            continue
+        if len(matches) >= limit:
+            truncated = True
+            break
+        matches[parts] = has_subfolders
+    return {
+        "folders": _rank_and_describe(matches, needle, match_path, scope),
+        "truncated": truncated,
+    }
 
 
 def _has_subfolders(path: str) -> bool:

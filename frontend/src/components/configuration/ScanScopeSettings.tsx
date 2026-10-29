@@ -67,6 +67,9 @@ const STATUS_CHIP: Record<
 
 const SEARCH_MIN_LENGTH = 2;
 const SEARCH_DEBOUNCE_MS = 250;
+/** While the server builds its folder index, re-ask this often (bounded). */
+const SEARCH_INDEX_RETRY_MS = 2000;
+const SEARCH_INDEX_MAX_RETRIES = 30;
 const NO_MATCHES: ScanFolderMatch[] = [];
 
 /** A query containing "/" matches relative paths, otherwise folder names. */
@@ -136,6 +139,8 @@ function ScanFolderPicker({
   const [query, setQuery] = useState("");
   const [matches, setMatches] = useState<ScanFolderMatch[]>(NO_MATCHES);
   const [truncated, setTruncated] = useState(false);
+  const [indexed, setIndexed] = useState(true);
+  const [indexRetry, setIndexRetry] = useState(0);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [popupOpen, setPopupOpen] = useState(false);
@@ -161,10 +166,15 @@ function ScanFolderPicker({
   const scopeKey = JSON.stringify(scope);
   const searchable = query.trim().length >= SEARCH_MIN_LENGTH;
 
+  const updateQuery = (value: string) => {
+    setQuery(value);
+    setIndexRetry(0);
+  };
+
   useEffect(() => {
     if (open) {
       setTrail([]);
-      setQuery("");
+      updateQuery("");
     }
   }, [open]);
 
@@ -172,18 +182,27 @@ function ScanFolderPicker({
     if (!open || !searchable) {
       setMatches(NO_MATCHES);
       setTruncated(false);
+      setIndexed(true);
       setSearching(false);
       setSearchError(null);
       return;
     }
     const controller = new AbortController();
+    let retryTimer: number | undefined;
     setSearching(true);
     const timer = window.setTimeout(() => {
       searchScanFolders(query.trim(), scope, controller.signal)
         .then((result) => {
           setMatches(result.folders);
           setTruncated(result.truncated);
+          setIndexed(result.indexed);
           setSearchError(null);
+          if (!result.indexed && indexRetry < SEARCH_INDEX_MAX_RETRIES) {
+            retryTimer = window.setTimeout(
+              () => setIndexRetry((n) => n + 1),
+              SEARCH_INDEX_RETRY_MS
+            );
+          }
         })
         .catch((err: unknown) => {
           if (controller.signal.aborted) return;
@@ -196,14 +215,16 @@ function ScanFolderPicker({
         .finally(() => {
           if (!controller.signal.aborted) setSearching(false);
         });
-    }, SEARCH_DEBOUNCE_MS);
+    }, indexRetry ? 0 : SEARCH_DEBOUNCE_MS);
     return () => {
       window.clearTimeout(timer);
+      window.clearTimeout(retryTimer);
       controller.abort();
     };
-    // scopeKey stands in for the scope object identity.
+    // scopeKey stands in for the scope object identity; indexRetry re-asks
+    // while the server's folder index is still building.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, query, searchable, scopeKey]);
+  }, [open, query, searchable, scopeKey, indexRetry]);
 
   const visibleFolders = useMemo(
     () => folders.filter((folder) => matchesFolderQuery(folder, query)),
@@ -212,7 +233,7 @@ function ScanFolderPicker({
 
   const goToMatch = (match: ScanFolderMatch) => {
     setTrail([...match.trail, match]);
-    setQuery("");
+    updateQuery("");
     setPopupOpen(false);
   };
 
@@ -224,7 +245,7 @@ function ScanFolderPicker({
     event.defaultMuiPrevented = true;
     event.preventDefault();
     event.stopPropagation();
-    setQuery("");
+    updateQuery("");
     setPopupOpen(false);
   };
 
@@ -271,9 +292,13 @@ function ScanFolderPicker({
       <Box sx={{ px: 3, pb: 2 }}>
         <SearchHintContext.Provider
           value={
-            truncated && popupOpen && matches.length
-              ? `Showing first ${matches.length} matches, refine your search`
-              : null
+            !popupOpen || !searchable || searchError
+              ? null
+              : !indexed
+                ? "Still indexing folders, results may be incomplete…"
+                : truncated && matches.length
+                  ? `Showing first ${matches.length} matches, refine your search`
+                  : null
           }
         >
           <Autocomplete<ScanFolderMatch, false, false, false>
@@ -281,7 +306,7 @@ function ScanFolderPicker({
             value={null}
             inputValue={query}
             onInputChange={(_, value, reason) => {
-              if (reason === "input" || reason === "clear") setQuery(value);
+              if (reason === "input" || reason === "clear") updateQuery(value);
             }}
             onChange={(_, match) => match && goToMatch(match)}
             open={popupOpen && searchable}
@@ -293,7 +318,9 @@ function ScanFolderPicker({
             isOptionEqualToValue={(option, value) => option.path === value.path}
             loading={searching}
             loadingText="Searching…"
-            noOptionsText={searchError ?? "No folders match"}
+            noOptionsText={
+              searchError ?? (indexed ? "No folders match" : "No folders match yet")
+            }
             autoHighlight
             blurOnSelect={false}
             slots={{ paper: SearchResultsPaper }}
