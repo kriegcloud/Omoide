@@ -231,3 +231,46 @@ export const listScanFolders = async (
   }
   return response.json();
 };
+
+export interface ScanFolderCrumb {
+  name: string;
+  path: string;
+  status: ScanFolderStatus;
+}
+
+export interface ScanFolderMatch extends ScanFolderEntry {
+  /** Ancestors from the top-level folder down to the parent of the match. */
+  trail: ScanFolderCrumb[];
+}
+
+export interface ScanFolderSearchResult {
+  query: string;
+  folders: ScanFolderMatch[];
+  truncated: boolean;
+}
+
+/**
+ * Finds folders anywhere under the media directories whose name (or relative
+ * path, when the query contains "/") matches `query`, labelled against the
+ * given (unsaved) scope. Queries under two characters return nothing.
+ */
+export const searchScanFolders = async (
+  query: string,
+  scope: ScanScopeDraft,
+  signal?: AbortSignal,
+  limit = 25
+): Promise<ScanFolderSearchResult> => {
+  const params = new URLSearchParams({ q: query, limit: String(limit) });
+  scope.include_folders.forEach((v) => params.append("include", v));
+  scope.exclude_folders.forEach((v) => params.append("exclude", v));
+  scope.exclude_folder_patterns.forEach((v) => params.append("pattern", v));
+  const response = await fetch(
+    `${API}/api/config/scan-folders/search?${params}`,
+    { signal }
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err?.detail || "Failed to search folders");
+  }
+  return response.json();
+};

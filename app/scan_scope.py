@@ -9,15 +9,18 @@ The scope is three lists from ``ScanSettings``:
 * ``exclude_folder_patterns`` - folder-name globs (``fnmatch``, case
   insensitive) skipped at any depth, e.g. ``@eaDir`` or ``*.photoslibrary``.
 
-The scanner walk and the settings folder picker both decide through
-``ScanScope.is_excluded`` / ``folder_status`` so the preview in the UI is the
-same rule the scan applies. Narrowing the scope never removes indexed media;
+The scanner walk and the settings folder picker (listing and search) both
+decide through
+``ScanScope.is_excluded`` / ``folder_status`` so the preview in the UI is
+the same rule the scan applies. Narrowing the scope never removes indexed media;
 it only stops new files from being discovered there.
 """
 
 from __future__ import annotations
 
 import os
+import time
+from collections import deque
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -213,6 +216,101 @@ def list_scope_folders(
             }
         )
     return folders
+
+
+MIN_SEARCH_QUERY_LENGTH = 2
+
+
+def search_scope_folders(
+    roots: Iterable[Path],
+    query: str,
+    scope: ScanScope,
+    *,
+    limit: int = 25,
+    max_dirs: int = 20000,
+    time_budget_s: float = 1.5,
+) -> dict:
+    """Find folders anywhere under the media roots whose name matches ``query``.
+
+    A query containing ``/`` matches the relative path instead of the name.
+    Matching is a case-insensitive substring. The walk is breadth-first, never
+    follows symlinks and skips internal folders, but does enter scope-excluded
+    folders so a skipped folder can be found and un-skipped.
+
+    Results rank exact match, then prefix, then substring; then shallower
+    depth; then name. The walk stops after ``limit`` matches, ``max_dirs``
+    scanned folders or ``time_budget_s`` seconds, and ``truncated`` says
+    whether anything may have been left out.
+    """
+    raw = str(query).replace("\\", "/").strip()
+    match_path = "/" in raw
+    needle = raw.strip("/").casefold()
+    if len(needle) < MIN_SEARCH_QUERY_LENGTH:
+        return {"folders": [], "truncated": False}
+
+    deadline = time.monotonic() + max(time_budget_s, 0)
+    queue: deque[tuple[Path, tuple[str, ...]]] = deque(
+        (Path(root), ()) for root in roots
+    )
+    matches: dict[tuple[str, ...], bool] = {}
+    scanned = 0
+    truncated = False
+    while queue:
+        if scanned >= max_dirs or time.monotonic() >= deadline:
+            truncated = True
+            break
+        directory, parts = queue.popleft()
+        scanned += 1
+        try:
+            with os.scandir(directory) as it:
+                entries = sorted(it, key=lambda e: (e.name.casefold(), e.name))
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+            except OSError:
+                continue
+            if is_internal_skipped_dir(entry.name):
+                continue
+            child = (*parts, entry.name)
+            queue.append((Path(entry.path), child))
+            haystack = "/".join(child) if match_path else entry.name
+            if needle not in haystack.casefold():
+                continue
+            if child not in matches and len(matches) >= limit:
+                truncated = True
+                break
+            matches[child] = matches.get(child, False) or _has_subfolders(entry.path)
+        if truncated:
+            break
+
+    def rank(parts: tuple[str, ...]) -> tuple:
+        haystack = ("/".join(parts) if match_path else parts[-1]).casefold()
+        kind = 0 if haystack == needle else 1 if haystack.startswith(needle) else 2
+        return (kind, len(parts), parts[-1].casefold(), "/".join(parts))
+
+    folders = []
+    for parts in sorted(matches, key=rank):
+        rel = "/".join(parts)
+        folders.append(
+            {
+                "name": parts[-1],
+                "path": rel,
+                "has_subfolders": matches[parts],
+                "status": folder_status(rel, scope),
+                "trail": [
+                    {
+                        "name": parts[i - 1],
+                        "path": "/".join(parts[:i]),
+                        "status": folder_status("/".join(parts[:i]), scope),
+                    }
+                    for i in range(1, len(parts))
+                ],
+            }
+        )
+    return {"folders": folders, "truncated": truncated}
 
 
 def _has_subfolders(path: str) -> bool:

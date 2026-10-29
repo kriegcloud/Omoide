@@ -18,7 +18,12 @@ from app.presentation import ensure_writable
 from app.tagging import sanitize_custom_tag_list
 from app.tasks import schedule_custom_auto_tagging
 from app.records import delete_record
-from app.scan_scope import ScanScope, list_scope_folders, normalize_scope_list
+from app.scan_scope import (
+    ScanScope,
+    list_scope_folders,
+    normalize_scope_list,
+    search_scope_folders,
+)
 
 
 _profile_change_lock = threading.Lock()
@@ -211,6 +216,60 @@ class ScanFolderListing(BaseModel):
     folders: list[ScanFolderEntry]
 
 
+class ScanFolderCrumb(BaseModel):
+    name: str
+    path: str
+    status: str
+
+
+class ScanFolderMatch(ScanFolderEntry):
+    trail: list[ScanFolderCrumb]
+
+
+class ScanFolderSearchResult(BaseModel):
+    query: str
+    folders: list[ScanFolderMatch]
+    truncated: bool
+
+
+SCAN_FOLDER_SEARCH_MAX_LIMIT = 100
+
+
+def _draft_scan_scope(
+    include: list[str], exclude: list[str], pattern: list[str]
+) -> ScanScope:
+    """Build the unsaved settings draft scope; raises ``ValueError`` if invalid."""
+    return ScanScope(
+        include=tuple(normalize_scope_list(include, patterns=False)),
+        exclude=tuple(normalize_scope_list(exclude, patterns=False)),
+        patterns=tuple(normalize_scope_list(pattern, patterns=True)),
+    )
+
+
+@router.get("/scan-folders/search", response_model=ScanFolderSearchResult)
+def search_scan_folders(
+    q: str = Query("", description="Folder name, or a relative path when it contains '/'."),
+    limit: int = Query(25, ge=1, description="Maximum matches (capped at 100)."),
+    include: list[str] = Query([], description="Draft include_folders."),
+    exclude: list[str] = Query([], description="Draft exclude_folders."),
+    pattern: list[str] = Query([], description="Draft exclude_folder_patterns."),
+):
+    """Find folders anywhere under the media directories for the folder picker.
+
+    Statuses are labelled against the passed-in draft scope, like
+    ``/scan-folders``. Queries shorter than two characters return nothing.
+    """
+    try:
+        scope = _draft_scan_scope(include, exclude, pattern)
+        roots = [base for base, _ in settings.general.resolved_media_dirs()]
+        result = search_scope_folders(
+            roots, q, scope, limit=min(limit, SCAN_FOLDER_SEARCH_MAX_LIMIT)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ScanFolderSearchResult(query=q, **result)
+
+
 @router.get("/scan-folders", response_model=ScanFolderListing)
 def list_scan_folders(
     parent: str = Query("", description="Folder relative to the media directories."),
@@ -224,11 +283,7 @@ def list_scan_folders(
     previews the edit with the same rule the scanner applies.
     """
     try:
-        scope = ScanScope(
-            include=tuple(normalize_scope_list(include, patterns=False)),
-            exclude=tuple(normalize_scope_list(exclude, patterns=False)),
-            patterns=tuple(normalize_scope_list(pattern, patterns=True)),
-        )
+        scope = _draft_scan_scope(include, exclude, pattern)
         roots = [base for base, _ in settings.general.resolved_media_dirs()]
         folders = list_scope_folders(roots, parent, scope)
     except ValueError as exc:

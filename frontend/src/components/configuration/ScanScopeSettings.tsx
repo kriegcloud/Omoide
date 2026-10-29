@@ -1,6 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import {
   Alert,
+  Autocomplete,
   Box,
   Breadcrumbs,
   Button,
@@ -15,6 +24,8 @@ import {
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  Paper,
+  type PaperProps,
   Stack,
   TextField,
   Typography,
@@ -23,12 +34,21 @@ import AddIcon from "@mui/icons-material/Add";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import FolderIcon from "@mui/icons-material/Folder";
 import ManageSearchIcon from "@mui/icons-material/ManageSearch";
+import SearchIcon from "@mui/icons-material/Search";
 import {
   listScanFolders,
+  ScanFolderCrumb,
   ScanFolderEntry,
+  ScanFolderMatch,
   ScanFolderStatus,
   ScanScopeDraft,
+  searchScanFolders,
 } from "../../services/config";
+import {
+  useDialogHotkeyScope,
+  useHotkey,
+  useHotkeyHelp,
+} from "../../hotkeys/useHotkey";
 import { ConfigSectionProps } from "./shared";
 
 type PickerMode = "include" | "exclude" | "view";
@@ -44,6 +64,43 @@ const STATUS_CHIP: Record<
   outside: { label: "Not scanned", color: "default" },
   excluded: { label: "Skipped", color: "warning" },
 };
+
+const SEARCH_MIN_LENGTH = 2;
+const SEARCH_DEBOUNCE_MS = 250;
+const NO_MATCHES: ScanFolderMatch[] = [];
+
+/** A query containing "/" matches relative paths, otherwise folder names. */
+const matchesFolderQuery = (folder: ScanFolderCrumb, query: string) => {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  return (needle.includes("/") ? folder.path : folder.name)
+    .toLowerCase()
+    .includes(needle.replace(/^\/+|\/+$/g, ""));
+};
+
+const SearchHintContext = createContext<string | null>(null);
+
+/** Autocomplete popup with a footer hint when the backend truncated results. */
+function SearchResultsPaper({ children, ...props }: PaperProps) {
+  const hint = useContext(SearchHintContext);
+  return (
+    <Paper {...props}>
+      {children}
+      {hint && (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          component="div"
+          data-testid="scan-folder-search-hint"
+          onMouseDown={(event) => event.preventDefault()}
+          sx={{ px: 2, py: 1, borderTop: 1, borderColor: "divider" }}
+        >
+          {hint}
+        </Typography>
+      )}
+    </Paper>
+  );
+}
 
 const parseNameList = (raw: string): string[] => {
   const seen = new Set<string>();
@@ -72,18 +129,104 @@ function ScanFolderPicker({
   onClose,
   onChoose,
 }: FolderPickerProps) {
-  const [trail, setTrail] = useState<ScanFolderEntry[]>([]);
+  const [trail, setTrail] = useState<ScanFolderCrumb[]>([]);
   const [folders, setFolders] = useState<ScanFolderEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [matches, setMatches] = useState<ScanFolderMatch[]>(NO_MATCHES);
+  const [truncated, setTruncated] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [popupOpen, setPopupOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const dialogRef = useDialogHotkeyScope(open);
+  const openHelp = useHotkeyHelp();
+  useHotkey({ key: "/" }, () => searchInputRef.current?.focus(), {
+    scope: "dialog",
+    dialogRef,
+    enabled: open,
+    description: "Search folders",
+  });
+  useHotkey({ key: "?" }, openHelp, {
+    scope: "dialog",
+    dialogRef,
+    enabled: open,
+    description: "Show keyboard shortcuts",
+  });
 
   const current = trail.length ? trail[trail.length - 1] : null;
   const parent = current?.path ?? "";
   const scopeKey = JSON.stringify(scope);
+  const searchable = query.trim().length >= SEARCH_MIN_LENGTH;
 
   useEffect(() => {
-    if (open) setTrail([]);
+    if (open) {
+      setTrail([]);
+      setQuery("");
+    }
   }, [open]);
+
+  useEffect(() => {
+    if (!open || !searchable) {
+      setMatches(NO_MATCHES);
+      setTruncated(false);
+      setSearching(false);
+      setSearchError(null);
+      return;
+    }
+    const controller = new AbortController();
+    setSearching(true);
+    const timer = window.setTimeout(() => {
+      searchScanFolders(query.trim(), scope, controller.signal)
+        .then((result) => {
+          setMatches(result.folders);
+          setTruncated(result.truncated);
+          setSearchError(null);
+        })
+        .catch((err: unknown) => {
+          if (controller.signal.aborted) return;
+          setMatches(NO_MATCHES);
+          setTruncated(false);
+          setSearchError(
+            err instanceof Error ? err.message : "Failed to search folders"
+          );
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setSearching(false);
+        });
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+    // scopeKey stands in for the scope object identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, query, searchable, scopeKey]);
+
+  const visibleFolders = useMemo(
+    () => folders.filter((folder) => matchesFolderQuery(folder, query)),
+    [folders, query]
+  );
+
+  const goToMatch = (match: ScanFolderMatch) => {
+    setTrail([...match.trail, match]);
+    setQuery("");
+    setPopupOpen(false);
+  };
+
+  const onSearchKeyDown = (
+    event: ReactKeyboardEvent<HTMLDivElement> & { defaultMuiPrevented?: boolean }
+  ) => {
+    // First Esc clears the field; with the field empty, Esc closes the dialog.
+    if (event.key !== "Escape" || !query) return;
+    event.defaultMuiPrevented = true;
+    event.preventDefault();
+    event.stopPropagation();
+    setQuery("");
+    setPopupOpen(false);
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -123,8 +266,90 @@ function ScanFolderPicker({
         : false);
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+    <Dialog ref={dialogRef} open={open} onClose={onClose} fullWidth maxWidth="sm">
       <DialogTitle>{title}</DialogTitle>
+      <Box sx={{ px: 3, pb: 2 }}>
+        <SearchHintContext.Provider
+          value={
+            truncated && popupOpen && matches.length
+              ? `Showing first ${matches.length} matches, refine your search`
+              : null
+          }
+        >
+          <Autocomplete<ScanFolderMatch, false, false, false>
+            options={matches}
+            value={null}
+            inputValue={query}
+            onInputChange={(_, value, reason) => {
+              if (reason === "input" || reason === "clear") setQuery(value);
+            }}
+            onChange={(_, match) => match && goToMatch(match)}
+            open={popupOpen && searchable}
+            onOpen={() => setPopupOpen(true)}
+            onClose={() => setPopupOpen(false)}
+            onKeyDown={onSearchKeyDown}
+            filterOptions={(options) => options}
+            getOptionLabel={(option) => option.path}
+            isOptionEqualToValue={(option, value) => option.path === value.path}
+            loading={searching}
+            loadingText="Searching…"
+            noOptionsText={searchError ?? "No folders match"}
+            autoHighlight
+            blurOnSelect={false}
+            slots={{ paper: SearchResultsPaper }}
+            renderOption={(props, option) => {
+              const { key, ...optionProps } = props as typeof props & {
+                key: string;
+              };
+              return (
+                <Box
+                  component="li"
+                  key={key}
+                  {...optionProps}
+                  data-testid="scan-folder-search-option"
+                  sx={{ display: "flex", alignItems: "center", gap: 1.5 }}
+                >
+                  <FolderIcon fontSize="small" color="action" />
+                  <ListItemText
+                    primary={option.name}
+                    secondary={option.path}
+                    slotProps={{ secondary: { noWrap: true } }}
+                    sx={{ minWidth: 0, my: 0 }}
+                  />
+                  <Chip
+                    size="small"
+                    label={STATUS_CHIP[option.status].label}
+                    color={STATUS_CHIP[option.status].color}
+                    sx={{ flexShrink: 0 }}
+                  />
+                </Box>
+              );
+            }}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                inputRef={searchInputRef}
+                autoFocus
+                size="small"
+                placeholder="Search folders (press /)"
+                slotProps={{
+                  input: {
+                    ...params.InputProps,
+                    startAdornment: (
+                      <SearchIcon fontSize="small" color="action" sx={{ mr: 1 }} />
+                    ),
+                  },
+                  htmlInput: {
+                    ...params.inputProps,
+                    "aria-label": "Search folders",
+                    "data-testid": "scan-folder-search",
+                  },
+                }}
+              />
+            )}
+          />
+        </SearchHintContext.Provider>
+      </Box>
       <DialogContent dividers sx={{ minHeight: 320 }}>
         <Breadcrumbs sx={{ mb: 1 }} maxItems={5}>
           <Link
@@ -166,13 +391,15 @@ function ScanFolderPicker({
           </Box>
         ) : (
           !error &&
-          (folders.length === 0 ? (
+          (visibleFolders.length === 0 ? (
             <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
-              No subfolders here.
+              {folders.length === 0
+                ? "No subfolders here."
+                : "No subfolders here match."}
             </Typography>
           ) : (
             <List dense disablePadding data-testid="scan-folder-list">
-              {folders.map((folder) => (
+              {visibleFolders.map((folder) => (
                 <ListItemButton
                   key={folder.path}
                   onClick={() => setTrail((prev) => [...prev, folder])}
