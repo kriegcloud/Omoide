@@ -330,10 +330,11 @@ class SearchScopeFoldersTests(unittest.TestCase):
                     search_folder_index(index, query, scope),
                     self._search(query, scope),
                 )
+        best = search_folder_index(index, "holiday", scope, limit=2)
         self.assertEqual(
-            search_folder_index(index, "holiday", scope, limit=2),
-            self._search("holiday", scope, limit=2),
+            [f["path"] for f in best["folders"]], ["Holiday", "Archive/holiday"]
         )
+        self.assertTrue(best["truncated"])
 
     def test_incomplete_index_reports_truncated(self) -> None:
         index = build_folder_index([self.root], max_dirs=1)

@@ -383,6 +383,7 @@ def _rank_and_describe(
     needle: str,
     match_path: bool,
     scope: ScanScope,
+    limit: int | None = None,
 ) -> list[dict]:
     def rank(parts: tuple[str, ...]) -> tuple:
         haystack = ("/".join(parts) if match_path else parts[-1]).casefold()
@@ -390,7 +391,7 @@ def _rank_and_describe(
         return (kind, len(parts), parts[-1].casefold(), "/".join(parts))
 
     folders = []
-    for parts in sorted(matches, key=rank):
+    for parts in sorted(matches, key=rank)[:limit]:
         rel = "/".join(parts)
         folders.append(
             {
@@ -463,23 +464,23 @@ def search_scope_folders(
 def search_folder_index(
     index: FolderIndex, query: str, scope: ScanScope, *, limit: int = 25
 ) -> dict:
-    """``search_scope_folders`` over a prebuilt index: same matching and ranking."""
+    """``search_scope_folders`` over a prebuilt index: same matching and ranking.
+
+    The index is in memory, so every match is ranked and the best ``limit``
+    are returned; a deep exact match is not crowded out by shallow ones.
+    """
     parsed = _parse_search_query(query)
     if parsed is None:
         return {"folders": [], "truncated": False}
     needle, match_path = parsed
-    matches: dict[tuple[str, ...], bool] = {}
-    truncated = not index.complete
-    for parts, has_subfolders in index.folders.items():
-        if not _is_match(parts, needle, match_path):
-            continue
-        if len(matches) >= limit:
-            truncated = True
-            break
-        matches[parts] = has_subfolders
+    matches = {
+        parts: has_subfolders
+        for parts, has_subfolders in index.folders.items()
+        if _is_match(parts, needle, match_path)
+    }
     return {
-        "folders": _rank_and_describe(matches, needle, match_path, scope),
-        "truncated": truncated,
+        "folders": _rank_and_describe(matches, needle, match_path, scope, limit),
+        "truncated": len(matches) > limit or not index.complete,
     }
 
 
