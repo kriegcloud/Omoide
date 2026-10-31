@@ -896,3 +896,6 @@ class Event(SQLModel, table=True):
 class EventMediaLink(SQLModel, table=True):
     event_id: int = Field(foreign_key="event.id", primary_key=True)
     media_id: int = Field(foreign_key="media.id", primary_key=True, index=True)
+
+# Register additive fixture curation tables for SQLModel/Alembic metadata.
+from app import curation_models as _curation_models  # noqa: E402,F401
