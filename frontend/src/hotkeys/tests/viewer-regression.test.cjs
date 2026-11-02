@@ -30,6 +30,7 @@ function harness(relative, overrides = {}) {
     lazy: () => component('Lazy'), Suspense: component('Suspense'),
     useState: (initial) => { const i = cursor++; if (!(i in state)) state[i] = typeof initial === 'function' ? initial() : initial; return [state[i], (v) => state[i] = typeof v === 'function' ? v(state[i]) : v]; },
     useRef: (initial) => { const i = cursor++; if (!(i in state)) state[i] = {current: initial}; return state[i]; },
+    useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
     useEffect: () => {}, useMemo: (f) => f(), useCallback: (f) => f, useId: () => 'test-tabs',
   };
   const store = {lists: {}, updateItem: () => {}, removeItem: (...args) => removed.push(args)};
@@ -41,6 +42,7 @@ function harness(relative, overrides = {}) {
     '@mui/material': ui,
     '../stores/useListStore': {useListStore: (selector) => selector ? selector(store) : store},
     '../context/UndoContext': {useUndoRefresh: () => {}, useMutationRefresh: () => {}},
+    '../stores/optimisticOperations': {optimisticOperations: {subscribe() {}, getSnapshot: () => []}, projectEntity: (_key, base) => base, operationVersion: () => 0, acknowledgeQuery() {}},
     '../stores/mutationBus': { mutationBus: { emit() {} }, runOptimistic: async ({apply, request, rollback}) => { const snapshot = apply(); try { return await request(); } catch (error) { rollback(snapshot); throw error; } } },
     '../TaskEventsContext': {useTaskCompletionVersion: () => 0},
     '../config': {__esModule: true, default: {PRESENTATION_MODE: false}},

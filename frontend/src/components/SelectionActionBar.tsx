@@ -47,6 +47,8 @@ export const SelectionActionBar: React.FC = () => {
   const [albumDialogOpen, setAlbumDialogOpen] = useState(false);
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const [moveTargets, setMoveTargets] = useState<number[]>([]);
+  const openMoveDialog = () => { setMoveTargets([...selectedIds]); setFolderDialogOpen(true); };
   const [datasetDialogOpen, setDatasetDialogOpen] = useState(false);
   const [repairDialogOpen, setRepairDialogOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -73,21 +75,20 @@ export const SelectionActionBar: React.FC = () => {
   };
   const confirmDelete = async () => {
     if (!pendingDelete || busy || config.PRESENTATION_MODE) return;
-    setBusy(true);
+    const target = pendingDelete;
+    setPendingDelete(null);
+    // Clear only the confirmation's selection, never a new selection made in flight.
+    if (selectedIds.size === target.ids.length && target.ids.every(id => selectedIds.has(id))) clear();
     try {
-      const result = await bulkDeleteMedia(pendingDelete.ids, pendingDelete.action);
-      clear();
-      setPendingDelete(null);
+      const result = await bulkDeleteMedia(target.ids, target.action);
       setSnackbar({ open: true, message: `Deleted ${result.removed}${result.skipped_ids.length ? `; ${result.skipped_ids.length} skipped` : ""}${result.errors.length ? `; ${result.errors.length} failed` : ""}`, severity: result.errors.length ? "error" : "success" });
-    } catch (error) {
-      setSnackbar({ open: true, message: error instanceof Error ? error.message : "Failed to delete media", severity: "error" });
-    } finally { setBusy(false); }
+    } catch { /* Global operation feedback retains uncertain/error outcomes. */ }
   };
   useHotkeys(selectionBindings, (event) => {
     if (event.key === "Delete") requestDelete(event.shiftKey ? "DELETE_RECORDS" : "DELETE_FILES");
     else if (event.key.toLowerCase() === "x") requestDelete("BLACKLIST_RECORDS");
     else if (event.key.toLowerCase() === "a") setAssignDialogOpen(true);
-    else if (event.key.toLowerCase() === "m") setFolderDialogOpen(true);
+    else if (event.key.toLowerCase() === "m") openMoveDialog();
     else if (event.key.toLowerCase() === "l") setAlbumDialogOpen(true);
     else if (event.key.toLowerCase() === "t") setDatasetDialogOpen(true);
     else if (event.key.toLowerCase() === "r") setDialogOpen(true);
@@ -213,30 +214,7 @@ export const SelectionActionBar: React.FC = () => {
                 startIcon={<AutoFixHighIcon fontSize="small" />}
                 onClick={async () => {
                   if (!lastEditOps) return;
-                  setBusy(true);
-                  try {
-                    const task = await batchEditMedia(
-                      Array.from(selectedIds),
-                      lastEditOps,
-                      "copy"
-                    );
-                    setSnackbar({
-                      open: true,
-                      message: `Batch edit ${task.id} started for ${count} item${count === 1 ? "" : "s"}.`,
-                      severity: "success",
-                    });
-                  } catch (error) {
-                    setSnackbar({
-                      open: true,
-                      message:
-                        error instanceof Error
-                          ? error.message
-                          : "Failed to start batch edit",
-                      severity: "error",
-                    });
-                  } finally {
-                    setBusy(false);
-                  }
+                  void batchEditMedia([...selectedIds], lastEditOps, "copy").catch(() => {});
                 }}
                 variant="contained"
                 disableElevation
@@ -267,7 +245,7 @@ export const SelectionActionBar: React.FC = () => {
           <Button
             size="small"
             startIcon={<DriveFileMoveIcon fontSize="small" />}
-            onClick={() => setFolderDialogOpen(true)}
+            onClick={openMoveDialog}
             variant="contained"
             disableElevation
           >
@@ -342,26 +320,10 @@ export const SelectionActionBar: React.FC = () => {
         open={folderDialogOpen}
         loading={busy}
         onClose={() => setFolderDialogOpen(false)}
-        onConfirm={async (destination) => {
-          setBusy(true);
-          try {
-            const result = await bulkMoveMedia(Array.from(selectedIds), destination);
-            setSnackbar({
-              open: true,
-              message: `Moved ${result.moved_ids.length} item(s)${result.skipped.length ? `; ${result.skipped.length} skipped` : ""}.`,
-              severity: "success",
-            });
-            setFolderDialogOpen(false);
-            clear();
-          } catch (error) {
-            setSnackbar({
-              open: true,
-              message: error instanceof Error ? error.message : "Failed to move media",
-              severity: "error",
-            });
-          } finally {
-            setBusy(false);
-          }
+        onConfirm={(destination) => {
+          const targets = [...moveTargets];
+          setFolderDialogOpen(false);
+          void bulkMoveMedia(targets, destination).catch(() => {});
         }}
       />
       <AddToDatasetDialog

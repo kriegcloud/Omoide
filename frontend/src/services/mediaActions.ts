@@ -1,3 +1,5 @@
+import { DefinitiveMutationError, startOperation, type MutationReceipt, type OperationPatch } from "../stores/optimisticOperations";
+import { entityKey } from "../stores/queryKeys";
 import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
 import { Media, MediaPreview, Task } from "../types";
@@ -30,7 +32,7 @@ export const convertMedia = async (mediaId: number, mode: Exclude<import("../typ
   return res.json();
 };
 
-export const deleteMediaRecord = async (mediaId: number) => {
+const deleteMediaRecordRequest = async (mediaId: number) => {
   const res = await fetch(`${API}/api/media/${mediaId}`, {
     method: "DELETE",
   });
@@ -38,7 +40,7 @@ export const deleteMediaRecord = async (mediaId: number) => {
   mutationBus.emit({ type: "media:deleted", ids: [mediaId] });
 };
 
-export const deleteMediaFile = async (mediaId: number) => {
+const deleteMediaFileRequest = async (mediaId: number) => {
   const res = await fetch(`${API}/api/media/${mediaId}/file`, {
     method: "DELETE",
   });
@@ -66,7 +68,7 @@ export const openMediaFile = async (mediaId: number): Promise<void> => {
   }
 };
 
-export const setMediaFavorite = async (
+const setMediaFavoriteRequest = async (
   mediaId: number,
   isFavorite: boolean
 ): Promise<Media> => {
@@ -75,13 +77,17 @@ export const setMediaFavorite = async (
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ is_favorite: isFavorite }),
   });
-  if (!res.ok) throw new Error("Failed to update favorite");
+  if (!res.ok) {
+    // Validation/presentation guards and a missing row precede the favorite write.
+    if ([403, 404, 422].includes(res.status)) throw new DefinitiveMutationError("Failed to update favorite");
+    throw new Error("Failed to update favorite");
+  }
   const result = await res.json();
   mutationBus.emit({ type: "media:updated", items: [result] });
   return result;
 };
 
-export const moveMedia = async (
+const moveMediaRequest = async (
   mediaId: number,
   destinationDir: string
 ): Promise<MediaPreview> => {
@@ -96,7 +102,7 @@ export const moveMedia = async (
   return result;
 };
 
-export const renameMedia = async (
+const renameMediaRequest = async (
   mediaId: number,
   filename: string
 ): Promise<MediaPreview> => {
@@ -111,7 +117,7 @@ export const renameMedia = async (
   return result;
 };
 
-export const bulkMoveMedia = async (
+const bulkMoveMediaRequest = async (
   mediaIds: number[],
   destinationDir: string
 ): Promise<BulkMoveResult> => {
@@ -141,7 +147,7 @@ export const createMediaFolder = async (
   return result;
 };
 
-export const editMedia = async (
+const editMediaRequest = async (
   mediaId: number,
   request: EditMediaRequest
 ): Promise<MediaDetail> => {
@@ -170,7 +176,7 @@ export const getFaceCropSuggestions = async (
   return res.json();
 };
 
-export const batchEditMedia = async (
+const batchEditMediaRequest = async (
   mediaIds: number[],
   ops: EditOp[],
   mode: "copy" | "overwrite" = "copy"
@@ -192,7 +198,7 @@ export interface BulkDeleteResult {
   errors: { id: number; error?: string; reason?: string }[];
 }
 
-export const bulkDeleteMedia = async (ids: number[], action: BulkDeleteAction): Promise<BulkDeleteResult> => {
+const bulkDeleteMediaRequest = async (ids: number[], action: BulkDeleteAction): Promise<BulkDeleteResult> => {
   const res = await fetch(`${API}/api/media/bulk-delete`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -203,4 +209,58 @@ export const bulkDeleteMedia = async (ids: number[], action: BulkDeleteAction): 
   if (Array.isArray(result.processed_ids)) mutationBus.emit({ type: "media:deleted", ids: result.processed_ids });
   else mutationBus.emit({ type: "list:invalidate", prefix: "" });
   return result;
+};
+
+/** Keep the promise API for existing callers; the app-level controller owns lifetime. */
+function mediaOperation<A extends unknown[], R>(
+  label: string, ids: number[], args: A, request: (...args: A) => Promise<R>,
+  patches: OperationPatch[] = [],
+  outcome?: (result: R, id: string) => MutationReceipt,
+): Promise<R> {
+  let result: R;
+  const id = crypto.randomUUID();
+  const handle = startOperation({
+    id, label, input: args, resources: ids.map(id => entityKey("media", id)), patches,
+    request: async input => { result = await request(...input as A); return result; },
+    ...(outcome ? { receipt: (value: R) => outcome(value, id) } : {}),
+  });
+  return handle.done.then(record => {
+    if (record.state === "unknown" || record.state === "rejected") throw new Error(record.error ?? "Mutation outcome uncertain");
+    return result;
+  });
+}
+const removals = (ids: number[]): OperationPatch[] => ids.map(id => ({ kind: "remove", key: entityKey("media", id) }));
+export const deleteMediaRecord = (id: number) => mediaOperation("Remove media record", [id], [id], deleteMediaRecordRequest, removals([id]));
+export const deleteMediaFile = (id: number) => mediaOperation("Delete media file", [id], [id], deleteMediaFileRequest, removals([id]));
+export const setMediaFavorite = (id: number, favorite: boolean) => mediaOperation(
+  "Update favorite", [id], [id, favorite] as [number, boolean], setMediaFavoriteRequest,
+  [{ kind: "fields", key: entityKey("media", id), values: { is_favorite: favorite } }],
+);
+export const moveMedia = (id: number, destination: string) => mediaOperation("Move media", [id], [id, destination] as [number, string], moveMediaRequest);
+export const renameMedia = (id: number, filename: string) => mediaOperation("Rename media", [id], [id, filename] as [number, string], renameMediaRequest);
+export const editMedia = (id: number, request: EditMediaRequest) => mediaOperation("Save image edits", [id], [id, request] as [number, EditMediaRequest], editMediaRequest);
+// This operation tracks task submission only; task progress remains owned by TaskEventsContext.
+export const batchEditMedia = (ids: number[], ops: EditOp[], mode: "copy" | "overwrite" = "copy") => mediaOperation(
+  "Submit batch edit", ids, [ids, ops, mode] as [number[], EditOp[], "copy" | "overwrite"], batchEditMediaRequest,
+);
+export const bulkMoveMedia = (ids: number[], destination: string) => mediaOperation(
+  "Move selected media", ids, [ids, destination] as [number[], string], bulkMoveMediaRequest, [],
+  (result, operation_id) => ({ operation_id, state: result.skipped.length ? "partial" : "succeeded",
+    applied: result.moved_ids.map(id => entityKey("media", id)),
+    skipped: result.skipped.map(item => ({ key: entityKey("media", item.id), reason: item.reason })), failed: [], unknown: [] }),
+);
+export const bulkDeleteMedia = (mediaIds: number[], action: BulkDeleteAction) => {
+  const ids = [...new Set(mediaIds)];
+  return mediaOperation(
+  "Delete selected media", ids, [ids, action] as [number[], BulkDeleteAction], bulkDeleteMediaRequest, removals(ids),
+  (result, operation_id) => {
+    const applied = result.processed_ids.map(id => entityKey("media", id));
+    const failed = result.errors.map(item => ({ key: entityKey("media", item.id), code: "delete_failed", message: item.error ?? item.reason ?? "Delete failed" }));
+    const failedKeys = new Set(failed.map(item => item.key));
+    const skipped = result.skipped_ids.filter(id => !failedKeys.has(entityKey("media", id))).map(id => ({ key: entityKey("media", id), reason: "Skipped by server" }));
+    const accounted = new Set([...applied, ...failed.map(item => item.key), ...skipped.map(item => item.key)]);
+    const unknown = ids.map(id => entityKey("media", id)).filter(key => !accounted.has(key));
+    return { operation_id, state: unknown.length ? "unknown" : failed.length || skipped.length ? "partial" : "succeeded", applied, failed, skipped, unknown };
+  },
+);
 };
