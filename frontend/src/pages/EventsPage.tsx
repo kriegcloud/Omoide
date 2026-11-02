@@ -1,7 +1,12 @@
+import { submitJob } from '../services/taskOperations';
+import JobSubmissionStatus from '../components/JobSubmissionStatus';
+import { getActiveTasks, getRecentTasks } from '../services/taskActions';
+import { startGeographyMutation } from '../services/geographyOperations';
+import { optimisticOperations, projectList, acknowledgeQuery, operationVersion } from '../stores/optimisticOperations';
 import GalleryPage from "../components/GalleryPage";
 import Gallery from "../components/Gallery";
 import { useMutationRefresh } from "../context/UndoContext";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   Alert,
   Box,
@@ -18,7 +23,7 @@ import config, { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 import { EmptyState } from "../components/EmptyState";
 import { getEvents, startBuildEvents } from "../services/features";
-import { useTaskCompletionVersion } from "../TaskEventsContext";
+import { useTaskEvents, useTaskCompletionVersion } from "../TaskEventsContext";
 import { EventItem } from "../types";
 import ConfirmDialog from "../components/ConfirmDialog";
 import SelectableTileFrame from "../components/SelectableTileFrame";
@@ -41,15 +46,20 @@ const formatRange = (startIso: string, endIso: string) => {
 
 export default function EventsPage() {
   const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
-  const [items, setItems] = useState<EventItem[]>([]);
+  const [baseItems, setItems] = useState<EventItem[]>([]);
+  useSyncExternalStore(optimisticOperations.subscribe, optimisticOperations.getSnapshot, optimisticOperations.getSnapshot);
+  const items = projectList("events", "event", baseItems).items;
+  const [deleteTargets, setDeleteTargets] = useState<number[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState("");
+  const { activeTasks } = useTaskEvents();
+  const running = activeTasks.filter(task => task.task_type === "build_events");
   const refreshKey = useTaskCompletionVersion(["build_events"]);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const isDeleting = false;
   const gridRef = useRef<HTMLDivElement>(null);
   const selection = useEntitySelection<number>();
   const {pruneTo} = selection;
@@ -70,6 +80,7 @@ export default function EventsPage() {
   useMutationRefresh(["events:changed", "media:deleted", "media:updated", "media:moved", "list:invalidate"], () => { requestVersion.current += 1; setRevision(value => value + 1); });
 
   const loadPage = async (fromCursor: string | null, replace: boolean) => {
+    const started = operationVersion();
     const version = replace ? ++requestVersion.current : requestVersion.current;
     setIsLoading(true);
     setError(null);
@@ -77,6 +88,7 @@ export default function EventsPage() {
       const page = await getEvents(fromCursor);
       if (version !== requestVersion.current) return;
       setItems((prev) => (replace ? page.items : [...prev, ...page.items]));
+      if (replace) acknowledgeQuery("events", started);
       setCursor(page.next_cursor);
       setHasMore(page.next_cursor !== null);
     } catch (err) {
@@ -89,7 +101,6 @@ export default function EventsPage() {
   };
 
   useEffect(() => {
-    setItems([]);
     setCursor(null);
     setHasMore(true);
     void loadPage(null, true);
@@ -108,29 +119,31 @@ export default function EventsPage() {
 
   const handleRebuild = async () => {
     try {
-      await startBuildEvents();
+      await submitJob("events", "Build events", () => startBuildEvents(), async () => { await Promise.all([getActiveTasks(), getRecentTasks()]); });
       setSnackbar("Event clustering started — this page refreshes when done.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start task");
     }
   };
 
-  const handleDeleteSelected = async () => {
-    setIsDeleting(true);
-    try {
-      const result = await deleteEventsBulk(Array.from(selection.selectedIds));
-      const deleted = new Set(result.deleted_ids);
-      setItems((previous) => previous.filter((item) => !deleted.has(item.id)));
-      selection.toggleMode();
-      setDeleteOpen(false);
-      setSnackbar(
-        `Deleted ${result.deleted_ids.length} event${result.deleted_ids.length === 1 ? "" : "s"}.`,
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete events");
-    } finally {
-      setIsDeleting(false);
-    }
+  const refreshEvents = async () => {
+    const started = operationVersion();
+    const page = await getEvents(null);
+    setItems(page.items); setCursor(page.next_cursor); setHasMore(page.next_cursor !== null);
+    acknowledgeQuery("events", started);
+  };
+  const handleDeleteSelected = () => {
+    const ids = [...deleteTargets];
+    if (!ids.length) return;
+    setDeleteOpen(false);
+    selection.toggleMode();
+    startGeographyMutation("Delete events", `event:${ids[0]}`,
+      ids.map(id => ({kind: "remove", key: `event:${id}`, query: "events"})),
+      async () => {
+        const result = await deleteEventsBulk(ids);
+        // Legacy bulk transport exposes successful IDs; refresh skipped rows.
+        return result;
+      }, refreshEvents, result => result.deleted_ids.map(id => `event:${id}` as const));
   };
 
   if (!config.EVENTS_ENABLED) {
@@ -170,7 +183,7 @@ export default function EventsPage() {
               color="error"
               size="small"
               disabled={selection.selectedIds.size === 0 || isDeleting}
-              onClick={() => setDeleteOpen(true)}
+              onClick={() => { setDeleteTargets([...selection.selectedIds]); setDeleteOpen(true); }}
             >
               Delete Selected
             </Button>
@@ -185,6 +198,8 @@ export default function EventsPage() {
         </Box>
       </Box>
 
+      <JobSubmissionStatus scope="events" />
+      {running.map(task => <Alert key={task.id} severity="info">{task.status}: {task.current_step || "Processing"}</Alert>)}
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
@@ -250,7 +265,7 @@ export default function EventsPage() {
       <ConfirmDialog
         open={deleteOpen}
         title="Delete Selected Events"
-        message={`Delete ${selection.selectedIds.size} selected event${selection.selectedIds.size === 1 ? "" : "s"}? The media itself will stay in your library.`}
+        message={`Delete ${deleteTargets.length} selected event${deleteTargets.length === 1 ? "" : "s"}? The media itself will stay in your library.`}
         confirmLabel="Delete"
         loading={isDeleting}
         onConfirm={handleDeleteSelected}

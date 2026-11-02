@@ -7,7 +7,7 @@ import config from '../config';
 import { addSocialLink, deleteSocialLink, editSocialLink, getSocialBrand, getSocialLinks, previewSocialLink, reorderSocialLinks, updateSocialBrand } from '../services/personActions';
 import { groupSocialLinks } from '../services/socialLinkGroups';
 import { socialLinksQuery, startSocialLinkOperation } from '../services/socialLinkOperations';
-import { acknowledgeQuery, operationVersion, optimisticOperations, projectEntity, reconcileOperation } from '../stores/optimisticOperations';
+import { acknowledgeQuery, operationVersion, optimisticOperations, projectEntity, refreshOperation } from '../stores/optimisticOperations';
 import { useUndo } from '../context/UndoContext';
 import type { SocialLink, SocialLinkPreview } from '../types';
 import ConfirmDialog from './ConfirmDialog';
@@ -143,7 +143,7 @@ export function PersonSocialLinks({ personId, initialLinks }: { personId: number
     <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
       {allGroups.length > COLLAPSED_COUNT && <Button size="small" onClick={() => setExpanded(value => !value)}>{expanded ? 'Show fewer' : `Show all (${links.length})`}</Button>}
       {!config.PRESENTATION_MODE && <Button size="small" startIcon={<AddIcon />} disabled={pending} onClick={event => openEditor(event.currentTarget)}>Add link</Button>}
-      {uncertainOperations.length > 0 && <Button size="small" onClick={() => { void Promise.all(uncertainOperations.map(record => reconcileOperation(record.id))).catch(() => setFeedback({ message: 'Could not check status. Try again when the connection is available.', uncertain: true })); }}>Check status</Button>}
+      {uncertainOperations.length > 0 && <Button size="small" onClick={() => { void Promise.all(uncertainOperations.map(record => refreshOperation(record.id))).catch(() => setFeedback({ message: 'Could not check status. Try again when the connection is available.', uncertain: true })); }}>Check status</Button>}
       {pending && <Typography variant="caption" color="text.secondary" role="status" sx={{ alignSelf: 'center' }}>Saving or checking outcome…</Typography>}
     </Stack>
     {error && <Alert severity="error" sx={{ mt: 1 }} onClose={() => setError('')}>{error}</Alert>}

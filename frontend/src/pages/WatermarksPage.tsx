@@ -1,3 +1,6 @@
+import JobSubmissionStatus from "../components/JobSubmissionStatus";
+import { submitJob } from "../services/taskOperations";
+import { getActiveTasks, getRecentTasks } from "../services/taskActions";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Box, Button, Menu, MenuItem, Stack, Tab, Tabs, TextField, Typography } from '@mui/material';
 import { useSearchParams } from 'react-router-dom';
@@ -45,7 +48,7 @@ export default function WatermarksPage() {
   const selection = useGridSelection({ listKey: key, containerRef: container, orderedIds: rows.map(row => row.id), loadedCount: rows.length, hasMore: list?.hasMore, selecting, onEnterSelection: () => setSelecting(true), onExitSelection: () => setSelecting(false), selectedIds: selected, onSelectionChange: setSelected });
   const act = (action: 'approve' | 'reject' | 'restore', targets: WatermarkCandidate[]) => { if (!targets.length) return; if (action !== 'reject') setConfirm({ action, rows: structuredClone(targets) }); else { change(action, targets); setSelected(new Set()); update('item', null); } };
   const chosen = () => rows.filter(row => selected.has(row.id));
-  const detect = () => { const search = new URLSearchParams({ scope: 'pending' }); if (folder) search.set('folder', folder); watermarkWrite('Detect watermarks', `/api/watermarks/detect?${search}`, jsonBody({})); };
+  const detect = () => { const search = new URLSearchParams({ scope: 'pending' }); if (folder) search.set('folder', folder); void submitJob("tasks", "Detect watermarks", () => watermarkJson(`/api/watermarks/detect?${search}`, jsonBody({})), async () => { await Promise.all([getActiveTasks(), getRecentTasks()]); }).catch(() => {}); };
   useHotkey({ key: 'a' }, () => act('approve', chosen()), { scope: 'page', enabled: !item && status === 'proposed', description: 'Approve selected watermarks' });
   useHotkey({ key: 'r' }, () => act('reject', chosen()), { scope: 'page', enabled: !item && status === 'proposed', description: 'Reject selected watermarks' });
   useHotkey({ key: 'u' }, () => act('restore', chosen()), { scope: 'page', enabled: !item && status === 'applied', description: 'Restore selected originals' });
@@ -57,6 +60,7 @@ export default function WatermarksPage() {
     filters={<TextField label="Folder" size="small" value={folder} onChange={event => update('folder', event.target.value)} />}
     actions={<><Button onClick={detect}>Detect watermarks</Button><Button onClick={() => setHandles(true)}>Handles</Button><Button onClick={event => setMenu(event.currentTarget)}>More</Button></>}
     selection={<Stack direction="row" spacing={1} sx={{ mb: 2 }}><Button onClick={() => setSelecting(x => !x)}>{selecting ? 'Done selecting' : 'Select'}</Button>{selecting && <><Button onClick={() => setSelected(new Set(rows.map(row => row.id)))}>Select all loaded</Button><Typography>{selected.size} selected</Typography>{status === 'proposed' && <><Button disabled={!selected.size} onClick={() => act('approve', chosen())}>Approve selected</Button><Button disabled={!selected.size} onClick={() => act('reject', chosen())}>Reject selected</Button></>}{status === 'applied' && <Button disabled={!selected.size} onClick={() => act('restore', chosen())}>Restore selected</Button>}</>}</Stack>}>
+    <JobSubmissionStatus scope="tasks" />
     {actionError && <Alert severity="error" onClose={() => setActionError('')}>{actionError}</Alert>}
     {list?.error && <Alert severity="error" action={<Button onClick={() => { void refreshCachedList(key); }}>Retry</Button>}>{list.error}</Alert>}
     {!rows.length && !list?.isLoading && <Typography color="text.secondary">No {status} watermark candidates in this folder.</Typography>}

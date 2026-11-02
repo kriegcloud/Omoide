@@ -22,6 +22,8 @@ export type OperationPatch = PatchTarget & (
 export interface OptimisticCommand<I, R> {
   id?: string;
   label: string;
+  /** Task POST acknowledgement is acceptance, not completion of the work. */
+  feedback?: "job";
   input: Readonly<I>;
   resources: readonly EntityKey[];
   patches: readonly OperationPatch[];
@@ -46,6 +48,7 @@ export interface OptimisticCommand<I, R> {
 export interface OperationRecord {
   readonly id: string;
   readonly label: string;
+  readonly feedback?: "job";
   readonly sequence: number;
   readonly version: number;
   readonly state: OperationState;
@@ -192,7 +195,7 @@ export function startOperation<I, R>(command: OptimisticCommand<I, R>): Operatio
   gates.set(id, { promise: new Promise<void>(resolve => { resolveGate = resolve; }), release: () => resolveGate() });
   callbacks.set(id, { commit: command.commit, events: command.events, refresh: command.refresh, refreshUnknown: command.refreshUnknown, reconcileUnknownAfterRefresh: command.reconcileUnknownAfterRefresh });
   if (command.lookup) lookups.set(id, () => command.lookup!(id));
-  records.set(id, { id, label: command.label, sequence: ++sequence, version: ++version, state: "applied", resources, patches });
+  records.set(id, { id, label: command.label, feedback: command.feedback, sequence: ++sequence, version: ++version, state: "applied", resources, patches });
   publish();
   const done = (async () => {
     await Promise.all(dependencies);
@@ -229,6 +232,22 @@ export function startOperation<I, R>(command: OptimisticCommand<I, R>): Operatio
   return { id, done };
 }
 export const hasOperationLookup = (id: string): boolean => lookups.has(id);
+/** Retry only an opted-in authoritative GET after a failed unknown refresh.
+ * This releases legacy intent without claiming the original write succeeded. */
+export const canRefreshOperation = (id: string): boolean => {
+  const command = callbacks.get(id);
+  return Boolean(command?.reconcileUnknownAfterRefresh && (command.refreshUnknown ?? command.refresh));
+};
+export async function refreshOperation(id: string): Promise<OperationRecord> {
+  const command = callbacks.get(id);
+  if (!records.has(id) || !canRefreshOperation(id)) throw new Error("Authoritative refresh unavailable");
+  try {
+    await (command!.refreshUnknown ?? command!.refresh)!();
+    if (records.get(id)?.state === "unknown") { update(id, { state: "reconciled", patches: [], refreshError: undefined }); release(id); }
+    return records.get(id)!;
+  } catch (error) { update(id, { refreshError: message(error) }); throw error; }
+}
+
 const inFlightLookups = new Map<string, Promise<OperationRecord>>();
 export function reconcileOperation(id: string, lookup = lookups.get(id)): Promise<OperationRecord> {
   const existing = inFlightLookups.get(id);

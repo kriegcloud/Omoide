@@ -104,17 +104,18 @@ export default function BatchCropDialog({
   }, [open, previewItems, framing, aspect, personId]);
 
   const apply = async () => {
+    const targets = itemIds ? [...itemIds] : undefined;
+    onClose();
     setApplying(true);
     setError(null);
     try {
       const result = await batchCropDatasetItems(datasetId, {
-        item_ids: itemIds,
+        item_ids: targets,
         framing,
         aspect,
         overwrite_existing_ops: overwrite,
       });
       await onApplied(result);
-      onClose();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Failed to apply batch crops");
     } finally {

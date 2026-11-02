@@ -1,7 +1,8 @@
+import { optimisticOperations, projectList, operationVersion, acknowledgeQuery } from "../stores/optimisticOperations";
 import Gallery from "../components/Gallery";
 import GalleryPage from "../components/GalleryPage";
 import { useMutationRefresh } from "../context/UndoContext";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   Alert,
   Box,
@@ -25,7 +26,9 @@ import type { TrainingDataset } from "../types";
 import { encodeFilePath } from "../urlUtils";
 
 export default function DatasetsPage() {
-  const [datasets, setDatasets] = useState<TrainingDataset[]>([]);
+  const [baseDatasets, setDatasets] = useState<TrainingDataset[]>([]);
+  useSyncExternalStore(optimisticOperations.subscribe, optimisticOperations.getSnapshot, optimisticOperations.getSnapshot);
+  const datasets = projectList("datasets", "dataset", baseDatasets).items;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [newOpen, setNewOpen] = useState(false);
@@ -38,8 +41,9 @@ export default function DatasetsPage() {
   });
   useEffect(() => {
     const version = ++requestVersion.current;
+    const started = operationVersion();
     setError(null);
-    getDatasets().then(next => { if (version === requestVersion.current) setDatasets(next); })
+    getDatasets().then(next => { if (version === requestVersion.current) { setDatasets(next); acknowledgeQuery("datasets", started); } })
       .catch(reason => { if (version === requestVersion.current) setError(reason instanceof Error ? reason.message : "Failed to load datasets"); })
       .finally(() => { if (version === requestVersion.current) setLoading(false); });
     return () => { requestVersion.current += 1; };
@@ -63,7 +67,7 @@ export default function DatasetsPage() {
         <Box><Gallery>
           {datasets.map((dataset) => (
             <Card key={dataset.id} elevation={0} sx={{ borderRadius: 1, border: 1, borderColor: "divider", overflow: "hidden" }}>
-              <CardActionArea component={Link} to={`/dataset/${dataset.id}`}>
+              <CardActionArea component={Link} to={`/dataset/${dataset.id}`} disabled={dataset.id < 0}>
                 <Box sx={{ aspectRatio: "16 / 10", bgcolor: "action.hover", display: "grid", placeItems: "center", overflow: "hidden" }}>
                   {dataset.cover?.thumbnail_path ? (
                     <Box component="img" loading="lazy" decoding="async" src={`${API}/thumbnails/${encodeFilePath(dataset.cover.thumbnail_path)}`} alt="" sx={{ width: "100%", height: "100%", objectFit: "cover" }} />
@@ -73,7 +77,7 @@ export default function DatasetsPage() {
                   <Typography variant="h6" fontWeight={700} noWrap>{dataset.name}</Typography>
                   <Typography variant="body2" color="text.secondary" noWrap>{dataset.trigger_word} · {dataset.class_token}</Typography>
                   <Box display="flex" gap={0.75} mt={1.5} flexWrap="wrap">
-                    <Chip size="small" label={`${dataset.included_count}/${dataset.item_count} items`} />
+                    <Chip size="small" label={dataset.id < 0 ? "Creating…" : `${dataset.included_count}/${dataset.item_count} items`} />
                     <Chip size="small" label={dataset.last_export ? `Last export: ${dataset.last_export.status}` : "Not exported"} color={dataset.last_export?.status === "completed" ? "success" : "default"} />
                   </Box>
                 </CardContent>
@@ -82,7 +86,7 @@ export default function DatasetsPage() {
           ))}
         </Gallery></Box>
       )}
-      <NewDatasetDialog open={newOpen} onClose={() => setNewOpen(false)} onCreated={(dataset) => { setDatasets((current) => [dataset, ...current]); setNewOpen(false); }} />
+      <NewDatasetDialog open={newOpen} onClose={() => setNewOpen(false)} onCreated={(dataset) => { setDatasets((current) => [dataset, ...current.filter(item => item.id !== dataset.id)]); }} />
     </GalleryPage>
   );
 }

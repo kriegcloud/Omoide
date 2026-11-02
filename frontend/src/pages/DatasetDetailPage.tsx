@@ -1,3 +1,4 @@
+import { optimisticOperations, projectEntity, acknowledgeQuery, operationVersion } from "../stores/optimisticOperations";
 import { useEditorUrlState } from "../hooks/useEditorUrlState";
 import { positiveId } from "../utils/editorUrlState";
 import { StickySelectionToolbar } from "../components/BulkResolveToolbar";
@@ -5,7 +6,7 @@ import Gallery from "../components/Gallery";
 import GalleryPage from "../components/GalleryPage";
 import { useVisiblePolling } from "../hooks/useVisiblePolling";
 import { useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useInView } from "react-intersection-observer";
 import {
   Alert,
@@ -148,10 +149,14 @@ export default function DatasetDetailPage() {
   const { id } = useParams();
   const datasetId = Number(id);
   const navigate = useNavigate();
-  const [dataset, setDataset] = useState<TrainingDataset | null>(null);
+  const [baseDataset, setDataset] = useState<TrainingDataset | null>(null);
   const serverDataset = useRef<TrainingDataset | null>(null);
   const metadataGeneration = useRef(0);
-  const [items, setItems] = useState<DatasetItem[]>([]);
+  const [baseItems, setItems] = useState<DatasetItem[]>([]);
+  const operations = useSyncExternalStore(optimisticOperations.subscribe, optimisticOperations.getSnapshot, optimisticOperations.getSnapshot);
+  const dataset = baseDataset;
+  const datasetPending = operations.some(operation => operation.resources.includes(`dataset:${datasetId}`) && ["applied", "pending", "unknown"].includes(operation.state));
+  const items = baseItems.map(item => projectEntity(`dataset:${datasetId}/item/${item.id}`, projectEntity(`dataset:${datasetId}/media/${item.media_id}`, item, `dataset:${datasetId}/items`), `dataset:${datasetId}/items`)).filter((item): item is DatasetItem => item !== null);
   // Items arrive in pages of 500; the sentinel below the grid pulls the rest.
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -315,12 +320,13 @@ export default function DatasetDetailPage() {
     morePending.current = false;
     setLoadingMore(false);
     setPageError(null);
-    setItems([]);
+    const started = operationVersion();
     setNextCursor(null);
     try {
       const page = await getDatasetItems(datasetId, null, sortRef.current);
       if (route !== routeGeneration.current || revision !== listGeneration.current) return;
       setItems(page.items);
+      acknowledgeQuery(`dataset:${datasetId}/items`, started);
       setNextCursor(page.next_cursor ?? null);
     } catch (reason) {
       if (route === routeGeneration.current && revision === listGeneration.current) {
@@ -333,12 +339,14 @@ export default function DatasetDetailPage() {
     if (datasetIdentity.current !== datasetId) return;
     const route = routeGeneration.current;
     const revision = ++metadataGeneration.current;
+    const started = operationVersion();
     setError(null);
     try {
       const [nextDataset, history, runHistory] = await Promise.all([
         getDataset(datasetId), getDatasetExports(datasetId), getTrainingRuns(datasetId),
       ]);
       if (route !== routeGeneration.current || revision !== metadataGeneration.current) return;
+      acknowledgeQuery(`dataset:${datasetId}`, started);
       // Refresh untouched settings while retaining fields edited since the last read.
       const previous = serverDataset.current;
       serverDataset.current = nextDataset;
@@ -463,8 +471,15 @@ export default function DatasetDetailPage() {
     try {
       const updated = await updateDataset(datasetId, { ...dataset, buckets });
       if (route !== routeGeneration.current) return;
-      setDataset(updated);
-      setBucketText(updated.buckets.join(", "));
+      setDataset(draft => {
+        if (!draft || draft.id !== updated.id) return draft;
+        const merged = { ...updated };
+        for (const key of Object.keys(draft) as Array<keyof TrainingDataset>) {
+          if (JSON.stringify(draft[key]) !== JSON.stringify(dataset[key])) Object.assign(merged, { [key]: draft[key] });
+        }
+        return merged;
+      });
+      setBucketText(draft => draft === bucketText ? updated.buckets.join(", ") : draft);
     } catch (reason) {
       if (route === routeGeneration.current) setError(reason instanceof Error ? reason.message : "Failed to save dataset");
     } finally {
@@ -487,9 +502,9 @@ export default function DatasetDetailPage() {
     }, "Failed to update dataset membership");
   };
   const remove = async (targets: DatasetItem[]) => {
-    const ids = new Set(targets.map(item => item.id));
-    await mutateDataset(() => removeDatasetItems(datasetId, targets.map(item => item.media_id)), () => {
-      setItems(current => current.filter(item => !ids.has(item.id))); selection.clear();
+    await mutateDataset(() => removeDatasetItems(datasetId, targets.map(item => item.media_id)), result => {
+      const removed = new Set(result.added_ids);
+      setItems(current => current.filter(item => !removed.has(item.media_id))); selection.clear();
     }, "Failed to remove dataset items");
   };
   const createExport = () => mutateDataset(() => createDatasetExport(datasetId, exportLayout), created => setExports(current => [created, ...current]), "Failed to start export");
@@ -504,8 +519,8 @@ export default function DatasetDetailPage() {
     if (datasetIdentity.current === datasetId && routeGeneration.current === version) setDedupeBusy(false);
   };
   const previewAuto = () => mutateDataset(() => autoSelectDataset(datasetId, {...autoInput, dry_run: true}), result => setPreviewExcluded(result.excluded_item_ids.length), "Failed to preview auto-selection");
-  const applyAuto = () => mutateDataset(() => autoSelectDataset(datasetId, {...autoInput, dry_run: false}), async (_result, current) => {await refreshCuration(); if (current()) setAutoOpen(false);}, "Failed to apply auto-selection");
-  const buildRegularization = () => mutateDataset(() => buildRegularizationDataset(datasetId, {target_count: regularizationCount, ...(regularizationGender ? {gender: regularizationGender} : {})}), created => navigate(`/dataset/${created.id}`), "Failed to build regularization set");
+  const applyAuto = () => { setAutoOpen(false); return mutateDataset(() => autoSelectDataset(datasetId, {...autoInput, dry_run: false}), async (_result, current) => {await refreshCuration(); if (current()) setAutoOpen(false);}, "Failed to apply auto-selection"); };
+  const buildRegularization = () => { setRegularizationOpen(false); return mutateDataset(() => buildRegularizationDataset(datasetId, {target_count: regularizationCount, ...(regularizationGender ? {gender: regularizationGender} : {})}), created => navigate(`/dataset/${created.id}`), "Failed to build regularization set"); };
   const addGapItems = () => {
     const mediaIds = gapMedia.map(media => media.id);
     return mutateDataset(() => addDatasetItems(datasetId, mediaIds), async () => {setGapPreview(null); await Promise.all([load(), loadItems()]);}, "Failed to add gap candidates");
@@ -513,7 +528,9 @@ export default function DatasetDetailPage() {
   const saveCaption = async () => {
     if (!captionItem) return;
     const version = routeGeneration.current;
-    try {if (await patchItem(captionItem, {caption_override: caption.trim() || null}) && datasetIdentity.current === datasetId && routeGeneration.current === version) setCaptionItem(null);}
+    const target = captionItem;
+    setCaptionItem(null);
+    try {if (await patchItem(target, {caption_override: caption.trim() || null}) && datasetIdentity.current === datasetId && routeGeneration.current === version) setCaptionItem(null);}
     catch (reason) {if (datasetIdentity.current === datasetId && routeGeneration.current === version) setError(reason instanceof Error ? reason.message : "Failed to save caption");}
   };
   const renderGeneration = routeGeneration.current;
@@ -535,6 +552,7 @@ export default function DatasetDetailPage() {
             <Button variant="outlined" disabled={dataset.person_id == null} onClick={() => setFrameMiningOpen(true)}>Mine video frames…</Button>
 
           </Stack></StickySelectionToolbar>)}>
+      {datasetPending && <Alert severity="info" role="status" sx={{ mb: 2 }}>Updating dataset. Counts and generated results will be reconciled with the server.</Alert>}
       <Paper elevation={0} sx={{ p: { xs: 2, md: 3 }, mb: 3, border: 1, borderColor: "divider", borderRadius: 1 }}>
         <Stack direction={{ xs: "column", md: "row" }} spacing={2} alignItems={{ md: "flex-start" }}>
           <Box flex={1}>

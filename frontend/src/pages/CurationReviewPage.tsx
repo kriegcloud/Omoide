@@ -143,6 +143,19 @@ export function CurationWorkspace({ client, onDisconnect, mode = "fixture" }: { 
       // An ambiguous response must never trigger an automatic duplicate write.
       setRefreshRequired(true);
       setDecision(null);
+      const version = generation.current;
+      const selected = data?.id;
+      if (selected && !(reason instanceof CurationError)) {
+        try {
+          const next = await client.get(selected);
+          if (pending.current === token && version === generation.current) {
+            setLoaded({ route: id ?? "", data: next });
+            setRefreshRequired(false);
+            setReadyKey(null);
+            setComparisonRevision(value => value + 1);
+          }
+        } catch { /* Keep the explicit refresh gate when authoritative reads fail. */ }
+      }
       if (reason instanceof CurationError && reason.code === "revision_conflict") setNotice("Your decision was not applied. Refresh the review; your caption draft will be kept.");
     } finally {
       if (pending.current === token) { pending.current = null; setBusy(false); }
@@ -208,6 +221,7 @@ export function CurationWorkspace({ client, onDisconnect, mode = "fixture" }: { 
   const confirmDecision = () => {
     if (!decision || !data || !canReview || (decision.decision === "accept" && !canAccept)) return;
     const snapshot = decision;
+    setDecision(null);
     const datasetId = data.id;
     const version = generation.current;
     return operation(async signal => {
@@ -215,7 +229,12 @@ export function CurationWorkspace({ client, onDisconnect, mode = "fixture" }: { 
       if (production) {
         const challenge = await client.reviewOptions(datasetId, snapshot, signal);
         if (signal.aborted || version !== generation.current) return;
-        const credential = await confirmCurationPasskey(challenge.public_key, signal);
+        let credential;
+        try { credential = await confirmCurationPasskey(challenge.public_key, signal); }
+        catch (error) {
+          if (!signal.aborted && version === generation.current && error instanceof CurationPasskeyError && error.cancelled) setDecision(snapshot);
+          throw error;
+        }
         if (signal.aborted || version !== generation.current) return;
         input = { ...snapshot, presence: { challenge_id: challenge.challenge_id, credential } };
       }
@@ -262,6 +281,7 @@ export function CurationWorkspace({ client, onDisconnect, mode = "fixture" }: { 
 
   return (
     <Stack spacing={2} aria-busy={busy || loading}>
+      {busy && <Alert severity="info" role="status">Submitting request. Review decisions remain pending until confirmed by the server.</Alert>}
       <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ sm: "center" }}>
         {data && <FormControl size="small" sx={{ minWidth: 240 }}><InputLabel id="curation-dataset-label">{production ? "Review dataset" : "Fixture dataset"}</InputLabel><Select labelId="curation-dataset-label" label={production ? "Review dataset" : "Fixture dataset"} value={data.id} disabled={busy || captionDirty || !!decision} onChange={event => navigate(`/curation/${encodeURIComponent(event.target.value)}`)}>{datasets.map(value => <MenuItem key={value.id} value={value.id}>{value.name}</MenuItem>)}</Select></FormControl>}
         {data && <Chip label={data.actor.kind === "human" ? "Human reviewer" : data.actor.kind === "fixture_human" ? "Fixture reviewer" : "Agent · proposals only"} variant="outlined" />}

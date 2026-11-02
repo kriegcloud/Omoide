@@ -1,3 +1,6 @@
+import { submitJob } from '../services/taskOperations';
+import JobSubmissionStatus from '../components/JobSubmissionStatus';
+import { getActiveTasks, getRecentTasks } from '../services/taskActions';
 import GalleryPage from "../components/GalleryPage";
 import Gallery from "../components/Gallery";
 import { useMutationRefresh } from "../context/UndoContext";
@@ -20,7 +23,7 @@ import config, { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 import { EmptyState } from "../components/EmptyState";
 import { getPlaces, startGeocodePlaces } from "../services/features";
-import { useTaskCompletionVersion } from "../TaskEventsContext";
+import { useTaskEvents, useTaskCompletionVersion } from "../TaskEventsContext";
 import { PlaceCountry } from "../types";
 
 export default function PlacesPage() {
@@ -28,6 +31,8 @@ export default function PlacesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState("");
+  const { activeTasks } = useTaskEvents();
+  const running = activeTasks.filter(task => task.task_type === "geocode_places");
   const refreshKey = useTaskCompletionVersion(["geocode_places"]);
 
   const [revision, setRevision] = useState(0);
@@ -48,7 +53,7 @@ export default function PlacesPage() {
 
   const handleGeocode = async () => {
     try {
-      await startGeocodePlaces();
+      await submitJob("places", "Geocode places", () => startGeocodePlaces(), async () => { await Promise.all([getActiveTasks(), getRecentTasks()]); });
       setSnackbar("Geocoding started — this page refreshes when done.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start task");
@@ -80,13 +85,15 @@ export default function PlacesPage() {
         )}
       </Box>
 
+      <JobSubmissionStatus scope="places" />
+      {running.map(task => <Alert key={task.id} severity="info">{task.status}: {task.current_step || "Processing"}</Alert>)}
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
         </Alert>
       )}
 
-      {isLoading ? (
+      {isLoading && !places.length ? (
         <Box textAlign="center" py={6}>
           <CircularProgress />
         </Box>

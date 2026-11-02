@@ -24,25 +24,18 @@ export default function NewDatasetDialog({ open, onClose, onCreated }: Props) {
   const [trigger, setTrigger] = useState("");
   const [classToken, setClassToken] = useState("person");
   const [person, setPerson] = useState<Person | null>(null);
-  const [busy, setBusy] = useState(false);
+  const busy = false;
 
   const submit = async () => {
-    setBusy(true);
-    try {
-      const dataset = await createDataset({
-        name: name.trim(),
-        trigger_word: trigger.trim() || undefined,
-        class_token: classToken.trim() || undefined,
-        person_id: person?.id,
-      });
-      onCreated(dataset);
-      setName("");
-      setTrigger("");
-      setClassToken("person");
-      setPerson(null);
-    } finally {
-      setBusy(false);
-    }
+    const input = {
+      name: name.trim(), trigger_word: trigger.trim() || undefined,
+      class_token: classToken.trim() || undefined, person_id: person?.id,
+    };
+    // Reset only the captured draft, before a later opening can own new input.
+    setName(""); setTrigger(""); setClassToken("person"); setPerson(null);
+    onClose();
+    try { onCreated(await createDataset(input)); }
+    catch { /* Shared mutation feedback owns failure after this dialog closes. */ }
   };
 
   return (

@@ -1,3 +1,5 @@
+import { registerJobRefresh, useJobSubmissions } from "../services/taskOperations";
+import JobSubmissionStatus from "./JobSubmissionStatus";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   Box,
@@ -129,6 +131,9 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
     lastCompletedTasks,
     lastFinishedTask,
   } = useTaskEvents(isActive);
+  useEffect(() => registerJobRefresh("tasks", forceRefresh), [forceRefresh]);
+  const submissions = useJobSubmissions("tasks");
+  const submitting = submissions.some(row => row.phase === "submitting");
   const [processorsExpanded, setProcessorsExpanded] = useState(false);
   const [forceReprocess, setForceReprocess] = useState(false);
   const [resumingTaskIds, setResumingTaskIds] = useState<Set<string>>(new Set());
@@ -340,7 +345,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
   };
 
   const isTaskRunning = (type: TaskType) =>
-    activeTasks.some(
+    submitting || activeTasks.some(
       (t) =>
         t.task_type === type &&
         (t.status === "running" || t.status === "pending")
@@ -387,6 +392,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
           {snack.msg}
         </Alert>
       </Snackbar>
+      <JobSubmissionStatus scope="tasks" />
       <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
         <Box sx={{ flexGrow: 1 }}>
           {(failureEntries.length > 0 || (failureTotal ?? 0) > 0) && (

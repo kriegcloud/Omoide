@@ -102,6 +102,7 @@ export default function FrameMiningDialog({
   };
 
   const start = async () => {
+    onClose();
     setStarting(true);
     setError(null);
     try {
@@ -118,7 +119,6 @@ export default function FrameMiningDialog({
         selected_timestamps_ms: selectedTimestamps,
       });
       onStarted();
-      onClose();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not start frame mining");
     } finally {

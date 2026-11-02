@@ -37,11 +37,13 @@ export default function AddToDatasetDialog({ open, mediaIds, onClose, onAdded }:
     }
   }, [open]);
 
-  const add = async (dataset: TrainingDataset) => {
+  const add = async (dataset: TrainingDataset, dismiss = true) => {
+    const targets = [...mediaIds];
+    if (dismiss) onClose();
     setBusy(true);
     setError(null);
     try {
-      const result = await addDatasetItems(dataset.id, mediaIds);
+      const result = await addDatasetItems(dataset.id, targets);
       const addedIds = [...result.added_ids];
       if (addedIds.length) push({
         label: `Added ${addedIds.length} item(s) to ${dataset.name}`,
@@ -52,7 +54,6 @@ export default function AddToDatasetDialog({ open, mediaIds, onClose, onAdded }:
         },
       });
       onAdded?.(dataset, result.added_ids.length);
-      onClose();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Failed to add to dataset");
     } finally {
@@ -87,9 +88,8 @@ export default function AddToDatasetDialog({ open, mediaIds, onClose, onAdded }:
         open={newOpen}
         onClose={() => setNewOpen(false)}
         onCreated={(dataset) => {
-          setNewOpen(false);
-          setDatasets((current) => [dataset, ...current]);
-          void add(dataset);
+          setDatasets((current) => [dataset, ...current.filter(item => item.id !== dataset.id)]);
+          void add(dataset, false);
         }}
       />
     </>
