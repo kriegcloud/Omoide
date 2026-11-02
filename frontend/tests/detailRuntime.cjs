@@ -26,6 +26,7 @@ const noop = () => {};
 const asyncNoop = async () => {};
 function load(relative, runtime, modules={}) {
   const filename=path.resolve(__dirname,'../src',relative);
+  const commands = require('./peopleFaceRuntime.cjs')();
   const ui=new Proxy({useTheme:()=>({breakpoints:{down:noop}}),useMediaQuery:()=>false},{get:(target,key)=>target[key]??key});
   const defaults={react:runtime.api,'@mui/material':ui,'@mui/lab':ui,
     '../config':{__esModule:true,default:{PERSON_RELATIONSHIP_MAX_NODES:100}, API:'/api'},
@@ -36,7 +37,7 @@ function load(relative, runtime, modules={}) {
     '../stores/mutationBus':{mutationBus:{emit:noop,subscribe:()=>noop},runOptimistic:async ({apply,request,rollback})=>{const snapshot=apply();try{return await request();}catch(err){rollback(snapshot);throw err;}}},
     '../services/config':{getConfig:async()=>({general:{}})},
     '../services/repairs':{listRepairs:async()=>({items:[]})},
-    '../stores/optimisticOperations':{optimisticOperations:{subscribe:()=>noop,getSnapshot:()=>[]},projectEntity:(_key,base)=>base,acknowledgeQuery:noop,operationVersion:()=>0},
+    '../stores/optimisticOperations':commands.core,
     '../stores/peopleCache':{patchPersonInGrids:noop,clearPeopleGrids:noop,removePeopleFromGrids:noop},
     'react-intersection-observer':{useInView:()=>({ref:noop,inView:false})},
     ...modules,
@@ -48,6 +49,8 @@ function load(relative, runtime, modules={}) {
   new Function('require','module','exports',output)(name=>{
     if(name in defaults) {
       const value = defaults[name];
+      if (name === '../services/personActions') return { startPeopleMutation: commands.people.startPeopleMutation, ...value };
+      if (name === '../services/faceActions') return { startFaceMutation: commands.faces.startFaceMutation, ...value };
       if(name === "../stores/useListStore") return {readCachedList: (state, key) => state.lists[key], useOptimisticCachedList: key => value.useListStore(state => state.lists[key]), ...value};
       return value;
     }

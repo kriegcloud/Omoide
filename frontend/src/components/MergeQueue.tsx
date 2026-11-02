@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { optimisticOperations, projectEntity } from "../stores/optimisticOperations";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import {
@@ -22,6 +23,7 @@ import {
   deletePairDecision,
   getMergeCandidates,
   mergePersons,
+  startPeopleMutation,
 } from "../services/personActions";
 import type { MergeCandidate, MergeCandidatePerson } from "../types";
 import { encodeFilePath } from "../urlUtils";
@@ -84,6 +86,7 @@ function PairPerson({ person }: { person: MergeCandidatePerson }) {
 
 export default function MergeQueue({ onMerged, refreshVersion }: MergeQueueProps) {
   const { push, refreshVisible } = useUndo();
+  useSyncExternalStore(optimisticOperations.subscribe, optimisticOperations.getSnapshot, optimisticOperations.getSnapshot);
   const [collapsed, setCollapsed] = useLocalStorageBoolean("merge_queue_collapsed", false);
   const [minSimilarity, setMinSimilarity] = useState(60);
   const [sliderValue, setSliderValue] = useState(60);
@@ -103,8 +106,11 @@ export default function MergeQueue({ onMerged, refreshVersion }: MergeQueueProps
   const mounted = useRef(false);
   const mutating = useRef(false);
 
-  const refresh = useCallback(async () => {
-    if (!mounted.current) return;
+  const refresh = useCallback(async (requireAuthoritative = false) => {
+    if (!mounted.current) {
+      if (requireAuthoritative) throw new Error("Reopen the merge queue to refresh");
+      return;
+    }
     request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
@@ -112,11 +118,13 @@ export default function MergeQueue({ onMerged, refreshVersion }: MergeQueueProps
     setError(null);
     try {
       const page = await getMergeCandidates(minSimilarity, 50, controller.signal);
+      if (controller.signal.aborted && requireAuthoritative) throw new Error("Merge queue refresh interrupted");
       if (!controller.signal.aborted) setItems(page.items);
     } catch (caught) {
       if (!controller.signal.aborted) {
         setError(caught instanceof Error ? caught.message : "Failed to load possible duplicates");
       }
+      if (requireAuthoritative) throw caught;
     } finally {
       if (!controller.signal.aborted) setLoading(false);
     }
@@ -170,36 +178,22 @@ export default function MergeQueue({ onMerged, refreshVersion }: MergeQueueProps
     }
   };
 
-  const handleMerge = async () => {
-    if (!merge || mutating.current || config.PRESENTATION_MODE) return;
-    mutating.current = true;
-    setBusy(true);
-    request.current?.abort();
-    try {
-      await mergePersons(merge.source.id, merge.target.id);
-      // Every row involving either person now needs fresh counts and scores.
-      setItems((previous) => previous.filter((pair) =>
-        ![pair.person_a.id, pair.person_b.id].some((id) =>
-          id === merge.source.id || id === merge.target.id,
-        ),
-      ));
-      setMerge(null);
-      setSnackbar({
-        message: `Merged ${personLabel(merge.source)} into ${personLabel(merge.target)}.`,
-        severity: "success",
+  const handleMerge = () => {
+    if (!merge || config.PRESENTATION_MODE) return;
+    const snapshot = merge;
+    const operation = startPeopleMutation("Merge people", [snapshot.source.id],
+      () => mergePersons(snapshot.source.id, snapshot.target.id), { resources: [snapshot.target.id],
+        patches: [{ kind: "remove", key: `person:${snapshot.source.id}` }],
+        refreshUnknown: () => refresh(true),
       });
-      onMerged();
-    } catch (caught) {
-      setSnackbar({
-        message: caught instanceof Error ? caught.message : "Failed to merge people",
-        severity: "error",
-      });
-    } finally {
-      await refresh();
-      mutating.current = false;
-      setBusy(false);
-    }
+    setMerge(null);
+    void operation.done.then(record => {
+      if (record.state === "committed") onMerged();
+      if (record.state !== "unknown") void refresh();
+    });
   };
+
+  const visibleItems = items.filter(pair => projectEntity(`person:${pair.person_a.id}`, pair.person_a) && projectEntity(`person:${pair.person_b.id}`, pair.person_b));
 
   const actionsDisabled = busy || loading || !!error || config.PRESENTATION_MODE;
 
@@ -218,7 +212,7 @@ export default function MergeQueue({ onMerged, refreshVersion }: MergeQueueProps
           <Chip
             component="span"
             size="small"
-            label={loading ? "…" : error ? "?" : items.length}
+            label={loading ? "…" : error ? "?" : visibleItems.length}
             sx={{ ml: 1 }}
           />
         </Button>
@@ -250,7 +244,7 @@ export default function MergeQueue({ onMerged, refreshVersion }: MergeQueueProps
             </Alert>
           )}
           {loading && <Box role="status" sx={{ py: 2, textAlign: "center" }}><CircularProgress size={24} aria-label="Loading possible duplicates" /></Box>}
-          {!loading && !error && items.length === 0 && (
+          {!loading && !error && visibleItems.length === 0 && (
             <Typography color="text.secondary">No possible duplicates at {minSimilarity}% similarity or higher.</Typography>
           )}
           {!loading && !error && items.length === 50 && (
@@ -259,7 +253,7 @@ export default function MergeQueue({ onMerged, refreshVersion }: MergeQueueProps
             </Typography>
           )}
           <Stack spacing={2} divider={<Box sx={{ borderBottom: 1, borderColor: "divider" }} />} sx={{ maxHeight: 560, overflowY: "auto" }}>
-            {items.map((pair) => (
+            {visibleItems.map((pair) => (
               <Stack key={`${pair.person_a.id}-${pair.person_b.id}`} direction={{ xs: "column", md: "row" }} spacing={2} alignItems={{ md: "center" }} sx={{ p: 1 }}>
                 <Box sx={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 140px))", gap: 2 }}>
                   <PairPerson person={pair.person_a} />

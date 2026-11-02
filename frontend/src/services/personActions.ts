@@ -1,4 +1,6 @@
-import { DefinitiveMutationError } from "../stores/optimisticOperations";
+import { startOperation, type OperationPatch, DefinitiveMutationError } from "../stores/optimisticOperations";
+import type { EntityKey } from "../stores/queryKeys";
+import { affectedQueries, revalidateQueries, revalidateUnknownQueries } from "../stores/optimisticOperations";
 import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
 import {
@@ -16,6 +18,10 @@ import {
   SocialLinkPreview,
   SocialBrand,
 } from "../types";
+
+// Presentation and request validation reject before handlers acquire/write rows.
+const peopleMutationError = (response: Response, message: string) =>
+  [403, 422].includes(response.status) ? new DefinitiveMutationError(message) : new Error(message);
 
 export interface MergeResult {
   merged_ids: number[];
@@ -190,7 +196,7 @@ export const updatePerson = async (
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error("Failed to update person");
+  if (!res.ok) throw peopleMutationError(res, "Failed to update person");
   const result = await res.json();
   mutationBus.emit({ type: "person:changed", ids: [personId] });
   return result;
@@ -212,7 +218,7 @@ export const deletePersonsBulk = async (
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ person_ids: personIds }),
   });
-  if (!res.ok) throw new Error("Failed to delete selected people");
+  if (!res.ok) throw peopleMutationError(res, "Failed to delete selected people");
   const result = await res.json();
   mutationBus.emit({ type: "person:changed", ids: result.deleted_ids });
   return result;
@@ -222,7 +228,7 @@ export const hidePerson = async (personId: number): Promise<Person> => {
   const res = await fetch(`${API}/api/person/${personId}/hide`, {
     method: "POST",
   });
-  if (!res.ok) throw new Error("Failed to hide person");
+  if (!res.ok) throw peopleMutationError(res, "Failed to hide person");
   const result = await res.json();
   mutationBus.emit({ type: "person:changed", ids: [personId] });
   return result;
@@ -232,7 +238,7 @@ export const unhidePerson = async (personId: number): Promise<Person> => {
   const res = await fetch(`${API}/api/person/${personId}/unhide`, {
     method: "POST",
   });
-  if (!res.ok) throw new Error("Failed to unhide person");
+  if (!res.ok) throw peopleMutationError(res, "Failed to unhide person");
   const result = await res.json();
   mutationBus.emit({ type: "person:changed", ids: [personId] });
   return result;
@@ -246,7 +252,7 @@ export const hidePersonsBulk = async (
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ person_ids: personIds }),
   });
-  if (!res.ok) throw new Error("Failed to hide selected people");
+  if (!res.ok) throw peopleMutationError(res, "Failed to hide selected people");
   const result = await res.json();
   mutationBus.emit({ type: "person:changed", ids: result.hidden_ids });
   return result;
@@ -260,7 +266,7 @@ export const unhidePersonsBulk = async (
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ person_ids: personIds }),
   });
-  if (!res.ok) throw new Error("Failed to unhide selected people");
+  if (!res.ok) throw peopleMutationError(res, "Failed to unhide selected people");
   const result = await res.json();
   mutationBus.emit({ type: "person:changed", ids: result.unhidden_ids });
   return result;
@@ -310,7 +316,7 @@ export const mergePersons = async (sourceId: number, targetId: number) => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ source_id: sourceId, target_id: targetId }),
   });
-  if (!res.ok) throw new Error("Failed to merge persons");
+  if (!res.ok) throw peopleMutationError(res, "Failed to merge persons");
   mutationBus.emit({ type: "person:changed", ids: [sourceId, targetId] });
 };
 
@@ -323,7 +329,7 @@ export const mergeMultiplePersons = async (
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ source_ids: sourceIds }),
   });
-  if (!res.ok) throw new Error("Failed to merge selected persons");
+  if (!res.ok) throw peopleMutationError(res, "Failed to merge selected persons");
   const result = await res.json();
   mutationBus.emit({ type: "person:changed", ids: [targetId, ...result.merged_ids] });
   return result;
@@ -363,7 +369,7 @@ export const attachMediaToPersonBulk = async (
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ media_ids: mediaIds }),
   });
-  if (!res.ok) throw new Error("Failed to attach selected media");
+  if (!res.ok) throw peopleMutationError(res, "Failed to attach selected media");
   const result = await res.json();
   mutationBus.emit({ type: "person:changed", ids: [personId] });
   return result;
@@ -398,7 +404,7 @@ export const reassignMediaToPerson = async (
       body: JSON.stringify({ target_person_id: targetPersonId }),
     }
   );
-  if (!res.ok) throw new Error("Failed to assign media to person");
+  if (!res.ok) throw peopleMutationError(res, "Failed to assign media to person");
   const result = await res.json();
   mutationBus.emit({ type: "person:changed", ids: [sourcePersonId, targetPersonId] });
   return result;
@@ -492,7 +498,7 @@ export const autoSelectProfileFace = async (personId: number): Promise<Person> =
     method: "POST",
   });
   if (!res.ok) {
-    throw new Error("Failed to auto-select profile image");
+    throw peopleMutationError(res, "Failed to auto-select profile image");
   }
   const result = await res.json();
   mutationBus.emit({ type: "person:changed", ids: [personId] });
@@ -518,6 +524,42 @@ export const addMediaAppearanceToPerson = async (
 
 export const setPersonFavorite = async (personId: number, isFavorite: boolean): Promise<void> => {
  const response = await fetch(`${API}/api/person/${personId}/favorite`, {method: "PATCH", headers: {"Content-Type": "application/json"}, body: JSON.stringify({is_favorite: isFavorite})});
- if (!response.ok) throw new Error("Failed to update favorite");
+ if (!response.ok) throw peopleMutationError(response, "Failed to update favorite");
  mutationBus.emit({type: "person:changed", ids: [personId]});
 };
+
+/** One operation owns each pending intent. Legacy transport failures remain unknown;
+ * these endpoints have no durable operation lookup and must never be replayed. */
+export function startPeopleMutation<R>(label: string, personIds: readonly number[], request: () => Promise<R>, options: {
+  query?: string;
+  resources?: readonly number[];
+  entityResources?: readonly EntityKey[];
+  applied?: (result: R) => readonly number[];
+  patches?: readonly OperationPatch[];
+  responsePatches?: (result: R) => readonly OperationPatch[];
+  refresh?: () => Promise<void>;
+  refreshUnknown?: () => Promise<void>;
+} = {}) {
+  const ids = [...new Set(personIds)];
+  const keys = ids.map(id => `person:${id}` as const);
+  const operationId = crypto.randomUUID();
+  return startOperation({
+    id: operationId, label, input: { ids },
+    resources: [...keys, ...(options.resources ?? []).map(id => `person:${id}` as const), ...(options.entityResources ?? [])],
+    patches: options.patches ?? keys.map(key => options.query
+      ? { kind: "remove" as const, key, query: options.query }
+      : { kind: "derived" as const, key, field: "mutation" }),
+    request,
+    receipt: result => {
+      const applied = new Set(options.applied ? options.applied(result) : ids);
+      if ([...applied].some(id => !ids.includes(id))) throw new Error("Unexpected person in mutation result");
+      const skipped = ids.filter(id => !applied.has(id)).map(id => ({ key: `person:${id}`, reason: "not_applied" }));
+      return { operation_id: operationId, state: skipped.length ? applied.size ? "partial" : "failed" : "succeeded",
+        applied: [...applied].map(id => `person:${id}`), skipped, failed: [], unknown: [] };
+    },
+    responsePatches: options.responsePatches,
+    reconcileUnknownAfterRefresh: true,
+    refresh: options.refresh ?? (() => revalidateQueries(affectedQueries(keys))),
+    refreshUnknown: options.refreshUnknown ?? (() => revalidateUnknownQueries([...affectedQueries([...keys, ...(options.resources ?? []).map(id => `person:${id}` as const), ...(options.entityResources ?? [])]), ...(options.query ? [options.query] : [])])),
+  });
+}

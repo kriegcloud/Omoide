@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { IconButton, Tooltip } from "@mui/material";
 import FavoriteIcon from "@mui/icons-material/Favorite";
 import FavoriteBorderIcon from "@mui/icons-material/FavoriteBorder";
 import config from "../config";
-import { setPersonFavorite } from "../services/personActions";
+import { optimisticOperations, projectEntity } from "../stores/optimisticOperations";
+import { startPeopleMutation, setPersonFavorite } from "../services/personActions";
 import { Box, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import type { PersonReadSimple } from "../types";
@@ -16,6 +17,7 @@ type PersonCardPerson = Pick<PersonReadSimple, "id" | "name"> & { profile_face?:
 
 interface PersonCardProps {
   person: PersonCardPerson;
+  queryKey?: string;
   selecting?: boolean;
   selected?: boolean;
   onSelectionClick?: (personId: number, event: SelectionClickEvent) => boolean;
@@ -33,23 +35,28 @@ const getInitials = (name = "") => {
 
 export default function PersonCard({
   person,
+  queryKey = "detail",
   selecting = false,
   selected = false,
   onSelectionClick,
   secondaryLabel,
   showFavorite = true,
 }: PersonCardProps) {
-  const [favorite, setFavorite] = useState(Boolean(person.is_favorite));
-  const [favoriteBusy, setFavoriteBusy] = useState(false);
-  useEffect(() => setFavorite(Boolean(person.is_favorite)), [person.id, person.is_favorite]);
-  const toggleFavorite = async () => {
-    if (favoriteBusy) return;
-    const next = !favorite; setFavorite(next); setFavoriteBusy(true);
-    try { await setPersonFavorite(person.id, next); } catch { setFavorite(!next); } finally {setFavoriteBusy(false);}
+  useSyncExternalStore(optimisticOperations.subscribe, optimisticOperations.getSnapshot, optimisticOperations.getSnapshot);
+  const projected = projectEntity(`person:${person.id}`, person, queryKey);
+  const favorite = Boolean(projected?.is_favorite);
+  const favoriteBusy = optimisticOperations.getSnapshot().some(record =>
+    record.resources.includes(`person:${person.id}`) && ["applied", "pending", "unknown"].includes(record.state));
+  const toggleFavorite = () => {
+    if (favoriteBusy || config.PRESENTATION_MODE) return;
+    const next = !favorite;
+    startPeopleMutation("Update person favorite", [person.id], () => setPersonFavorite(person.id, next), {
+      patches: [{ kind: "fields", key: `person:${person.id}`, values: { is_favorite: next } }],
+    });
   };
   const fallbackName = person.name || "Unknown";
 
-  const thumbnail = useFaceThumbnail(person.profile_face);
+  const thumbnail = useFaceThumbnail(projected?.profile_face);
   const thumbUrl = thumbnail.src;
 
   const appearanceLabel =

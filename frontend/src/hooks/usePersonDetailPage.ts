@@ -1,11 +1,11 @@
-import { optimisticOperations, projectEntity, acknowledgeQuery, operationVersion } from "../stores/optimisticOperations";
+import { optimisticOperations, projectEntity, acknowledgeQuery, operationVersion, projectList, pendingDerived, registerQueryRefresh } from "../stores/optimisticOperations";
 import { readCachedList } from "../stores/useListStore";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useUndo, useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
-import { runOptimistic } from "../stores/mutationBus";
 import { getPerson, getPersonMediaAppearances } from "../services/person";
 import {
+  startPeopleMutation,
   autoMergeSimilarPersons,
   attachMediaToPersonBulk,
   deletePerson as deletePersonService,
@@ -26,7 +26,6 @@ import { getConfig } from "../services/config";
 import appConfig from "../config";
 import type { MergeResult } from "../services/personActions";
 import { defaultListState, refreshCachedList, useListStore } from "../stores/useListStore";
-import { patchPersonInGrids } from "../stores/peopleCache";
 import {
   FaceRead,
   Person,
@@ -37,6 +36,7 @@ import {
   Tag,
 } from "../types";
 import {
+  startFaceMutation,
   assignFace,
   createPersonFromFaces,
   deleteFace,
@@ -64,7 +64,7 @@ export const usePersonDetailPage = () => {
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ name: "" });
   const [saving, setSaving] = useState(false);
-  const [isAutoSelectingProfile, setIsAutoSelectingProfile] = useState(false);
+  const isAutoSelectingProfile = !!id && pendingDerived(`person-detail:${id}`, `person:${id}`, "profile_face");
   const [isMergingSimilar, setIsMergingSimilar] = useState(false);
 
   const [mergeOpen, setMergeOpen] = useState(false);
@@ -128,28 +128,26 @@ export const usePersonDetailPage = () => {
     (state) => readCachedList<FaceRead>(state, detectedFacesListKey) || defaultListState,
   );
 
-  const detectedFacesList = storedDetectedFacesList.filter((face) => !optimisticFaceIds.includes(face.id));
+  const detectedFacesList = projectList(detectedFacesListKey, "face", storedDetectedFacesList).items.filter((face) => !optimisticFaceIds.includes(face.id));
   const fetchInitial = useListStore((state) => state.fetchInitial);
   const loadMore = useListStore((state) => state.loadMore);
   const clearList = useListStore((state) => state.clearList);
 
   const refreshDetectedFaces = useCallback(async () => {
     if (!id || !detectedFacesListKey) return;
-    clearList(detectedFacesListKey);
-    await fetchInitial(detectedFacesListKey, () =>
-      getPersonFaces(Number(id), null, 20, facesSortByRef.current),
-    );
-  }, [id, detectedFacesListKey, clearList, fetchInitial]);
+    await refreshCachedList(detectedFacesListKey);
+  }, [id, detectedFacesListKey]);
+
+  useEffect(() => registerQueryRefresh(detectedFacesListKey, refreshDetectedFaces), [detectedFacesListKey, refreshDetectedFaces]);
 
   const refreshMediaAppearances = useCallback(async () => {
     if (!id || !mediaListKey) return;
-    const filterIds = filterPeople.map((p) => p.id);
-    const tagNames = filterTags.map((tag) => tag.name);
-    clearList(mediaListKey);
-    await fetchInitial(mediaListKey, () =>
-      getPersonMediaAppearances(Number(id), undefined, filterIds, tagNames),
-    );
-  }, [id, mediaListKey, filterPeople, filterTags, clearList, fetchInitial]);
+    if (useListStore.getState().lists[mediaListKey]) {
+      await refreshCachedList(mediaListKey);
+    } else {
+      await fetchInitial(mediaListKey, () => getPersonMediaAppearances(Number(id), undefined, filterPeople.map(p => p.id), filterTags.map(t => t.name)));
+    }
+  }, [id, mediaListKey, fetchInitial, filterPeople, filterTags]);
 
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
@@ -187,9 +185,6 @@ export const usePersonDetailPage = () => {
         setForm({
           name: personData.name ?? "",
         });
-        // Keep cached people grids in step with counts/name/gender changes
-        // made from this page (face assign/detach, rename, merges into us).
-        patchPersonInGrids(personData);
       } catch (err) {
         if (isCurrent()) {
           if (err && typeof err === "object" && "status" in err && Number(err.status) === 404) setPerson(null);
@@ -476,80 +471,31 @@ export const usePersonDetailPage = () => {
     reloadRelationshipGraphIfLoaded,
   ]);
 
-  const optimisticallyRemoveFaces = async <T,>(faceIds: number[], request: () => Promise<T>) => {
-    return runOptimistic({
-      apply: () => {
-        const snapshot = suggestedFaces;
-        setOptimisticFaceIds((previous) => [...new Set([...previous, ...faceIds])]);
-        setSuggestedFaces((previous) => previous.filter((face) => !faceIds.includes(face.id)));
-        return snapshot;
-      },
-      request,
-      rollback: (snapshot) => {
-        if (routeId.current !== id) return;
-        setSuggestedFaces(snapshot);
-        setOptimisticFaceIds((previous) => previous.filter((faceId) => !faceIds.includes(faceId)));
-      },
-    });
-  };
+  const faceFailureOptions = (ids: number[]) => ({
+    rollbackOnError: ids.length === 1,
+    onError: (error: unknown) => showMessage(error instanceof Error ? error.message : String(error), "error"),
+  });
 
-  const handleAssignWrapper = async (
-    faceIds: number[],
-    personId: number,
-    ) => {
-      if (!id) return;
-      try {
-        await optimisticallyRemoveFaces(faceIds, () => assignFace(faceIds, personId));
-        await Promise.all([
-          refreshDetectedFaces(),
-          loadDetail(),
-          refreshMediaAppearances(),
-          refreshSuggestedFaces(),
-          reloadRelationshipGraphIfLoaded(),
-        ]);
-        if (routeId.current === id) setOptimisticFaceIds((previous) => previous.filter((faceId) => !faceIds.includes(faceId)));
-        showMessage(`Assigned ${faceIds.length} face${faceIds.length === 1 ? "" : "s"}`);
-      } catch (err) {
-        console.error("Failed to assign face:", err);
-        showMessage("Failed to assign face", "error");
-        throw err;
-      }
+  const handleAssignWrapper = async (faceIds: number[], personId: number) => {
+    if (!id) return;
+    const ids = [...faceIds];
+    startFaceMutation("Assign faces", ids, () => assignFace(ids, personId, "manual", "orphan-face"), detectedFacesListKey, [Number(id), personId], faceFailureOptions(ids));
+    // Let the controller attach transport handlers without waiting for the response.
+    await Promise.resolve();
   };
 
   const handleDeleteWrapper = async (faceIds: number[]) => {
-      try {
-        await optimisticallyRemoveFaces(faceIds, () => deleteFace(faceIds));
-        await Promise.all([
-          refreshMediaAppearances(),
-          loadDetail(),
-          refreshSuggestedFaces(),
-          reloadRelationshipGraphIfLoaded(),
-        ]);
-        if (routeId.current === id) setOptimisticFaceIds((previous) => previous.filter((faceId) => !faceIds.includes(faceId)));
-        showMessage(`Deleted ${faceIds.length} face${faceIds.length === 1 ? "" : "s"}`);
-      } catch (err) {
-        console.error("Failed to delete face:", err);
-        showMessage("Failed to delete face", "error");
-        throw err;
-      }
+    const ids = [...faceIds];
+    startFaceMutation("Delete faces", ids, () => deleteFace(ids, "orphan-face"), detectedFacesListKey, id ? [Number(id)] : [], faceFailureOptions(ids));
+    // Let the controller attach transport handlers without waiting for the response.
+    await Promise.resolve();
   };
 
   const handleDetachWrapper = async (faceIds: number[]) => {
-      try {
-        await optimisticallyRemoveFaces(faceIds, () => detachFace(faceIds));
-        await Promise.all([
-          refreshMediaAppearances(),
-          loadDetail(),
-          refreshSuggestedFaces(),
-          reloadRelationshipGraphIfLoaded(),
-        ]);
-        if (routeId.current === id) setOptimisticFaceIds((previous) => previous.filter((faceId) => !faceIds.includes(faceId)));
-        showMessage(`Detached ${faceIds.length} face${faceIds.length === 1 ? "" : "s"}`);
-      } catch (err) {
-        console.error("Failed to detach face:", err);
-        showMessage("Failed to detach face", "error");
-        throw err;
-      }
+    const ids = [...faceIds];
+    startFaceMutation("Detach faces", ids, () => detachFace(ids, "orphan-face"), detectedFacesListKey, id ? [Number(id)] : [], faceFailureOptions(ids));
+    // Let the controller attach transport handlers without waiting for the response.
+    await Promise.resolve();
   };
 
   const handleDetachMediaWrapper = async (mediaId: number) => {
@@ -701,54 +647,29 @@ export const usePersonDetailPage = () => {
 
   const handleAutoSelectProfileFace = useCallback(async () => {
     if (!id) return;
-    setIsAutoSelectingProfile(true);
-    try {
-      await requestAutoSelectProfileFace(Number(id));
-      await loadDetail();
-      await refreshSuggestedFaces();
-      showMessage("Selected a new profile photo");
-    } catch (err) {
-      console.error("Failed to auto-select profile face:", err);
-      showMessage("Failed to auto-select profile photo", "error");
-    } finally {
-      setIsAutoSelectingProfile(false);
-    }
-  }, [id, loadDetail, refreshSuggestedFaces, showMessage]);
+    const personId = Number(id);
+    startPeopleMutation("Select profile photo", [personId], () => requestAutoSelectProfileFace(personId), {
+      patches: [{ kind: "derived", key: `person:${personId}`, field: "profile_face" }],
+      responsePatches: updated => [{ kind: "fields", key: `person:${personId}`, values: { profile_face: updated.profile_face, profile_face_id: updated.profile_face_id } }],
+    });
+  }, [id]);
 
   const handleHideToggle = useCallback(async () => {
     if (!id || !person) return;
-    const isHidden = Boolean(person.hidden_at);
-    setSaving(true);
-    try {
-      const updated = isHidden
-        ? await unhidePerson(Number(id))
-        : await hidePerson(Number(id));
-      if (routeId.current === id) setPerson(updated);
-      showMessage(isHidden ? "Person unhidden" : "Person hidden");
-    } catch (err) {
-      console.error("Failed to update person visibility:", err);
-      showMessage(
-        isHidden ? "Failed to unhide person" : "Failed to hide person",
-        "error",
-      );
-    } finally {
-      setSaving(false);
-    }
-  }, [id, person, showMessage]);
+    const personId = Number(id), isHidden = Boolean(person.hidden_at);
+    startPeopleMutation(isHidden ? "Unhide person" : "Hide person", [personId],
+      () => isHidden ? unhidePerson(personId) : hidePerson(personId), {
+        patches: [{ kind: "fields", key: `person:${personId}`, values: { hidden_at: isHidden ? null : new Date().toISOString() } }],
+        responsePatches: updated => [{ kind: "fields", key: `person:${personId}`, values: { hidden_at: updated.hidden_at } }],
+      });
+  }, [id, person]);
 
-  const handleProfileAssignmentWrapper = async (
-    faceId: number,
-    personId: number,
-  ) => {
-    try {
-        await setProfileFace(faceId, personId);
-        await loadDetail();
-        await refreshSuggestedFaces();
-        showMessage("Profile picture updated");
-      } catch (err) {
-        console.error("Failed to set profile picture:", err);
-        showMessage("Failed to set profile picture", "error");
-      }
+  const handleProfileAssignmentWrapper = async (faceId: number, personId: number) => {
+    const face = [...storedDetectedFacesList, ...suggestedFaces].find(face => face.id === faceId);
+    startPeopleMutation("Set profile photo", [personId], () => setProfileFace(faceId, personId), {
+      patches: [{ kind: "fields", key: `person:${personId}`, values: { profile_face_id: faceId, ...(face ? { profile_face: face } : {}) } }],
+      responsePatches: updated => [{ kind: "fields", key: `person:${personId}`, values: { profile_face: updated.profile_face, profile_face_id: updated.profile_face_id } }],
+    });
   };
 
   const handlePersonUpdate = async () => {
@@ -817,22 +738,10 @@ export const usePersonDetailPage = () => {
 
     const sourceId = Number(id);
     const targetId = mergeTarget.id;
-    clearList(mediaListKey);
-
+    startPeopleMutation("Merge people", [sourceId], () => mergePersons(sourceId, targetId), { resources: [targetId] });
     setMergeTarget(null);
     setMergeOpen(false);
-    try {
-      await mergePersons(sourceId, targetId);
-      navigate(`/person/${targetId}`, {
-        replace: true,
-        state: {
-          forceRefresh: true,
-        },
-      });
-    } catch (error) {
-      console.error("Merge failed:", error);
-      showMessage("Merge failed", "error");
-    }
+    navigate(`/person/${targetId}`, { replace: true, state: { forceRefresh: true } });
   }
 
   return {
@@ -848,7 +757,7 @@ export const usePersonDetailPage = () => {
     mergeTarget,
     setMergeTarget,
     similarPersons,
-    suggestedFaces,
+    suggestedFaces: projectList(detectedFacesListKey, "face", suggestedFaces).items,
     relationshipGraph,
     canExportMedia,
     relationshipDepth,

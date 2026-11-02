@@ -1,5 +1,5 @@
 import { useUndo } from "../context/UndoContext";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -11,6 +11,7 @@ import {
 import { Person } from "../types";
 import PersonPicker, { PERSON_PICKER_DIALOG_CONTENT_SX } from "./PersonPicker";
 import {
+  startPeopleMutation,
   attachMediaToPersonBulk,
   detachMediaFromPersonBulk,
   reassignMediaToPerson,
@@ -33,40 +34,62 @@ export default function AssignMediaToPersonDialog({
 }: AssignMediaToPersonDialogProps) {
   const { push, refreshVisible } = useUndo();
   const [assigning, setAssigning] = useState(false);
+  const submitting = useRef(false);
+  const generation = useRef(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
+    generation.current++;
+    submitting.current = false;
+    setAssigning(false);
     setError(null);
   }, [open]);
 
-  const assign = async (person: Person) => {
+  const assign = (person: Person) => {
+    if (submitting.current || !mediaIds.length) return;
+    submitting.current = true;
+    const revision = generation.current;
+    const ids = [...mediaIds];
+    const source = sourcePersonId;
     setAssigning(true);
-    setError(null);
-    try {
+    let actualSkipped = ids.length;
+    let addedIds: number[] = [];
+    const operation = startPeopleMutation("Assign media to person", [person.id], async () => {
       let skippedCount = 0;
-      if (sourcePersonId !== undefined && mediaIds.length === 1) {
-        await reassignMediaToPerson(sourcePersonId, mediaIds[0], person.id);
+      if (source !== undefined && ids.length === 1) {
+        const result = await reassignMediaToPerson(source, ids[0], person.id);
+        skippedCount = result.reassigned ? 0 : 1;
       } else {
-        const result = await attachMediaToPersonBulk(person.id, mediaIds);
+        const result = await attachMediaToPersonBulk(person.id, ids);
         skippedCount = result.skipped_ids.length;
-        const addedIds = [...(result.added_ids ?? [])];
-        if (addedIds.length) push({
-          label: `Assigned ${addedIds.length} item(s) to ${person.name ?? "person"}`,
-          undo: async () => {
-            const inverse = await detachMediaFromPersonBulk(person.id, addedIds);
-            await refreshVisible();
-            if (inverse.skipped_ids.length) throw new Error(`${inverse.skipped_ids.length} item(s) could not be detached`);
-          },
-        });
+        addedIds = [...(result.added_ids ?? [])];
       }
-      onAssigned(person, skippedCount);
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to assign media");
-    } finally {
-      setAssigning(false);
-    }
+      actualSkipped = skippedCount;
+      return { skippedCount };
+    }, { resources: source === undefined ? [] : [source], entityResources: ids.map(id => `media:${id}` as const), refresh: async () => {
+      if (revision === generation.current) onAssigned(person, actualSkipped);
+    }, applied: result => result.skippedCount < ids.length ? [person.id] : [] });
+    onClose();
+    void operation.done.then(record => {
+      if (record.receipt && addedIds.length) push({
+        label: `Assigned ${addedIds.length} item(s) to ${person.name ?? "person"}`,
+        undo: async () => {
+          const inverse = startPeopleMutation("Undo media assignment", [person.id],
+            () => detachMediaFromPersonBulk(person.id, addedIds), {
+              entityResources: addedIds.map(id => `media:${id}` as const),
+              applied: result => result.skipped_ids.length ? [] : [person.id],
+            });
+          const restored = await inverse.done;
+          await refreshVisible();
+          if (restored.state !== "committed") throw new Error("Some media could not be detached");
+        },
+      });
+      if (revision === generation.current) {
+        submitting.current = false;
+        setAssigning(false);
+      }
+    });
   };
 
   return (
