@@ -25,12 +25,12 @@ when driving the browser, and scale screenshots down (0.2–0.5) if you must tak
 ## Verify before merging
 
 ```bash
-.venv/bin/python -m unittest discover -s tests        # 1199 OK as of 2026-11-02 (~7 min)
+.venv/bin/python -m unittest discover -s tests        # 1242 OK as of 2026-11-02 (~8 min)
 cd frontend && npm run build                          # must be green
 cd frontend && npx tsc --noEmit -p .                  # vite build does not typecheck; must be clean
 cd frontend && npx eslint src --ext .ts,.tsx          # baseline 0 problems; add none
 .venv/bin/alembic heads                               # exactly one head (c9d0e1f20314)
-node --test-isolation=none --test frontend/tests/*.test.cjs   # 495 node tests
+node --test-isolation=none --test frontend/tests/*.test.cjs   # 560 node tests
 for f in frontend/src/hotkeys/tests/*.test.cjs; do node "$f" || break; done   # 87 node tests
 LD_LIBRARY_PATH=~/.local/share/omoide-portal/rocm-libs/hipsparselt-7.2.4-1.1/opt/rocm/lib:/opt/rocm/lib \
   ~/.cache/omoide/vision/venv-rocm72/bin/python -m unittest discover -s vendor/omoide-vision/tests   # 15
