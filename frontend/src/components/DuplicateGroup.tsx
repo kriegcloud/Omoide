@@ -22,6 +22,8 @@ import type { SelectionClickEvent } from "../hooks/useMarqueeSelection";
 
 interface DuplicateGroupProps {
   group: GroupType;
+  focused: boolean;
+  onFocusGroup: () => void;
   onGroupResolved: () => void;
   selecting: boolean;
   selectedIds: Set<number>;
@@ -36,6 +38,8 @@ type ExtendedActionType = ActionType | "MARK_NOT_DUPLICATE";
 
 export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
   group,
+  focused,
+  onFocusGroup,
   onGroupResolved,
   selecting,
   selectedIds,
@@ -51,7 +55,12 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
   const selectedCount = group.items.filter((media) => selectedIds.has(media.id)).length;
   const [isProcessing, setIsProcessing] = useState(false);
   const [confirmAction, setConfirmAction] =
-    useState<ExtendedActionType | null>(null);
+    useState<{ action: ExtendedActionType; groupId: number; masterId: number | undefined; memberIds: number[]; onResolved: () => void } | null>(null);
+  const openConfirm = (action: ExtendedActionType) => {
+    if (isProcessing || confirmAction || config.PRESENTATION_MODE) return;
+    setConfirmAction({ action, groupId: group.group_id, masterId: validMasterId,
+      memberIds: group.items.map(item => item.id), onResolved: onGroupResolved });
+  };
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleResolve = async () => {
@@ -60,16 +69,16 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
     setIsProcessing(true);
 
     try {
-      const requiresMaster = confirmAction !== "MARK_NOT_DUPLICATE";
-      if (requiresMaster && validMasterId === undefined) throw new Error("This group has no remaining master. Refresh the list.");
+      const requiresMaster = confirmAction.action !== "MARK_NOT_DUPLICATE";
+      if (requiresMaster && confirmAction.masterId === undefined) throw new Error("This group has no remaining master. Refresh the list.");
       await resolveDuplicates(
-        group.group_id,
-        confirmAction,
-        requiresMaster ? validMasterId : undefined,
-        group.items.map(item => item.id),
+        confirmAction.groupId,
+        confirmAction.action,
+        requiresMaster ? confirmAction.masterId : undefined,
+        confirmAction.memberIds,
       );
 
-      onGroupResolved();
+      confirmAction.onResolved();
     } catch (error) {
       console.error(`Failed to resolve group ${group.group_id}:`, error);
       setErrorMessage(
@@ -83,10 +92,10 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
 
   const actionText: Record<ExtendedActionType, string> = {
     DELETE_FILES: `This will KEEP the selected master file and PERMANENTLY DELETE the other ${
-      group.items.length - 1
+      (confirmAction?.memberIds.length ?? group.items.length) - 1
     } files and their database records.`,
     DELETE_RECORDS: `This will KEEP the selected master file and only DELETE the database records for the other ${
-      group.items.length - 1
+      (confirmAction?.memberIds.length ?? group.items.length) - 1
     } files. The files will remain on disk.`,
     BLACKLIST_RECORDS: `This will KEEP the selected master file, DELETE the records for the others, and BLACKLIST their paths to prevent re-import.`,
     MARK_NOT_DUPLICATE:
@@ -94,22 +103,33 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
   };
 
   const groupRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (!focused) return;
+    // Run after dialog unmount/restore-focus and after react-window mounts a row.
+    const frame = requestAnimationFrame(() => {
+      groupRef.current?.focus({ preventScroll: true });
+      groupRef.current?.scrollIntoView({ block: "nearest", behavior: "instant" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focused]);
   useHotkeys([
     { key: "Enter", description: "Keep master, delete the other files…", destructive: true },
     { key: "n", description: "Keep all, mark as not duplicates…", destructive: true },
     ...Array.from({ length: 9 }, (_, index) => ({ key: String(index + 1), description: `Choose master at position ${index + 1}` })),
   ], event => {
-    if (event.key === "Enter") setConfirmAction("DELETE_FILES");
-    else if (event.key.toLowerCase() === "n") setConfirmAction("MARK_NOT_DUPLICATE");
+    if (event.key === "Enter") openConfirm("DELETE_FILES");
+    else if (event.key.toLowerCase() === "n") openConfirm("MARK_NOT_DUPLICATE");
     else {
       const media = group.items[Number(event.key) - 1];
       if (media) onSelectMaster(media.id);
     }
-  }, { scope: "page", enabled: !isProcessing && !config.PRESENTATION_MODE,
+  }, { scope: "page", enabled: focused && !confirmAction && !isProcessing && !config.PRESENTATION_MODE,
     when: event => event.target === groupRef.current });
 
   return (
-    <Paper ref={groupRef} tabIndex={0} aria-label={`Duplicate group ${group.group_id}`} variant="outlined">
+    <Paper ref={groupRef} tabIndex={-1} onFocus={event => { if (event.target === event.currentTarget) onFocusGroup(); }}
+      aria-label={`Group ${group.group_id}, ${group.items.length} items`} variant="outlined"
+      sx={{ outline: focused ? "2px solid" : undefined, outlineColor: "primary.main", outlineOffset: "-2px" }}>
       <Box
         sx={{
           p: 2,
@@ -144,7 +164,7 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
           <Button
             size="small"
             variant="contained"
-            onClick={() => setConfirmAction("DELETE_FILES")}
+            onClick={() => openConfirm("DELETE_FILES")}
             color="error"
             disabled={isProcessing}
           >
@@ -154,7 +174,7 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
             size="small"
             variant="outlined"
             color="warning"
-            onClick={() => setConfirmAction("DELETE_RECORDS")}
+            onClick={() => openConfirm("DELETE_RECORDS")}
             disabled={isProcessing}
           >
             Keep Master, Delete Rest (Records)
@@ -163,7 +183,7 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
             size="small"
             variant="outlined"
             color="secondary"
-            onClick={() => setConfirmAction("BLACKLIST_RECORDS")}
+            onClick={() => openConfirm("BLACKLIST_RECORDS")}
             disabled={isProcessing}
           >
             Keep Master, Blacklist Rest
@@ -172,7 +192,7 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
             size="small"
             variant="outlined"
             color="success"
-            onClick={() => setConfirmAction("MARK_NOT_DUPLICATE")}
+            onClick={() => openConfirm("MARK_NOT_DUPLICATE")}
             disabled={isProcessing}
           >
             Keep All, Not Duplicates
@@ -197,7 +217,7 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
 
       {/* Confirmation Dialog */}
       <ConfirmDialog open={!!confirmAction} onClose={() => setConfirmAction(null)}
-        title="Confirm Action" message={confirmAction ? `${actionText[confirmAction]} This action cannot be undone.` : ""}
+        title="Confirm Action" message={confirmAction ? `${actionText[confirmAction.action]} This action cannot be undone.` : ""}
         loading={isProcessing} onConfirm={handleResolve} />
       <Snackbar
         open={!!errorMessage}

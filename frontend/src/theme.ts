@@ -1,5 +1,5 @@
 import type { ThemeMode } from "./ThemeContext";
-import { createTheme } from "@mui/material";
+import { alpha, createTheme } from "@mui/material";
 
 // Gallery Slate palette and derived tints - Modernized
 const gallerySlate = {
@@ -74,6 +74,25 @@ export const getTheme = (mode: ThemeMode) => {
     components: {
       MuiCssBaseline: {
         styleOverrides: (themeParam) => ({
+          // Set the standard color on each scroll owner: Chromium gives it
+          // precedence over WebKit pseudo-elements (including on nested boxes).
+          '*, html, body': {
+            scrollbarWidth: 'thin',
+            scrollbarColor: 'transparent transparent',
+            scrollbarGutter: 'stable',
+          },
+          '*:hover, *:focus-within, html:hover, html:focus-within, body:hover, body:focus-within': {
+            scrollbarColor: `${alpha(themeParam.palette.text.primary, 0.25)} transparent`,
+          },
+          '*::-webkit-scrollbar': { width: '8px', height: '8px' },
+          '*::-webkit-scrollbar-track, *::-webkit-scrollbar-corner': { background: 'transparent' },
+          '*::-webkit-scrollbar-thumb': { backgroundColor: 'transparent', borderRadius: '8px' },
+          '*:hover::-webkit-scrollbar-thumb, *:focus-within::-webkit-scrollbar-thumb': {
+            backgroundColor: alpha(themeParam.palette.text.primary, 0.25),
+          },
+          '*::-webkit-scrollbar-thumb:hover': {
+            backgroundColor: alpha(themeParam.palette.text.primary, 0.4),
+          },
           'html, body, #root': {
             backgroundColor: themeParam.palette.background.default,
             color: themeParam.palette.text.primary,

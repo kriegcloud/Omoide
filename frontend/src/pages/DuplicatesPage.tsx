@@ -36,11 +36,15 @@ import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 import { useSearchParams } from "react-router-dom";
 import FolderFilterSelect from "../components/FolderFilterSelect";
 
+import { useDuplicateGroupFocus } from "../hotkeys/useDuplicateGroupFocus";
+
 const ESTIMATED_GROUP_HEIGHT = 480;
 const LOADER_HEIGHT = 64;
 
 interface GroupRowData {
   groups: GroupType[];
+  focusedId: number | null;
+  onFocusGroup: (id: number) => void;
   selecting: boolean;
   selectedIds: Set<number>;
   masterIds: Record<number, number>;
@@ -84,6 +88,8 @@ function GroupRow({ index, style, data }: ListChildComponentProps<GroupRowData>)
         }}>
           <DuplicateGroup
             group={group}
+            focused={data.focusedId === group.group_id}
+            onFocusGroup={() => data.onFocusGroup(group.group_id)}
             selecting={data.selecting}
             selectedIds={data.selectedIds}
             masterId={group.items.find((media) => media.id === data.masterIds[group.group_id])?.id ?? group.items[0].id}
@@ -133,6 +139,9 @@ const DuplicatesPage: React.FC = () => {
     error: listError,
   } = useListStore((state) => state.lists[listKey] || defaultListState) as ListState<GroupType>;
   const groups = useMemo(() => duplicateGroups.filter((group) => group.items.length > 1), [duplicateGroups]);
+  const groupIds = useMemo(() => groups.map(group => group.group_id), [groups]);
+  const scrollToGroup = useCallback((index: number) => listRef.current?.scrollToItem(index, "smart"), []);
+  const { focusedId, setFocusedId } = useDuplicateGroupFocus(groupIds, listKey, scrollToGroup);
   const fetchInitial = useListStore(state => state.fetchInitial);
 const loadMore = useListStore(state => state.loadMore);
 const removeItem = useListStore(state => state.removeItem);
@@ -285,6 +294,8 @@ const clearList = useListStore(state => state.clearList);
 
   const rowData: GroupRowData = {
     groups,
+    focusedId,
+    onFocusGroup: setFocusedId,
     selecting: isSelecting,
     selectedIds,
     masterIds,

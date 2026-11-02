@@ -391,3 +391,20 @@ test('dialog menu opt-in preserves the owning modal even while MUI marks it aria
   r.dispatch('s');
   assert.equal(calls, 1);
 });
+
+test('duplicate page Enter is ignored while typing and while another dialog owns the scope', () => {
+  const r = registry();
+  let opens = 0;
+  r.add({ key: 'Enter', description: 'Keep master, delete the other files…', destructive: true },
+    () => { opens++; }, { scope: 'page' });
+  for (const attributes of [{ tag: 'input' }, { tag: 'textarea' }, { editable: true }, { role: 'combobox' }]) {
+    r.dispatch('Enter', { target: new ElementStub(attributes) });
+  }
+  assert.equal(opens, 0);
+  r.document.modals = [new ElementStub()];
+  r.dispatch('Enter');
+  assert.equal(opens, 0);
+  r.document.modals = [];
+  r.dispatch('Enter');
+  assert.equal(opens, 1);
+});
