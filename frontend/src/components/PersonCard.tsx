@@ -64,6 +64,34 @@ export default function PersonCard({
       selecting={selecting}
       selected={selected}
       onSelectionClick={onSelectionClick}
+      menu={selecting ? undefined : config.PRESENTATION_MODE ? (
+        favorite && (
+          <FavoriteIcon aria-label="Favorite" color="error" sx={{ m: 0.5, display: "block" }} />
+        )
+      ) : (
+        <Tooltip title={favorite ? "Remove from favorites" : "Add to favorites"}>
+          <IconButton
+            data-tile-control
+            size="small"
+            aria-label={favorite ? "Remove from favorites" : "Add to favorites"}
+            aria-pressed={favorite}
+            disabled={favoriteBusy}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void toggleFavorite();
+            }}
+            sx={{
+              width: 32,
+              height: 32,
+              color: favorite ? "error.main" : "common.white",
+              "&:hover": { bgcolor: "rgba(0,0,0,.25)" },
+            }}
+          >
+            {favorite ? <FavoriteIcon fontSize="small" /> : <FavoriteBorderIcon fontSize="small" />}
+          </IconButton>
+        </Tooltip>
+      )}
       sx={{
         color: "common.white",
         background: thumbUrl
@@ -74,8 +102,6 @@ export default function PersonCard({
         backgroundPosition: "center",
       }}
     >
-      {!selecting && (config.PRESENTATION_MODE ? favorite && <FavoriteIcon aria-label="Favorite" color="error" sx={{position: "absolute", top: 8, right: 48, zIndex: 25}} /> :
-        <Tooltip title={favorite ? "Remove from favorites" : "Add to favorites"}><IconButton data-tile-control aria-label={favorite ? "Remove from favorites" : "Add to favorites"} aria-pressed={favorite} disabled={favoriteBusy} onClick={event => {event.preventDefault(); event.stopPropagation(); void toggleFavorite();}} sx={{position: "absolute", top: 8, right: 48, zIndex: 25, bgcolor: "rgba(0,0,0,.45)", color: favorite ? "error.main" : "common.white"}}>{favorite ? <FavoriteIcon /> : <FavoriteBorderIcon />}</IconButton></Tooltip>)}
       {!thumbUrl && (
         <Box
           sx={{

@@ -28,7 +28,7 @@ import { defaultListState, refreshCachedList, useListStore, useListInvalidation,
 import type { OrphanFaceSuggestion, SuggestedFaceAssignment, Person } from "../types";
 import ConfirmDialog from "./ConfirmDialog";
 import { FaceGrid } from "./FaceGrid";
-import PersonPicker from "./PersonPicker";
+import PersonPicker, { PERSON_PICKER_DIALOG_CONTENT_SX } from "./PersonPicker";
 import ListStatus from "./ListState";
 
 type SuggestionItem = OrphanFaceSuggestion & { id: number };
@@ -330,7 +330,7 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange }: {
       {hasMore && <Box ref={loaderRef} sx={{ height: 50 }} />}
       <Dialog open={alternativeFor !== null} onClose={isProcessing ? undefined : () => setAlternativeFor(null)} fullWidth>
         <DialogTitle>Choose another person</DialogTitle>
-        <DialogContent>
+        <DialogContent sx={PERSON_PICKER_DIALOG_CONTENT_SX}>
           {alternativeFor && <PersonPicker autoFocus disabled={isProcessing} excludeIds={[alternativeFor.person_id]} onSelect={chooseAnother} />}
         </DialogContent>
         <DialogActions><Button disabled={isProcessing} onClick={() => setAlternativeFor(null)}>Cancel</Button></DialogActions>

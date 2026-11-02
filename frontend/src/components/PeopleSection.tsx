@@ -14,7 +14,7 @@ import {
 import { Person, Face } from "../types";
 import PersonCard from "./PersonCard";
 import config from "../config";
-import PersonPicker from "./PersonPicker";
+import PersonPicker, { PERSON_PICKER_DIALOG_CONTENT_SX } from "./PersonPicker";
 import { AddMediaAppearanceResult } from "../services/personActions";
 
 const DetectedFaces = React.lazy(() => import("./DetectedFaces"));
@@ -156,7 +156,7 @@ export function PeopleSection({
         maxWidth="sm"
       >
         <DialogTitle>Attach Media to Person</DialogTitle>
-        <DialogContent>
+        <DialogContent sx={PERSON_PICKER_DIALOG_CONTENT_SX}>
           {attachDialogOpen && (
             <PersonPicker
               autoFocus

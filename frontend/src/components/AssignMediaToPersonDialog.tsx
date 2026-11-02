@@ -9,7 +9,7 @@ import {
   DialogTitle,
 } from "@mui/material";
 import { Person } from "../types";
-import PersonPicker from "./PersonPicker";
+import PersonPicker, { PERSON_PICKER_DIALOG_CONTENT_SX } from "./PersonPicker";
 import {
   attachMediaToPersonBulk,
   detachMediaFromPersonBulk,
@@ -72,7 +72,7 @@ export default function AssignMediaToPersonDialog({
   return (
     <Dialog open={open} onClose={assigning ? undefined : onClose} fullWidth maxWidth="xs">
       <DialogTitle>Assign to person</DialogTitle>
-      <DialogContent dividers>
+      <DialogContent dividers sx={PERSON_PICKER_DIALOG_CONTENT_SX}>
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         {open && (
           <PersonPicker

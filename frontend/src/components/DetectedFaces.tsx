@@ -28,7 +28,7 @@ import MarqueeSelectionBox from "./MarqueeSelectionBox";
 import { useGridSelection, type SelectionClickEvent } from "../hooks/useMarqueeSelection";
 import ConfirmDialog from "./ConfirmDialog";
 import { useFaceSelection } from "../hooks/useFaceSelection";
-import PersonPicker from "./PersonPicker";
+import PersonPicker, { PERSON_PICKER_DIALOG_CONTENT_SX } from "./PersonPicker";
 import config from "../config";
 import { useRovingGridFocus } from "../hooks/useRovingGridFocus";
 
@@ -558,7 +558,7 @@ export default function DetectedFaces({
         maxWidth="xs"
       >
         <DialogTitle>Assign to Person</DialogTitle>
-        <DialogContent>
+        <DialogContent sx={PERSON_PICKER_DIALOG_CONTENT_SX}>
           {canMutate && isAssignDialogOpen && (
             <PersonPicker
               autoFocus

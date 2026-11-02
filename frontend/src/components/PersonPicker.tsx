@@ -97,6 +97,17 @@ export function PersonPickerRow({
   );
 }
 
+/**
+ * DialogContent style for dialogs that host a PersonPicker. The picker's
+ * list then shrinks to the space the dialog has left (max 360px) instead of
+ * a fixed 360px that overflows short windows: with two nested scrollers the
+ * list's last rows ended up below the dialog body's visible edge.
+ */
+export const PERSON_PICKER_DIALOG_CONTENT_SX = {
+  display: "flex",
+  flexDirection: "column",
+} as const;
+
 export default function PersonPicker({
   excludeIds = [],
   onSelect,
@@ -192,7 +203,10 @@ export default function PersonPicker({
   };
 
   return (
-    <Box>
+    <Box
+      data-testid="person-picker"
+      sx={{ display: "flex", flexDirection: "column", minHeight: 0 }}
+    >
       <TextField
         fullWidth
         margin="dense"
@@ -237,7 +251,15 @@ export default function PersonPicker({
           );
           if (index >= 0) setHighlightedIndex(index);
         }}
-        sx={{ display: "flex", flexDirection: "column", gap: 1, maxHeight: 360, overflowY: "auto" }}
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 1,
+          flex: "0 1 auto",
+          minHeight: 0,
+          maxHeight: 360,
+          overflowY: "auto",
+        }}
       >
         {people.map((person, index) => (
           <PersonPickerRow

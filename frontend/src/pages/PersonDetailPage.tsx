@@ -16,7 +16,7 @@ import { PersonContentTabs } from "../components/PersonContentTabs";
 import { PersonHero } from "../components/PersonHero";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { usePersonDetailPage } from "../hooks/usePersonDetailPage";
-import PersonPicker from "../components/PersonPicker";
+import PersonPicker, { PERSON_PICKER_DIALOG_CONTENT_SX } from "../components/PersonPicker";
 import { pickDirectory } from "../services/config";
 import { exportPersonMedia } from "../services/personActions";
 import { getTask } from "../services/task";
@@ -365,7 +365,7 @@ export default function PersonDetailPage() {
       {/* Merge Dialog */}
       <Dialog open={mergeOpen} onClose={() => setMergeOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Merge "{person.name}" into...</DialogTitle>
-        <DialogContent>
+        <DialogContent sx={PERSON_PICKER_DIALOG_CONTENT_SX}>
           {mergeOpen && (
             <PersonPicker
               autoFocus

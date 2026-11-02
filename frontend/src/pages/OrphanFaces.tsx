@@ -36,7 +36,7 @@ import {
   deleteFace,
   deleteAllOrphanFaces,
 } from "../services/faceActions";
-import PersonPicker from "../components/PersonPicker";
+import PersonPicker, { PERSON_PICKER_DIALOG_CONTENT_SX } from "../components/PersonPicker";
 import { FaceRead, Person } from "../types";
 import { FaceGrid } from "../components/FaceGrid"; // Import our DUMB grid component
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -379,7 +379,7 @@ function AllOrphanFaces() {
         fullWidth
       >
         <DialogTitle>Assign {selectedFaceIds.length} faces to...</DialogTitle>
-        <DialogContent>
+        <DialogContent sx={PERSON_PICKER_DIALOG_CONTENT_SX}>
           {assignDialogOpen && (
             <PersonPicker
               autoFocus
