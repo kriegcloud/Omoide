@@ -1,3 +1,4 @@
+import { parseServerDate } from "../utils/serverDate";
 import { startReviewResolve } from "../services/review";
 import { useOptimisticCachedList, refreshCachedList } from "../stores/useListStore";
 import GalleryPage from "../components/GalleryPage";
@@ -43,7 +44,7 @@ import { useTaskCompletionVersion, useTaskEvents } from "../TaskEventsContext";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { formatBytes } from "../formatUtils";
 
-const parseUtcDate = (iso: string) => new Date(iso.endsWith("Z") ? iso : `${iso}Z`);
+const parseUtcDate = (iso: string) => parseServerDate(iso);
 
 const formatDuration = (iso: string | null) => {
   if (!iso) return "unknown";

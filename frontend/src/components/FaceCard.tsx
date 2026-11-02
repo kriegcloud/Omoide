@@ -1,3 +1,4 @@
+import { parseServerDate } from "../utils/serverDate";
 // components/FaceCard.tsx
 
 import React from "react";
@@ -105,7 +106,7 @@ function FaceCard({
               <div>Detected at {Math.floor(face.timestamp / 60)}:{String(Math.floor(face.timestamp % 60)).padStart(2, "0")} — click to jump</div>
             )}
             {face.assigned_at && (
-              <div>Assigned {new Date(`${face.assigned_at}Z`).toLocaleString()} · {face.assignment_source ?? "unknown"}</div>
+              <div>Assigned {parseServerDate(face.assigned_at).toLocaleString()} · {face.assignment_source ?? "unknown"}</div>
             )}
           </>
         )}>

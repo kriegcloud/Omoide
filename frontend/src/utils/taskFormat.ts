@@ -1,3 +1,4 @@
+import { parseServerDate } from "./serverDate";
 import { Task } from "../types";
 
 const STEP_LABELS: Record<string, string> = {
@@ -30,9 +31,10 @@ export function formatRelativeTime(task: Task): string {
   if (!value) return "—";
   const elapsedSeconds = Math.max(
     0,
-    (Date.now() - new Date(value).getTime()) / 1000
+    (Date.now() - parseServerDate(value).getTime()) / 1000
   );
-  if (!Number.isFinite(elapsedSeconds) || elapsedSeconds < 60) return "just now";
+  if (!Number.isFinite(elapsedSeconds)) return "—"; // never disguise a bad timestamp as recent
+  if (elapsedSeconds < 60) return "just now";
   if (elapsedSeconds < 3600) return `${Math.floor(elapsedSeconds / 60)} min ago`;
   if (elapsedSeconds < 86400) return `${Math.floor(elapsedSeconds / 3600)} h ago`;
   if (elapsedSeconds < 172800) return "yesterday";

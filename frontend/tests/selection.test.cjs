@@ -229,6 +229,7 @@ test('FaceCard media-to-media open retains root background and replaces current 
   const root = { pathname: '/images', key: 'root' };
   const current = { pathname: '/medium/1', state: { backgroundLocation: root } };
   const FaceCard = load('components/FaceCard.tsx', runtime, {
+    '../utils/serverDate': { parseServerDate: v => new Date(typeof v === 'string' && !/[zZ]|[+-]\d\d:?\d\d$/.test(v) && v.includes('T') ? v + 'Z' : v) },
     'react-router-dom': { useLocation: () => current, useNavigate: () => (...args) => navigation.push(args) },
   }).default;
   const frame = runtime.render(() => FaceCard({ face: { id: 2, media_id: 3, thumbnail_path: 'fixture.jpg', timestamp: 12 }, isProfile: false }));

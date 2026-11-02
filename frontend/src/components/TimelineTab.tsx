@@ -1,3 +1,4 @@
+import { parseServerDate } from "../utils/serverDate";
 import { startGeographyMutation } from '../services/geographyOperations';
 import { optimisticOperations, projectList, acknowledgeQuery, operationVersion } from '../stores/optimisticOperations';
 import { readCachedList } from "../stores/useListStore";
@@ -235,7 +236,7 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia,
         <DialogTitle>
           Photos from{" "}
           {dayToView && dayToView.length > 0
-            ? new Date(dayToView[0].inserted_at).toLocaleDateString()
+            ? parseServerDate(dayToView[0].inserted_at).toLocaleDateString()
             : ""}
         </DialogTitle>
         <DialogContent>

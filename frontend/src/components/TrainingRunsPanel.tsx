@@ -1,3 +1,4 @@
+import { parseServerDate } from "../utils/serverDate";
 import Gallery from "./Gallery";
 import { useMutationRefresh } from "../context/UndoContext";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -69,8 +70,8 @@ function statusColor(status: TrainingRun["status"] | EvalBatch["status"]): "defa
 }
 
 function elapsed(run: TrainingRun): string {
-  const start = new Date(run.started_at ?? run.created_at).getTime();
-  const end = run.finished_at ? new Date(run.finished_at).getTime() : Date.now();
+  const start = parseServerDate(run.started_at ?? run.created_at).getTime();
+  const end = run.finished_at ? parseServerDate(run.finished_at).getTime() : Date.now();
   const seconds = Math.max(0, Math.floor((end - start) / 1000));
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
@@ -295,7 +296,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
     <Stack spacing={2.5}>
       {health && !health.launcher_ok && (
         <Alert severity="warning">
-          Training launcher last seen {health.launcher_seen_at ? new Date(health.launcher_seen_at).toLocaleString() : "never"}.
+          Training launcher last seen {health.launcher_seen_at ? parseServerDate(health.launcher_seen_at).toLocaleString() : "never"}.
           {" "}Enable it with <code>systemctl --user enable --now omoide-train.timer</code>; see <code>packaging/README-training.md</code>.
         </Alert>
       )}
@@ -377,7 +378,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
                     <Chip size="small" label={run.status} color={statusColor(run.status)} />
                     <Chip size="small" variant="outlined" label={run.base_model} />
                     <Typography variant="body2" color="text.secondary">
-                      {new Date(run.created_at).toLocaleString()}
+                      {parseServerDate(run.created_at).toLocaleString()}
                     </Typography>
                   </Stack>
                   <Stack direction="row" spacing={2} sx={{ mt: 1 }} flexWrap="wrap" useFlexGap>
@@ -606,7 +607,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
               <Select inputProps={{ "aria-label": "Dataset export" }} label="Dataset export" value={exportId} onChange={(event) => setExportId(Number(event.target.value))}>
                 {completedExports.map((entry) => (
                   <MenuItem key={entry.id} value={entry.id}>
-                    {new Date(entry.created_at).toLocaleString()} · {entry.item_count} items · {entry.layout}
+                    {parseServerDate(entry.created_at).toLocaleString()} · {entry.item_count} items · {entry.layout}
                   </MenuItem>
                 ))}
               </Select>

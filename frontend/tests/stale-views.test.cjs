@@ -103,7 +103,7 @@ test('image search reruns its original upload to refresh ranked membership',asyn
 test('a committed timeline change clears its open day snapshot',async()=>{
  const runtime=hooks(),refresh=refreshHarness(runtime);const {listStore}=require('./detailRuntime.cjs');const store=listStore();
  store.state.lists['person-1-timeline']={items:[{type:'media',date:'2020-01-01',items:{id:1,inserted_at:'2020-01-01'}}],hasMore:false,isLoading:false};
- const {TimelineTab}=load('components/TimelineTab.tsx',runtime,{'../context/UndoContext':refresh.module,'../stores/useListStore':store.module});
+ const {TimelineTab}=load('components/TimelineTab.tsx',runtime,{'../utils/serverDate': { parseServerDate: v => new Date(typeof v === 'string' && !/[zZ]|[+-]\d\d:?\d\d$/.test(v) && v.includes('T') ? v + 'Z' : v) },'../context/UndoContext':refresh.module,'../stores/useListStore':store.module});
  const render=()=>refresh.render(()=>TimelineTab({person:{id:1}}));
  find(render(),n=>n.type==='MediaItemGroup').props.onViewAll();assert.equal(find(render(),n=>n.type==='Dialog').props.open,true);
  await refresh.emit('media:moved');assert.equal(find(render(),n=>n.type==='Dialog').props.open,false);
