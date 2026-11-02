@@ -45,14 +45,15 @@ test('changing media or unmounting while save is pending never queues the old im
 });
 
 
-test('late queued response does not close a new media session or show old progress',async()=>{
+test('confirmation closes immediately and late queued response never closes a new media session or shows old progress',async()=>{
   const pending=deferred(); const s=setup(async()=>({id:20}),()=>pending.promise);
   let closes=0;s.props.onClose=()=>{closes++;};
   button(s.render(),'Start upscale').props.onClick(); await flush();
   assert.equal(s.calls.length,1);
+  assert.equal(closes,1);
   s.props.media={id:11};s.render();
   pending.resolve({id:'old-job',status:'queued'});await flush();
-  assert.equal(closes,0);
+  assert.equal(closes,1);
   assert.doesNotMatch(text(s.render()),/Upscale queued/);
   s.rt.unmount();
 });

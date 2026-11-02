@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import {
   Button,
   Checkbox,
-  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -35,8 +34,6 @@ export const RerunProcessorsDialog: React.FC<Props> = ({
   onStarted,
 }) => {
   const [selected, setSelected] = useState<Set<string>>(new Set(["faces"]));
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const toggle = (name: string) => {
     setSelected((prev) => {
@@ -47,19 +44,11 @@ export const RerunProcessorsDialog: React.FC<Props> = ({
     });
   };
 
-  const handleRun = async () => {
+  const handleRun = () => {
     if (selected.size === 0) return;
-    setLoading(true);
-    setError(null);
-    try {
-      await runProcessorsForMedia(mediaIds, Array.from(selected));
-      onStarted();
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unknown error");
-    } finally {
-      setLoading(false);
-    }
+    const ids = [...mediaIds], names = Array.from(selected);
+    onClose();
+    void Promise.resolve().then(() => runProcessorsForMedia(ids, names)).then(onStarted).catch(() => {});
   };
 
   return (
@@ -79,28 +68,21 @@ export const RerunProcessorsDialog: React.FC<Props> = ({
                 <Checkbox
                   checked={selected.has(p.name)}
                   onChange={() => toggle(p.name)}
-                  disabled={loading}
                 />
               }
               label={p.label}
             />
           ))}
         </FormGroup>
-        {error && (
-          <Typography color="error" variant="body2" mt={1}>
-            {error}
-          </Typography>
-        )}
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose} disabled={loading}>
+        <Button onClick={onClose}>
           Cancel
         </Button>
         <Button
           onClick={handleRun}
           variant="contained"
-          disabled={loading || selected.size === 0}
-          startIcon={loading ? <CircularProgress size={16} /> : undefined}
+          disabled={selected.size === 0}
         >
           Run
         </Button>

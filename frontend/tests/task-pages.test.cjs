@@ -11,7 +11,7 @@ const deferred = () => { let resolve, reject; const promise=new Promise((a,b)=>{
 function harness() {
   const slots=[]; let cursor=0, dirty=false, effects=[];
   const equal=(a,b)=>a&&b&&a.length===b.length&&a.every((v,i)=>Object.is(v,b[i]));
-  const api={...React,
+  const api={...React,useSyncExternalStore:(_,get)=>get(),
     useRef(value){return slots[cursor++]??={current:value};},
     useState(value){const i=cursor++; if(!(i in slots))slots[i]=typeof value==='function'?value():value; return [slots[i],next=>{const value=typeof next==='function'?next(slots[i]):next;if(!Object.is(value,slots[i])){slots[i]=value;dirty=true;}}];},
     useMemo(fn,deps){const i=cursor++;if(!slots[i]||!equal(slots[i].deps,deps))slots[i]={deps,value:fn()};return slots[i].value;},
@@ -23,7 +23,7 @@ function harness() {
 function load(file,h,overrides={}) {
   const ui=new Proxy({useTheme:()=>({palette:{background:{default:'white'}}})},{get:(v,k)=>v[k]??k});
   const list={lists:{},fetchInitial:noop,loadMore:noop,removeItem:noop,clearList:noop,clearListsByPrefix:noop};
-  const modules={react:h.api,'@mui/material':ui,'react-masonry-css':'Masonry','react-intersection-observer':{useInView:()=>({ref:noop,inView:false})},
+  const modules={react:h.api,'../stores/optimisticOperations':{optimisticOperations:{subscribe:()=>noop,getSnapshot:()=>[]},projectEntity:(_,base)=>base,projectList:(_,__,items)=>({items}),registerQueryRefresh:()=>noop,acknowledgeQuery:noop,operationVersion:()=>0},'@mui/material':ui,'react-masonry-css':'Masonry','react-intersection-observer':{useInView:()=>({ref:noop,inView:false})},
     'react-router-dom':{useSearchParams:()=>[new URLSearchParams('view=folders&folder=a'),noop],useLocation:()=>({key:'route',state:null}),useNavigate:()=>noop},
     '../stores/useListStore':{defaultListState:{items:[],hasMore:false,isLoading:false,error:null},useListInvalidation:noop,useListStore:(selector)=>selector?selector(list):list,refreshCachedList:async()=>{}},
     '../context/SelectionContext':{useSelection:()=>({selectedIds:new Set(),beginSelecting:noop,clear:noop,setSelected:noop})},

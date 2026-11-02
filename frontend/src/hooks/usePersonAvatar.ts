@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { API } from "../config";
 import type { Face, Person } from "../types";
 import { useUndo } from "../context/UndoContext";
-import { DefinitiveMutationError, optimisticOperations, projectEntity, reconcileOperation, type MutationReceipt } from "../stores/optimisticOperations";
+import { DefinitiveMutationError, optimisticOperations, projectEntity, refreshOperation, type MutationReceipt } from "../stores/optimisticOperations";
 import { startAvatarAuto, startAvatarChange } from "../services/personAvatarOptimistic";
 
 async function saveAvatar(personId: number, face: Face | null) {
@@ -27,9 +27,17 @@ async function avatarLookup(personId: number, expected: number | null, operation
 
 /** Avatar and URL state live with the hero; core overlays survive dialog closure. */
 export function usePersonAvatar(base: Person) {
+  const [authoritative, setAuthoritative] = useState<Person | null>(null);
+  useEffect(() => { setAuthoritative(null); }, [base]);
+  const refreshAvatar = async (personId: number) => {
+    const response = await fetch(`${API}/api/person/${personId}`);
+    if (!response.ok) throw new Error("Could not refresh profile photo; reopen this person to check its status.");
+    const current: Person = await response.json();
+    setAuthoritative(current);
+  };
   const operations = useSyncExternalStore(optimisticOperations.subscribe, optimisticOperations.getSnapshot);
   const uncertain = operations.find(operation => operation.label === "Update profile photo" && operation.resources.includes(`person:${base.id}`) && operation.state === "unknown");
-  const person = projectEntity(`person:${base.id}`, base, `person-detail:${base.id}`) ?? base;
+  const person = projectEntity(`person:${base.id}`, authoritative?.id === base.id ? authoritative : base, `person-detail:${base.id}`) ?? base;
   const [params, setParams] = useSearchParams();
   const open = params.get("avatar") === "1";
   const setOpen = (value: boolean) => setParams(previous => { const next = new URLSearchParams(previous); if (value) next.set("avatar", "1"); else next.delete("avatar"); return next; }, { replace: true });
@@ -48,7 +56,8 @@ export function usePersonAvatar(base: Person) {
       push({ label: "Profile photo updated", operationId: operation.id, undo: async () => {
         const restored = await startAvatarChange(previous.personId, previous.face,
           () => saveAvatar(previous.personId, previous.face),
-          operationId => avatarLookup(previous.personId, previous.face?.id ?? null, operationId)).done;
+          operationId => avatarLookup(previous.personId, previous.face?.id ?? null, operationId),
+          () => refreshAvatar(previous.personId)).done;
         if (restored.state !== "committed") throw new Error(restored.error || "Could not confirm restoration. Check profile photo status before changing it again.");
       } });
     }
@@ -58,15 +67,14 @@ export function usePersonAvatar(base: Person) {
     active.current = true; setBusy(true); setError("");
     const previous = person.profile_face ?? null;
     try {
-      const operation = startAvatarChange(person.id, face, () => saveAvatar(person.id, face), operationId => avatarLookup(person.id, face?.id ?? null, operationId));
+      const operation = startAvatarChange(person.id, face, () => saveAvatar(person.id, face), operationId => avatarLookup(person.id, face?.id ?? null, operationId), () => refreshAvatar(person.id));
       previousFaces.current.set(operation.id, { personId: person.id, face: previous });
+      setOpen(false);
       const result = await operation.done;
       if (result.state !== "committed") {
         setError(result.state === "unknown" ? "Profile photo update could not be confirmed. Check status before changing it again." : result.error || "Could not update profile photo. Try again.");
         return;
       }
-      setOpen(false);
-
     } finally { active.current = false; setBusy(false); }
   };
   const autoPick = async () => {
@@ -88,11 +96,11 @@ export function usePersonAvatar(base: Person) {
       }, async operationId => {
         if (expected === undefined) throw new Error("Automatic selection could not be confirmed. Refresh to inspect the current photo; do not repeat the request.");
         return avatarLookup(person.id, expected, operationId);
-      });
+      }, () => refreshAvatar(person.id));
       previousFaces.current.set(operation.id, { personId: person.id, face: previous });
+      setOpen(false);
       const result = await operation.done;
-      if (result.state === "committed") setOpen(false);
-      else setError(result.state === "unknown" ? "Automatic profile selection could not be confirmed. Check status before changing it again." : result.error || "Could not select a profile photo.");
+      if (result.state !== "committed") setError(result.state === "unknown" ? "Automatic profile selection could not be confirmed. Check status before changing it again." : result.error || "Could not select a profile photo.");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not select a profile photo"); }
     finally { active.current = false; setBusy(false); }
   };
@@ -100,8 +108,8 @@ export function usePersonAvatar(base: Person) {
     if (!uncertain || active.current) return;
     active.current = true; setBusy(true);
     try {
-      const result = await reconcileOperation(uncertain.id);
-      setError(result.state === "committed" ? "" : "The server has not confirmed this profile photo yet. Check status again before making another change.");
+      const result = await refreshOperation(uncertain.id);
+      setError(result.state === "committed" || result.state === "reconciled" ? "" : "The server has not confirmed this profile photo yet. Check status again before making another change.");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not check profile photo status"); }
     finally { active.current = false; setBusy(false); }
   };

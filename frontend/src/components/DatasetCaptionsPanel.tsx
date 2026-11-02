@@ -1,6 +1,7 @@
+import { optimisticOperations, projectEntity, acknowledgeQuery, operationVersion } from "../stores/optimisticOperations";
 import { useMutationRefresh } from "../context/UndoContext";
 import { useVisiblePolling } from "../hooks/useVisiblePolling";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   Alert,
   Box,
@@ -61,7 +62,9 @@ export default function DatasetCaptionsPanel({
   datasetId,
 }: DatasetCaptionsPanelProps) {
   const [filter, setFilter] = useState<DatasetCaptionFilter>("all");
-  const [rows, setRows] = useState<DatasetCaption[]>([]);
+  const [baseRows, setRows] = useState<DatasetCaption[]>([]);
+  useSyncExternalStore(optimisticOperations.subscribe, optimisticOperations.getSnapshot, optimisticOperations.getSnapshot);
+  const rows = baseRows.map(row => projectEntity(`dataset:${datasetId}/item/${row.item_id}`, row, `dataset:${datasetId}/captions`) ?? row);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
@@ -88,6 +91,7 @@ export default function DatasetCaptionsPanel({
     const version = generation.current;
     if (!isCurrent(version)) return;
     const revision = ++readGeneration.current;
+    const started = operationVersion();
     readController.current?.abort();
     const controller = new AbortController(); readController.current = controller;
     const current = () => isCurrent(version) && readGeneration.current === revision && !controller.signal.aborted;
@@ -103,6 +107,7 @@ export default function DatasetCaptionsPanel({
         cursor = page.next_cursor ?? null;
       } while (cursor && items.length < desiredCount);
       setRows(items); setNextCursor(cursor);
+      acknowledgeQuery(`dataset:${datasetId}/captions`, started);
       const previousCaptions = new Map(rowsRef.current.map(row => [row.item_id, row.caption]));
       setDrafts(currentDrafts => Object.fromEntries(items.map(row => [row.item_id,
         currentDrafts[row.item_id] !== undefined && currentDrafts[row.item_id] !== previousCaptions.get(row.item_id)
@@ -271,7 +276,7 @@ export default function DatasetCaptionsPanel({
           </Stack>
         </Paper>
       )}
-      {loading ? (
+      {loading && rows.length === 0 ? (
         <Box display="grid" sx={{ placeItems: "center", py: 6 }}>
           <CircularProgress />
         </Box>

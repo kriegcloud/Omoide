@@ -45,7 +45,7 @@ export default function RepairDialog({
   const [seed, setSeed] = useState("");
   const [randomizePrompts, setRandomizePrompts] = useState(false);
   const [promptsError, setPromptsError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const busy = false;
   const [error, setError] = useState<string | null>(null);
 
   const loadPrompts = useCallback(async () => {
@@ -74,35 +74,25 @@ export default function RepairDialog({
     }
   }, [loadPrompts, open, profile, prompts.length]);
 
-  const submit = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const parsedSeed = seed === "" ? undefined : Number(seed);
-      if (parsedSeed !== undefined && (!Number.isSafeInteger(parsedSeed) || parsedSeed < 0)) {
-        setError("Seed must be a non-negative whole number");
-        return;
-      }
-      const options = {
-        personId,
-        ...(profile === "omoide-upscale-v1" ? upscale : {}),
-        ...(profile === "omoide-background-swap-v1" && !randomizePrompts
-          ? { prompt: prompt.trim(), seed: parsedSeed }
-          : {}),
-        ...(profile === "omoide-background-swap-v1" && randomizePrompts
-          ? { randomizePrompts: true }
-          : {}),
-      };
-      const jobs = mediaIds.length === 1
-        ? [await startRepair(mediaIds[0], profile, options)]
-        : await startBulkRepair(mediaIds, profile, options);
-      onStarted?.(jobs.length);
-      onClose();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Failed to start repair");
-    } finally {
-      setBusy(false);
+  const submit = () => {
+    const parsedSeed = seed === "" ? undefined : Number(seed);
+    if (parsedSeed !== undefined && (!Number.isSafeInteger(parsedSeed) || parsedSeed < 0)) {
+      setError("Seed must be a non-negative whole number");
+      return;
     }
+    const ids = [...mediaIds];
+    const options = {
+      personId,
+      ...(profile === "omoide-upscale-v1" ? structuredClone(upscale) : {}),
+      ...(profile === "omoide-background-swap-v1" && !randomizePrompts ? { prompt: prompt.trim(), seed: parsedSeed } : {}),
+      ...(profile === "omoide-background-swap-v1" && randomizePrompts ? { randomizePrompts: true } : {}),
+    };
+    onClose();
+    // The service operation owns progress/errors after this dialog unmounts.
+    void Promise.resolve().then(() => ids.length === 1
+      ? startRepair(ids[0], profile, options).then(job => [job])
+      : startBulkRepair(ids, profile, options))
+      .then(jobs => onStarted?.(jobs.length)).catch(() => {});
   };
 
   return (

@@ -1,3 +1,5 @@
+import { registerJobRefresh } from "../services/taskOperations";
+import JobSubmissionStatus from "../components/JobSubmissionStatus";
 import { useMutationRefresh } from "../context/UndoContext";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useVisiblePolling } from "../hooks/useVisiblePolling";
@@ -49,6 +51,7 @@ export default function RepairsPage() {
       if (isCurrent()) setLoading(false);
     }
   }, []);
+  useEffect(() => registerJobRefresh("repairs", () => load()), [load]);
   useMutationRefresh(["repairs:changed"], () => load());
   useVisiblePolling(load, 3000, true, true);
   const loadMore = async () => {
@@ -76,6 +79,7 @@ export default function RepairsPage() {
   return (
     <Container maxWidth="md" sx={{ py: 4 }}>
       <Typography variant="h4" gutterBottom>Repairs</Typography>
+      <JobSubmissionStatus scope="repairs" />
       {error && <Alert severity="error" sx={{ mb: 2 }} action={<Button disabled={loading} onClick={() => void load()}>Retry</Button>}>{error}</Alert>}
       <Stack spacing={1.5}>
         {jobs.map((job) => (

@@ -20,6 +20,9 @@ import { usePersonDetailPage } from "../hooks/usePersonDetailPage";
 import PersonPicker, { PERSON_PICKER_DIALOG_CONTENT_SX } from "../components/PersonPicker";
 import { pickDirectory } from "../services/config";
 import { exportPersonMedia } from "../services/personActions";
+import { submitJob, observeSubmittedJobs } from "../services/taskOperations";
+import { getRecentTasks } from "../services/taskActions";
+import JobSubmissionStatus from "../components/JobSubmissionStatus";
 import { getTask } from "../services/task";
 import { Task } from "../types";
 
@@ -126,6 +129,7 @@ export default function PersonDetailPage() {
     const timeoutId = window.setTimeout(async () => {
       try {
         const updated = await getTask(exportTask.id);
+        observeSubmittedJobs("person-export", [updated]);
         if (cancelled) return;
         if (["pending", "running"].includes(updated.status)) {
           setExportTask(updated);
@@ -165,16 +169,16 @@ export default function PersonDetailPage() {
   }, [exportTask, setSnackbar]);
 
   const exportMedia = async (mode: "copy" | "move") => {
-    if (!exportDestination || !person) return;
+    if (!exportDestination || !person || exportingMedia) return;
     const target = person.id, version = exportGeneration.current;
     const current = () => exportPersonId.current === target && exportGeneration.current === version;
+    const destination = exportDestination;
     setExportingMedia(true);
+    setExportDialogOpen(false);
     try {
-      const task = await exportPersonMedia(
-        target,
-        exportDestination,
-        mode,
-      );
+      const task = await submitJob("person-export", `${mode === "copy" ? "Copy" : "Move"} person media`,
+        () => exportPersonMedia(target, destination, mode),
+        async () => { observeSubmittedJobs("person-export", await getRecentTasks(20, "export_person_media")); });
       if (!current()) return;
       setExportTask(task);
       setSnackbar({
@@ -182,7 +186,6 @@ export default function PersonDetailPage() {
         message: `${mode === "copy" ? "Copying" : "Moving"} media in the background; progress is shown under Tasks.`,
         severity: "info",
       });
-      setExportDialogOpen(false);
       setExportDestination(null);
     } catch (error) {
       if (!current()) return;
@@ -225,6 +228,7 @@ export default function PersonDetailPage() {
 
   return (
     <GalleryPage title={person.name || "Person"} count={person.appearance_count}>
+      <JobSubmissionStatus scope="person-export" />
       <PersonHero
         person={person}
         onSave={onSave}

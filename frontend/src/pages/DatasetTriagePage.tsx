@@ -1,6 +1,7 @@
+import { optimisticOperations, projectEntity, acknowledgeQuery, operationVersion } from "../stores/optimisticOperations";
 import { useMutationRefresh } from "../context/UndoContext";
 import { useHotkeys } from "../hotkeys/useHotkey";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   Alert,
   Box,
@@ -73,7 +74,7 @@ export default function DatasetTriagePage() {
   const filter = requestedFilter && FILTERS.includes(requestedFilter)
     ? requestedFilter
     : "all";
-  const [entries, setEntries] = useState<DatasetTriageEntry[]>([]);
+  const [baseEntries, setEntries] = useState<DatasetTriageEntry[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [reviewedCount, setReviewedCount] = useState(0);
@@ -90,6 +91,7 @@ export default function DatasetTriagePage() {
   const morePending = useRef(false);
   const mutationPending = useRef(false);
   const [busy, setBusy] = useState(false);
+  const [reviewPending, setReviewPending] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [cropOpen, setCropOpen] = useState(false);
@@ -99,6 +101,8 @@ export default function DatasetTriagePage() {
   const imagePanelRef = useRef<HTMLDivElement>(null);
   const captionRef = useRef<HTMLInputElement>(null);
   const repairButtonRef = useRef<HTMLButtonElement>(null);
+  useSyncExternalStore(optimisticOperations.subscribe, optimisticOperations.getSnapshot, optimisticOperations.getSnapshot);
+  const entries = baseEntries.map(entry => ({ ...entry, item: projectEntity(`dataset:${datasetId}/item/${entry.item.id}`, entry.item, `dataset:${datasetId}/triage`) ?? entry.item }));
   const current = entries[currentIndex] ?? null;
 
   useEffect(() => {
@@ -145,9 +149,10 @@ export default function DatasetTriagePage() {
   queueSnapshot.current = { entries, currentIndex };
   useMutationRefresh(["dataset:changed", "media:deleted", "media:updated", "media:moved", "person:changed", "face:assigned", "face:detached", "face:deleted", "tag:changed", "list:invalidate"], () => setRefreshTick(value => value + 1));
   useEffect(() => {
-    if (refreshTick === appliedRefresh.current || loading || busy || mutationPending.current || cropOpen) return;
+    if (refreshTick === appliedRefresh.current || loading || busy || reviewPending > 0 || mutationPending.current || cropOpen) return;
     appliedRefresh.current = refreshTick;
     const generation = ++queueGeneration.current;
+    const started = operationVersion();
     const snapshot = queueSnapshot.current;
     const activeId = snapshot.entries[snapshot.currentIndex]?.item.id;
     const desiredCount = Math.max(1, snapshot.entries.length);
@@ -168,6 +173,7 @@ export default function DatasetTriagePage() {
       if (!active || generation !== queueGeneration.current) return;
       const index = refreshed.findIndex(entry => entry.item.id === activeId);
       setEntries(refreshed);
+      acknowledgeQuery(`dataset:${datasetId}/triage`, started);
       setCurrentIndex(index >= 0 ? index : Math.max(0, Math.min(snapshot.currentIndex, refreshed.length - 1)));
       setNextCursor(cursor);
       setReviewedCount(page.reviewed_count);
@@ -178,7 +184,7 @@ export default function DatasetTriagePage() {
       if (active && generation === queueGeneration.current) setPageError(reason instanceof Error ? reason.message : "Failed to refresh triage queue");
     });
     return () => { active = false; appliedRefresh.current = Math.min(appliedRefresh.current, refreshTick - 1); };
-  }, [refreshTick, loading, busy, cropOpen, datasetId, filter]);
+  }, [refreshTick, loading, busy, reviewPending, cropOpen, datasetId, filter]);
 
   useEffect(() => {
     if (!pageError) { setRetryReady(true); return; }
@@ -256,12 +262,11 @@ export default function DatasetTriagePage() {
   }, [entries.length, nextCursor]);
 
   const reviewCurrent = useCallback(async (excluded: boolean) => {
-    if (!current || busy || mutationPending.current) return;
+    if (!current) return;
     const generation = queueGeneration.current;
-    mutationPending.current = true;
-    setBusy(true);
+    setReviewPending(count => count + 1);
     setError(null);
-    remember(current, currentIndex);
+    advance();
     let persisted = false;
     try {
       // The review endpoint stamps a native server datetime; item PATCH currently
@@ -282,19 +287,20 @@ export default function DatasetTriagePage() {
         replaceEntry(current.item.id, { reviewed_at: reviewed.reviewed_at ?? null });
         if (reviewed.reviewed_at) setReviewedCount((count) => count + 1);
       }
-      advance();
+      remember(current, currentIndex);
     } catch (reason) {
       if (generation !== queueGeneration.current) return;
       // Keep an undo entry when exclusion persisted but the review call failed.
-      if (!persisted) setHistory((rows) => rows.slice(0, -1));
+      if (persisted) remember(current, currentIndex);
       setError(reason instanceof Error ? reason.message : "Failed to review item");
     } finally {
+      setReviewPending(count => Math.max(0, count - 1));
       if (generation === queueGeneration.current) {
         mutationPending.current = false;
         setBusy(false);
       }
     }
-  }, [advance, busy, current, currentIndex, datasetId, remember, replaceEntry]);
+  }, [advance, current, currentIndex, datasetId, remember, replaceEntry]);
   const keep = useCallback(() => reviewCurrent(false), [reviewCurrent]);
   const exclude = useCallback(() => reviewCurrent(true), [reviewCurrent]);
 

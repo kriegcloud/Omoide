@@ -1,3 +1,7 @@
+import { optimisticOperations, projectList } from '../stores/optimisticOperations';
+import { useSyncExternalStore } from 'react';
+import { startGeographyMutation } from '../services/geographyOperations';
+import { refreshCachedList } from '../stores/useListStore';
 import { useMutationRefresh } from "../context/UndoContext";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Link as RouterLink, useSearchParams } from "react-router-dom";
@@ -83,13 +87,6 @@ const SORT_LABELS: Record<MissingGeoSort, string> = {
 const isSort = (value: string | null): value is MissingGeoSort =>
   value !== null && value in SORT_LABELS;
 
-/** Whether `mediaPath` lies in `folder` (a forward-slash folder path). */
-const isInFolder = (mediaPath: string, folder: string) =>
-  mediaPath
-    .replace(/\\/g, "/")
-    .toLowerCase()
-    .startsWith(`${folder.replace(/\/$/, "").toLowerCase()}/`);
-
 function WriteStatusIcon({
   status,
   reason,
@@ -156,15 +153,17 @@ export default function MapEditorPage() {
   const listKey = `media-missing-geolocation:${sort}:${folder ?? ""}`;
 
   const {
-    items: orphans,
+    items: baseOrphans,
     hasMore,
     isLoading,
     error,
     loaderRef,
-    removeItems,
   } = usePagedList<MissingGeoMedia>(listKey, (cursor, signal) =>
     getMissingGeoMedia(cursor, { folder, sort }, signal)
   );
+
+  useSyncExternalStore(optimisticOperations.subscribe, optimisticOperations.getSnapshot, optimisticOperations.getSnapshot);
+  const orphans = projectList(listKey, "media", baseOrphans).items;
 
   const [selectedMedia, setSelectedMedia] = useState<MissingGeoMedia | null>(
     null
@@ -173,7 +172,7 @@ export default function MapEditorPage() {
   useEffect(() => {
     setSelectedMedia(null); setNewPosition(null);
   }, [revision, folder, sort]);
-  const [saving, setSaving] = useState(false);
+  const saving = false;
 
   // Search State
   const [searchInput, setSearchInput] = useState("");
@@ -245,46 +244,23 @@ export default function MapEditorPage() {
     setNewPosition(latlng);
   };
 
-  const saveGeo = async () => {
+  const saveGeo = () => {
     if (!selectedMedia || !newPosition) return;
-    setSaving(true);
-    try {
-      await updateMediaGeolocation(
-        selectedMedia.id,
-        newPosition.lat,
-        newPosition.lng
-      );
-
-      // The media now has a location: drop it from the cached list
-      removeItems([selectedMedia.id]);
-      const savedPath = selectedMedia.path;
-      setFolders((current) =>
-        current
-          .map((f) =>
-            isInFolder(savedPath, f.path)
-              ? { ...f, media_count: f.media_count - 1 }
-              : f
-          )
-          .filter((f) => f.media_count > 0)
-      );
-
-      setSnackbar({
-        open: true,
-        message: "Location saved!",
-        severity: "success",
-      });
-      setSelectedMedia(null);
-      setNewPosition(null);
-    } catch (err) {
-      setSnackbar({
-        open: true,
-        // The server explains refusals (e.g. a file beep media may not write to).
-        message: err instanceof Error ? err.message : "Failed to save location",
-        severity: "error",
-      });
-    } finally {
-      setSaving(false);
-    }
+    const target = selectedMedia;
+    const position = {lat: newPosition.lat, lng: newPosition.lng};
+    const key = `media:${target.id}` as const;
+    setSelectedMedia(null);
+    setNewPosition(null);
+    startGeographyMutation("Save location", key, [
+      {kind: "fields", key, values: {latitude: position.lat, longitude: position.lng}},
+      {kind: "remove", key, query: listKey},
+    ], () => updateMediaGeolocation(target.id, position.lat, position.lng), async () => {
+      // A navigation may have unregistered the cached fetcher; still verify the outcome.
+      await getMissingGeoMedia(null, {folder, sort});
+      await refreshCachedList(listKey);
+      const data = await getMissingGeoFolders();
+      setFolders(data.folders);
+    });
   };
 
   const handleCancel = () => {

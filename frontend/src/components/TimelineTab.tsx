@@ -1,3 +1,5 @@
+import { startGeographyMutation } from '../services/geographyOperations';
+import { optimisticOperations, projectList, acknowledgeQuery, operationVersion } from '../stores/optimisticOperations';
 import { readCachedList } from "../stores/useListStore";
 import AddIcon from "@mui/icons-material/Add";
 import { Dialog, DialogTitle, DialogContent, ImageList, ImageListItem, ImageListItemBar, IconButton, Tooltip } from "@mui/material";
@@ -10,7 +12,7 @@ import {
   TimelineSeparator,
 } from "@mui/lab";
 import { Box, Button, CircularProgress, Typography } from "@mui/material";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useInView } from "react-intersection-observer";
 import { EventFormDialog } from "../components/EventFormDialog";
 import ConfirmDialog from "./ConfirmDialog";
@@ -46,15 +48,21 @@ interface TimelineTabProps {
 export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia, onJumpToFace }) => {
   const [dayToView, setDayToView] = useState<MediaPreview[] | null>(null);
   const listKey = useMemo(() => `person-${person.id}-timeline`, [person.id]);
-  const { items, hasMore, isLoading } = useListStore(
+  const { items: baseItems, hasMore, isLoading } = useListStore(
     (state) => readCachedList<TimelineEntry>(state, listKey) || defaultListState
   );
+  useSyncExternalStore(optimisticOperations.subscribe, optimisticOperations.getSnapshot, optimisticOperations.getSnapshot);
+  // Timeline rows mix media and nested events; adapt events without treating media IDs as event IDs.
+  const eventRows = projectList(listKey, "event", baseItems.filter((item): item is Extract<TimelineEntry, {type: "event"}> => item.type === "event").map(item => ({...item, id: item.event.id}))).items;
+  const items: TimelineEntry[] = [...baseItems.filter(item => item.type !== "event"), ...eventRows].sort((a,b) => b.date.localeCompare(a.date));
   const fetchInitial = useListStore((state) => state.fetchInitial);
   const loadMore = useListStore((state) => state.loadMore);
   const clearList = useListStore((state) => state.clearList);
   const refreshTimeline = async () => {
     setDayToView(null);
+    const started = operationVersion();
     await refreshCachedList(listKey);
+    acknowledgeQuery(listKey, started);
   };
   useUndoRefresh(`cache:${listKey}`, refreshTimeline);
   useMutationRefresh(["face:assigned", "face:detached", "face:deleted", "media:deleted", "media:updated", "person:changed", "media:moved", "list:invalidate", "tag:changed"], refreshTimeline);
@@ -66,9 +74,9 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia,
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [eventToEdit, setEventToEdit] = useState<TimelineEvent | null>(null);
   const [eventToDelete, setEventToDelete] = useState<TimelineEvent | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const isDeleting = false;
 
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmitting = false;
 
   useEffect(() => {
     if (person.id) {
@@ -100,36 +108,23 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia,
     setEventToDelete(event);
   };
 
-  const handleConfirmDeleteEvent = async () => {
+  const handleConfirmDeleteEvent = () => {
     if (!eventToDelete) return;
-    setIsDeleting(true);
-    try {
-      await deleteTimelineEvent(person.id, eventToDelete.id);
-      clearList(listKey);
-      fetchInitial(listKey, () => getPersonTimeline(person.id, null));
-      setEventToDelete(null);
-    } catch (error) {
-      console.error("Failed to delete timeline event:", error);
-    } finally {
-      setIsDeleting(false);
-    }
+    const target = eventToDelete.id;
+    const key = `event:${target}` as const;
+    setEventToDelete(null);
+    startGeographyMutation("Delete timeline event", key, [{kind: "remove", key, query: listKey}], () => deleteTimelineEvent(person.id, target), refreshTimeline);
   };
   const handleSubmitEvent = async (eventData: TimelineEventCreate) => {
-    setIsSubmitting(true);
-    try {
-      if (eventToEdit) {
-        await updateTimelineEvent(person.id, eventToEdit.id, eventData);
-        clearList(listKey);
-        fetchInitial(listKey, () => getPersonTimeline(person.id, null));
-      } else {
-        await createTimelineEvent(person.id, eventData);
-        clearList(listKey);
-        fetchInitial(listKey, () => getPersonTimeline(person.id, null));
-      }
-      handleCloseDialog();
-    } finally {
-      setIsSubmitting(false);
-    }
+    const target = eventToEdit;
+    const id = target?.id ?? -Date.now();
+    const key = `event:${id}` as const;
+    const event = {...eventData, id, person_id: person.id};
+    const row = {id, type: "event", date: eventData.event_date.toISOString().slice(0,10), event};
+    handleCloseDialog();
+    startGeographyMutation(target ? "Update timeline event" : "Create timeline event", key,
+      target ? [{kind: "fields", key, query: listKey, values: {event, date: row.date}}] : [{kind: "insert", key, query: listKey, item: row}],
+      () => target ? updateTimelineEvent(person.id, target.id, eventData) : createTimelineEvent(person.id, eventData), refreshTimeline);
   };
 
   const handleRemoveMedia = async (mediaId: number) => {

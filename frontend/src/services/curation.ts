@@ -1,3 +1,4 @@
+import { startOperation, DefinitiveMutationError } from "../stores/optimisticOperations";
 import { API } from "../config";
 import type {
   CurationDataset,
@@ -12,7 +13,7 @@ import type {
   CurationPresence,
 } from "../types/curation";
 
-export class CurationError extends Error {
+export class CurationError extends DefinitiveMutationError {
   constructor(public status: number, public code: string) {
     super(status === 401 || status === 403
       ? "This access credential does not permit that action. Connect with an authorized credential supplied by the local operator."
@@ -41,14 +42,31 @@ export async function getCurationStatus(signal?: AbortSignal): Promise<CurationS
 /** The credential belongs only to this in-memory client: never a URL or browser storage. */
 export function createCurationClient(credential: string) {
   async function request<T>(path: string, body?: object, signal?: AbortSignal): Promise<T> {
-    const response = await checked(await fetch(`${API}/api/curation${path}`, {
-      method: body ? "POST" : "GET",
-      headers: { Authorization: `Bearer ${credential}`, ...(body ? { "Content-Type": "application/json" } : {}) },
-      body: body ? JSON.stringify(body) : undefined,
-      cache: "no-store",
-      signal,
-    }));
-    return response.json();
+    const send = async () => {
+      const response = await checked(await fetch(`${API}/api/curation${path}`, {
+        method: body ? "POST" : "GET",
+        headers: { Authorization: `Bearer ${credential}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+        cache: "no-store", signal,
+      }));
+      return response.json() as Promise<T>;
+    };
+    if (!body || path.includes("/auth/") || path.endsWith("/review-options")) return send();
+    // Do not retain credentials, review payloads or passkey assertions in the
+    // operation store. The closure owns transport; only the scope is public.
+    const scope = path.match(/^\/datasets\/([^/]+)/)?.[1];
+    let result: T;
+    let failure: unknown;
+    const handle = startOperation({ label: path.endsWith("/exports") || path.endsWith("/resume") ? "Submitting curation export" : "Saving curation change",
+      feedback: path.endsWith("/exports") || path.endsWith("/resume") ? "job" : undefined,
+      input: {}, resources: [`dataset:curation/${scope ?? "exports"}`], patches: [],
+      request: async () => { try { result = await send(); return result; } catch (error) { const classified = error instanceof CurationError && error.status >= 500 ? new Error(error.message) : error; failure = classified; throw classified; } },
+      reconcileUnknownAfterRefresh: true,
+      refreshUnknown: async () => { await request(scope ? `/datasets/${scope}` : "/datasets"); },
+    });
+    const record = await handle.done;
+    if (record.state === "rejected" || record.state === "unknown") throw failure ?? new Error(record.error);
+    return result!;
   }
 
   return {

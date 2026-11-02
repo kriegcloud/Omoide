@@ -10,7 +10,10 @@ export function startSocialLinkOperation<R>(options: {
   const command: OptimisticCommand<Record<string, never>, R> = {
     label: options.label, input: {}, resources: [key],
     patches: [{ kind: 'fields', key, query: socialLinksQuery(options.personId), values: { social_links: options.links } }],
-    request: options.request, lookup: options.lookup, refresh: options.refresh,
+    request: options.request, lookup: options.refresh ? undefined : options.lookup, refresh: options.refresh,
+    // Legacy writes have no operation lookup. A completed targeted GET owns the
+    // new base, including a different authoritative result; never replay the write.
+    refreshUnknown: options.refresh, reconcileUnknownAfterRefresh: Boolean(options.refresh),
   };
   return startOperation(command);
 }

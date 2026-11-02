@@ -1,3 +1,4 @@
+import { jobError, observeSubmittedJobs, submitJob } from "./taskOperations";
 import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
 import type { ImageRepairJob, RepairProfile } from "../types";
@@ -7,6 +8,7 @@ import type { ImageRepairJob, RepairProfile } from "../types";
 const observedRepairs = new Map<string, { terminal: boolean }>();
 const terminalRepairStatuses = new Set(["succeeded", "failed", "cancelled", "interrupted"]);
 function observeRepair(job: ImageRepairJob, notify = true) {
+  observeSubmittedJobs("repairs", [job]);
   const previous = observedRepairs.get(job.id);
   const terminal = terminalRepairStatuses.has(job.status);
   observedRepairs.delete(job.id);
@@ -34,7 +36,7 @@ async function json<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     const detail = body?.detail;
-    throw new Error(typeof detail === "string" ? detail : detail?.message ?? `Request failed (${response.status})`);
+    throw jobError(response, typeof detail === "string" ? detail : detail?.message ?? `Request failed (${response.status})`);
   }
   return response.json();
 }
@@ -54,35 +56,38 @@ export const startRepair = (
   mediaId: number,
   profile: RepairProfile,
   options: RepairOptions = {},
-) =>
-  fetch(`${API}/api/repairs/media/${mediaId}`, {
+) => {
+  const body = JSON.stringify(repairBody(profile, options));
+  return submitJob("repairs", "Submit repair", () => fetch(`${API}/api/repairs/media/${mediaId}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(repairBody(profile, options)),
+    body,
   }).then(json<ImageRepairJob>).then((result) => {
     observeRepair(result, false);
     mutationBus.emit({ type: "repairs:changed" });
     return result;
-  });
+  }), async () => { await listRepairs(); mutationBus.emit({ type: "repairs:changed" }); });
+};
 
 export const startBulkRepair = (
   mediaIds: number[],
   profile: RepairProfile,
   options: RepairOptions = {},
-) =>
-  fetch(`${API}/api/repairs/bulk`, {
+) => {
+  const body = JSON.stringify({
+    media_ids: [...mediaIds], ...repairBody(profile, options),
+    ...(options.randomizePrompts ? { randomize_prompts: true } : {}),
+  });
+  return submitJob("repairs", "Submit repairs", () => fetch(`${API}/api/repairs/bulk`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      media_ids: mediaIds,
-      ...repairBody(profile, options),
-      ...(options.randomizePrompts ? { randomize_prompts: true } : {}),
-    }),
+    body,
   }).then(json<ImageRepairJob[]>).then((result) => {
     result.forEach(job => observeRepair(job, false));
     mutationBus.emit({ type: "repairs:changed" });
     return result;
-  });
+  }), async () => { await listRepairs(); mutationBus.emit({ type: "repairs:changed" }); });
+};
 
 export const listBackgroundPrompts = () =>
   fetch(`${API}/api/repairs/background-prompts`).then(json<string[]>);
@@ -100,11 +105,11 @@ export const listRepairs = (options: { resultMediaId?: number; limit?: number; c
 };
 
 export const cancelRepair = (jobId: string) =>
-  fetch(`${API}/api/repairs/${jobId}/cancel`, { method: "POST" }).then(json<ImageRepairJob>).then((result) => {
+  submitJob("repairs", "Request repair cancellation", () => fetch(`${API}/api/repairs/${jobId}/cancel`, { method: "POST" }).then(json<ImageRepairJob>).then((result) => {
     observeRepair(result, false);
     mutationBus.emit({ type: "repairs:changed" });
     return result;
-  });
+  }), async () => { await getRepair(jobId); mutationBus.emit({ type: "repairs:changed" }); });
 
 export interface UpscaleSelection {
   provider: string;

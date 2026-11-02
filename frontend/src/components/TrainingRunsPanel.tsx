@@ -649,6 +649,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
             disabled={submitting || exportId === "" || baseModel === "" || steps <= 0 || learningRate <= 0 || rank <= 0}
             onClick={async () => {
               if (exportId === "") return;
+              setDialogOpen(false);
               setSubmitting(true);
               setError(null);
               try {
@@ -700,6 +701,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
               setError("Enter at least one non-negative integer seed");
               return;
             }
+            setEvalDialogRun(null);
             setEvalSubmitting(true);
             try {
               const created = await createEvalBatch(runId, {

@@ -1,6 +1,8 @@
+import { startGeographyMutation } from '../services/geographyOperations';
+import { optimisticOperations, projectList, acknowledgeQuery, operationVersion } from '../stores/optimisticOperations';
 import Gallery from "./Gallery";
 import { useMutationRefresh } from "../context/UndoContext";
-import React, { useState, useEffect, useCallback, useRef, MutableRefObject } from "react";
+import React, { useState, useEffect, useCallback, useRef, useSyncExternalStore, MutableRefObject } from "react";
 import {
   Alert,
   Box,
@@ -60,7 +62,7 @@ export function SceneManager({
   onSeekRequest,
   videoTimeRef,
 }: SceneManagerProps) {
-  const [scenes, setScenes] = useState<SceneRead[]>([]);
+  const [baseScenes, setScenes] = useState<SceneRead[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedPersonId, setSelectedPersonId] = useState<number | null>(null);
@@ -68,17 +70,22 @@ export function SceneManager({
   const [newStartTime, setNewStartTime] = useState("");
   const [newEndTime, setNewEndTime] = useState("");
   const [newDescription, setNewDescription] = useState("");
-  const [creating, setCreating] = useState(false);
+  const creating = false;
+  const query = `scenes:${mediaId}`;
+  useSyncExternalStore(optimisticOperations.subscribe, optimisticOperations.getSnapshot, optimisticOperations.getSnapshot);
+  const scenes = projectList(query, "scene", baseScenes).items;
   const [createError, setCreateError] = useState<string | null>(null);
 
   const generation = useRef(0);
+  const currentMedia = useRef(mediaId); currentMedia.current = mediaId;
   const loadScenes = useCallback(async () => {
     const request = ++generation.current;
-    setLoading(true);
+    const started = operationVersion();
     try {
       const data = await getScenes(mediaId);
       if (request !== generation.current) return;
       setScenes(data);
+      acknowledgeQuery(query, started);
       setError(null);
     } catch {
       if (request !== generation.current) return;
@@ -86,7 +93,7 @@ export function SceneManager({
     } finally {
       if (request === generation.current) setLoading(false);
     }
-  }, [mediaId]);
+  }, [mediaId, query]);
 
   useEffect(() => {
     const counter = generation;
@@ -95,18 +102,21 @@ export function SceneManager({
   }, [loadScenes]);
   useMutationRefresh(["media:deleted", "media:updated", "media:moved", "face:assigned", "face:detached", "face:deleted", "person:changed", "tag:changed", "list:invalidate"], loadScenes);
 
+  const refreshScenes = async () => {
+    const started = operationVersion();
+    const data = await getScenes(mediaId);
+    if (currentMedia.current === mediaId) setScenes(data);
+    acknowledgeQuery(query, started);
+  };
+
   const filteredScenes =
     selectedPersonId != null
       ? scenes.filter((s) => s.persons?.some((p) => p.id === selectedPersonId))
       : scenes;
 
-  const handleDeleteScene = async (sceneId: number) => {
-    try {
-      await deleteScene(mediaId, sceneId);
-      setScenes((prev) => prev.filter((s) => s.id !== sceneId));
-    } catch {
-      setError("Failed to delete scene");
-    }
+  const handleDeleteScene = (sceneId: number) => {
+    const key = `scene:${sceneId}` as const;
+    startGeographyMutation("Delete scene", key, [{kind: "remove", key, query}], () => deleteScene(mediaId, sceneId), refreshScenes);
   };
 
   const handleOpenAddDialog = () => {
@@ -139,23 +149,13 @@ export function SceneManager({
       return;
     }
 
-    setCreating(true);
+    const id = -Date.now();
+    const key = `scene:${id}` as const;
+    const data = { start_time: startSecs, ...(rawEnd != null && { end_time: rawEnd }), description: newDescription.trim() || undefined };
+    const provisional: SceneRead = {id, start_time: startSecs, end_time: rawEnd ?? startSecs, description: data.description ?? null, thumbnail_path: null, persons: []};
+    setAddDialogOpen(false);
     setCreateError(null);
-    try {
-      const scene = await createScene(mediaId, {
-        start_time: startSecs,
-        ...(rawEnd != null && { end_time: rawEnd }),
-        description: newDescription.trim() || undefined,
-      });
-      setScenes((prev) =>
-        [...prev, scene].sort((a, b) => a.start_time - b.start_time)
-      );
-      setAddDialogOpen(false);
-    } catch {
-      setCreateError("Failed to create scene.");
-    } finally {
-      setCreating(false);
-    }
+    startGeographyMutation("Create scene", key, [{kind: "insert", key, query, item: provisional}], () => createScene(mediaId, data), refreshScenes);
   };
 
   return (
@@ -219,7 +219,7 @@ export function SceneManager({
       </Box>
 
       {/* Timeline */}
-      {!loading && duration > 0 && scenes.length > 0 && (
+      {duration > 0 && scenes.length > 0 && (
         <SceneTimeline
           scenes={scenes}
           filteredScenes={filteredScenes}
@@ -229,7 +229,7 @@ export function SceneManager({
       )}
 
       {/* Content */}
-      {loading && (
+      {loading && scenes.length === 0 && (
         <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
           <CircularProgress />
         </Box>
@@ -246,7 +246,7 @@ export function SceneManager({
             : "No scenes detected. Use the Processors tab to extract scenes, or add one manually."}
         </Typography>
       )}
-      {!loading && filteredScenes.length > 0 && (
+      {filteredScenes.length > 0 && (
         <Gallery>
           {filteredScenes.map((scene) => (
             <div key={scene.id}>

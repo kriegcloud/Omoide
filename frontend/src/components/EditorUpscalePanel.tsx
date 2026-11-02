@@ -71,10 +71,10 @@ export default function EditorUpscalePanel({ open, media, hasChanges, initialPro
       if (!isCurrent()) return;
       if (!input) throw new Error("The edited copy could not be saved. Close this panel to review the editor error, then try again.");
       setSource(input);
+      onClose();
       const queued = await startRepair(input.id, "omoide-upscale-v1", runSelection);
       if (!isCurrent()) return;
       setJob(queued);
-      onClose();
     } catch (reason) { if (isCurrent()) setError(reason instanceof Error ? reason.message : "Cannot start upscale"); }
     finally { if (isCurrent()) { submitting.current = false; setBusy(false); } }
   };

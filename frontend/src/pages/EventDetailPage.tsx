@@ -1,7 +1,9 @@
+import { startGeographyMutation } from '../services/geographyOperations';
+import { optimisticOperations, projectEntity, operationVersion, acknowledgeQuery } from '../stores/optimisticOperations';
 import GalleryPage from "../components/GalleryPage";
 import { useMutationRefresh } from "../context/UndoContext";
 import ConfirmDialog from "../components/ConfirmDialog";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   Alert,
   Box,
@@ -20,6 +22,7 @@ import { EmptyState } from "../components/EmptyState";
 import {
   convertEventToAlbum,
   getEvent,
+  getEvents,
   getEventMedia,
   updateEvent,
 } from "../services/features";
@@ -30,7 +33,8 @@ export default function EventDetailPage() {
   const navigate = useNavigate();
   const eventId = Number(id);
   const [loadedEvent, setEvent] = useState<EventItem | null>(null);
-  const event = loadedEvent?.id === eventId ? loadedEvent : null;
+  useSyncExternalStore(optimisticOperations.subscribe, optimisticOperations.getSnapshot, optimisticOperations.getSnapshot);
+  const event = loadedEvent?.id === eventId ? projectEntity(`event:${eventId}`, loadedEvent, `event-detail:${eventId}`) : null;
   const routeId = useRef(eventId); routeId.current = eventId;
   const generation = useRef(0);
   const actionBusy = useRef(false);
@@ -92,32 +96,38 @@ export default function EventDetailPage() {
     setIsRenaming(true);
   };
 
-  const saveTitle = async () => {
-    const title = titleDraft.trim();
-    if (!title || !event || actionBusy.current) return;
-    const target = event.id, version = generation.current;
-    actionBusy.current = true; setBusy(true); setIsSavingTitle(true);
-    try {
-      const updated = await updateEvent(target, title);
-      if (routeId.current === target && generation.current === version) {setEvent(updated); setIsRenaming(false);}
-    } catch (error) {
-      if (routeId.current === target && generation.current === version) setError(error instanceof Error ? error.message : "Failed to rename event");
-    } finally {
-      if (routeId.current === target && generation.current === version) {actionBusy.current = false; setBusy(false); setIsSavingTitle(false);}
-    }
+  const refreshEvent = async () => {
+    const target = eventId;
+    const started = operationVersion();
+    const updated = await getEvent(target);
+    if (routeId.current === target) setEvent(updated);
+    acknowledgeQuery(`event-detail:${target}`, started);
   };
-  const handleConvert = async () => {
+  const saveTitle = () => {
+    const title = titleDraft.trim();
+    if (!title || !event) return;
+    const target = event.id;
+    const key = `event:${target}` as const;
+    setIsRenaming(false);
+    startGeographyMutation("Rename event", key, [{kind: "fields", key, values: {title}}], () => updateEvent(target, title), refreshEvent);
+  };
+  const handleConvert = () => {
     if (!convertTarget || convertTarget.id !== routeId.current || actionBusy.current) return;
     const target = convertTarget.id, version = generation.current;
-    actionBusy.current = true; setBusy(true); setIsConverting(true);
-    try {
+    const key = `event:${target}` as const;
+    setConvertTarget(null);
+    actionBusy.current = true; setBusy(true);
+    const handle = startGeographyMutation("Convert event to album", key, [{kind: "derived", key, field: "conversion"}], async () => {
       const album = await convertEventToAlbum(target);
       if (routeId.current === target && generation.current === version) navigate(`/album/${album.id}`);
-    } catch (error) {
-      if (routeId.current === target && generation.current === version) setError(error instanceof Error ? error.message : "Failed to convert event");
-    } finally {
-      if (routeId.current === target && generation.current === version) {actionBusy.current = false; setBusy(false); setIsConverting(false); setConvertTarget(null);}
-    }
+      return album;
+    }, async () => {
+      // Conversion removes the event. Revalidate the collection, including lost responses.
+      await getEvents(null);
+    });
+    void handle.done.then(() => {
+      if (routeId.current === target && generation.current === version) { actionBusy.current = false; setBusy(false); }
+    });
   };
 
   return (

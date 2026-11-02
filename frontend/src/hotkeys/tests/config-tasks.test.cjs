@@ -26,7 +26,7 @@ function load(name, mocks, globals = {}) {
   const exports = {};
   vm.runInNewContext(code, {
     exports,
-    require: (moduleName) => mocks[moduleName] ?? componentNames,
+    require: (moduleName) => mocks[moduleName] ?? (moduleName === "../services/taskOperations" ? { useJobSubmissions: () => [], registerJobRefresh: () => () => {} } : componentNames),
     console: { error() {} },
     Set, Map, Date, Event, Error,
     sessionStorage: { getItem: () => null },
@@ -165,6 +165,7 @@ function taskPanel(status, cancelTask = async () => {}) {
     "@mui/material": componentNames,
     "../config": { default: { PRESENTATION_MODE: false } },
     "../services/taskActions": { cancelTask },
+    "../services/taskOperations": { useJobSubmissions: () => [], registerJobRefresh: () => () => {} },
     "../utils/taskFormat": { formatTaskStep: (step) => step },
     "../TaskEventsContext": {
       useTaskEvents: () => ({

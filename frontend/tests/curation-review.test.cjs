@@ -459,3 +459,27 @@ test('revoked enrollment and missing enroll permission require operator recovery
     assert.ok(text(tree).includes('Passkey setup requires the local operator')); assert.equal(h.calls.length, 0); h.rt.unmount();
   }
 });
+
+test('phase3 confirmation dismisses synchronously while the exact curation review is pending', async () => {
+  const pending = deferred();
+  const h = harness(dataset(), { client: { review: () => pending.promise } });
+  await h.start(); button(h.ready(), 'Accept image and caption').props.onClick(); h.confirm();
+  assert.equal(dialog(h).props.open, false);
+  assert.ok(text(h.render()).includes('Review decisions remain pending'));
+  pending.resolve(dataset()); await flush(); h.rt.unmount();
+});
+
+test('phase3 unknown curation outcome revalidates without replay and preserves the caption draft', async () => {
+  let writes = 0, reads = 0;
+  const h = harness(dataset(), { client: {
+    caption: async () => { writes++; throw new TypeError('lost response'); },
+    get: async () => { reads++; return dataset({revision: reads}); },
+  } });
+  let tree = await h.start();
+  nodes(tree, n => n.props?.label === 'Caption proposal')[0].props.onChange({ target: { value: 'Keep this draft.' } });
+  button(h.render(), 'Save caption proposal').props.onClick(); await flush(); tree = h.render();
+  assert.equal(writes, 1); assert.equal(reads, 2);
+  assert.equal(nodes(tree, n => n.props?.label === 'Caption proposal')[0].props.value, 'Keep this draft.');
+  assert.equal(button(tree, 'Save caption proposal').props.disabled, false);
+  h.rt.unmount();
+});
