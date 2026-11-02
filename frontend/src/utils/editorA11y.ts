@@ -109,7 +109,7 @@ export function observeEditorAccessibility(root: HTMLElement): () => void {
   // Opening/closing the zoom menu only changes styles; re-check after input settles.
   const timers = new Set<number>();
   const view = doc.defaultView ?? window;
-  const recheck = () => { for (const delay of [50, 300]) { const id = view.setTimeout(() => { timers.delete(id); run(); }, delay); timers.add(id); } };
+  const recheck = () => { for (const delay of [50, 300, 700]) { const id = view.setTimeout(() => { timers.delete(id); run(); }, delay); timers.add(id); } };
   doc.addEventListener("click", recheck, true);
   doc.addEventListener("keyup", recheck, true);
   return () => {
