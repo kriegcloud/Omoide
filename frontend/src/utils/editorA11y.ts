@@ -30,6 +30,12 @@ function optionName(element: Element, root: ParentNode): string {
   return tab ? labelFor(tab) : "Editor";
 }
 
+function isVisible(element: HTMLElement): boolean {
+  const rect = element.getBoundingClientRect();
+  const view = element.ownerDocument.defaultView;
+  return rect.width > 0 && rect.height > 0 && view?.getComputedStyle(element).opacity !== "0";
+}
+
 function makeControl(element: HTMLElement, role: string, label?: string) {
   if (element.getAttribute("role") !== role) element.setAttribute("role", role);
   const disabled = element.getAttribute("aria-disabled") === "true";
@@ -49,15 +55,22 @@ export function enhanceEditorControls(root: ParentNode, doc: ParentNode = root) 
     if (!element.getAttribute("aria-label")) element.setAttribute("aria-label", "Toggle tool tabs");
   });
   const menu = doc.querySelector<HTMLElement>(ZOOM_MENU);
+  // The closed menu stays mounted at opacity 0 / size 0; only a visible menu is open.
+  const open = !!menu && isVisible(menu);
   root.querySelectorAll<HTMLElement>(ZOOM_TRIGGER).forEach(element => {
     makeControl(element, "button", element.getAttribute("title") || "Zoom");
     element.setAttribute("aria-haspopup", "menu");
-    element.setAttribute("aria-expanded", menu ? "true" : "false");
+    if (element.getAttribute("aria-expanded") !== String(open)) element.setAttribute("aria-expanded", String(open));
   });
   if (menu) {
     if (menu.getAttribute("role") !== "menu") menu.setAttribute("role", "menu");
     if (!menu.getAttribute("aria-label")) menu.setAttribute("aria-label", "Zoom");
-    menu.querySelectorAll<HTMLElement>(MENU_ITEM).forEach(item => makeControl(item, "menuitem", item.textContent?.trim() || undefined));
+    if (open) menu.removeAttribute("aria-hidden"); else menu.setAttribute("aria-hidden", "true");
+    menu.querySelectorAll<HTMLElement>(MENU_ITEM).forEach(item => {
+      makeControl(item, "menuitem", item.textContent?.trim() || undefined);
+      // Hidden items must not be Tab stops.
+      if (!open && item.tabIndex !== -1) item.tabIndex = -1;
+    });
   }
   root.querySelectorAll<HTMLInputElement>('input[type="range"], input[type="text"], input[type="number"]').forEach(input => {
     if (input.labels?.length || input.getAttribute("aria-labelledby") || input.classList.contains("FIE_save-file-name-input")) return;
@@ -93,5 +106,17 @@ export function observeEditorAccessibility(root: HTMLElement): () => void {
     target.click();
   };
   doc.addEventListener("keydown", onKeyDown, true);
-  return () => { observer.disconnect(); portals.disconnect(); doc.removeEventListener("keydown", onKeyDown, true); };
+  // Opening/closing the zoom menu only changes styles; re-check after input settles.
+  const timers = new Set<number>();
+  const view = doc.defaultView ?? window;
+  const recheck = () => { for (const delay of [50, 300]) { const id = view.setTimeout(() => { timers.delete(id); run(); }, delay); timers.add(id); } };
+  doc.addEventListener("click", recheck, true);
+  doc.addEventListener("keyup", recheck, true);
+  return () => {
+    observer.disconnect(); portals.disconnect();
+    doc.removeEventListener("keydown", onKeyDown, true);
+    doc.removeEventListener("click", recheck, true);
+    doc.removeEventListener("keyup", recheck, true);
+    timers.forEach(id => view.clearTimeout(id));
+  };
 }
