@@ -1,3 +1,4 @@
+import { DefinitiveMutationError } from "../stores/optimisticOperations";
 import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
 import { Tag } from "../types";
@@ -29,7 +30,10 @@ export const deleteTagsBulk = async (
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ tag_ids: tagIds }),
   });
-  if (!response.ok) throw new Error("Failed to delete selected tags");
+  if (!response.ok) {
+    if ([403, 422].includes(response.status)) throw new DefinitiveMutationError("Failed to delete selected tags");
+    throw new Error("Failed to delete selected tags");
+  }
   const result = await response.json();
   mutationBus.emit({ type: "tag:changed", ids: result.deleted_ids });
   mutationBus.emit({ type: "list:invalidate", prefix: "" });

@@ -1,5 +1,5 @@
+import { DefinitiveMutationError } from "../stores/optimisticOperations";
 import { mutationBus } from "../stores/mutationBus";
-import { getAlbumMedia } from "./features";
 import { API } from "../config";
 
 export interface BulkDeleteResult {
@@ -15,20 +15,11 @@ export const deleteAlbumsBulk = async (
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ album_ids: albumIds }),
   });
-  if (!response.ok) throw new Error("Failed to delete selected albums");
+  if (!response.ok) {
+    if ([403, 422].includes(response.status)) throw new DefinitiveMutationError("Failed to delete selected albums");
+    throw new Error("Failed to delete selected albums");
+  }
   const result = await response.json();
   mutationBus.emit({ type: "album:changed", ids: result.deleted_ids });
   return result;
 };
-
-/** Album mutations return counts only; snapshot membership before offering Undo. */
-export async function getAlbumMemberIds(albumId: number): Promise<Set<number>> {
-  const ids = new Set<number>();
-  let cursor: string | null = null;
-  do {
-    const page = await getAlbumMedia(albumId, cursor);
-    page.items.forEach((media) => ids.add(media.id));
-    cursor = page.next_cursor;
-  } while (cursor !== null);
-  return ids;
-}

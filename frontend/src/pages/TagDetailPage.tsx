@@ -31,7 +31,8 @@ type MediaFilter = "all" | "image" | "video";
 
 export default function TagDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const [tag, setTag] = useState<Tag | null>(null);
+  const [loadedTag, setTag] = useState<Tag | null>(null);
+  const tag = loadedTag?.id === Number(id) ? loadedTag : null;
   const [tagError, setTagError] = useState<string | null>(null);
   const [retryTick, setRetryTick] = useState(0);
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
@@ -44,7 +45,7 @@ export default function TagDetailPage() {
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
-    setTag(null);
+    setTag(current => current?.id === Number(id) ? current : null);
     setTagError(null);
     getTag(id)
       .then((tagData) => {
@@ -118,7 +119,7 @@ export default function TagDetailPage() {
     [filteredMediaItems]
   );
 
-  if (tagError) {
+  if (tagError && !tag) {
     return (
       <Box
         p={4}
@@ -169,6 +170,8 @@ export default function TagDetailPage() {
             <ToggleButton value="video">Videos</ToggleButton>
           </ToggleButtonGroup>
         </Box>}>
+
+      {tagError && <Alert severity="error" sx={{ mb: 2 }}>{tagError}</Alert>}
 
       {/* Media Section */}
       <Box mb={6}>

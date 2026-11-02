@@ -1,3 +1,4 @@
+import { startOperation } from "../stores/optimisticOperations";
 import GalleryPage from "../components/GalleryPage";
 import Gallery from "../components/Gallery";
 import { useListInvalidation } from "../stores/useListStore";
@@ -27,7 +28,7 @@ export default function TagsPage() {
   useListInvalidation(listKey);
   const removeItem = useListStore(state => state.removeItem);
   const removeItems = useListStore(state => state.removeItems);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteTargets, setDeleteTargets] = useState<number[] | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -63,18 +64,29 @@ export default function TagsPage() {
     pruneTo(items.map((tag) => tag.id));
   }, [items, pruneTo]);
 
-  const handleDeleteSelected = async () => {
+  const handleDeleteSelected = () => {
+    if (!deleteTargets?.length) return;
+    const ids = [...deleteTargets];
+    setDeleteTargets(null);
     setIsDeleting(true);
-    try {
-      const result = await deleteTagsBulk(Array.from(selection.selectedIds));
-      removeItems(listKey, result.deleted_ids);
-      setDeleteOpen(false);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Failed to delete tags");
-    } finally {
-      setIsDeleting(false);
-    }
+    const operation = startOperation({
+      label: "Delete selected tags",
+      input: { ids }, resources: ids.map(id => `tag:${id}` as const),
+      patches: ids.map(id => ({ kind: "remove" as const, key: `tag:${id}` as const, query: "tags-all" })),
+      request: async (input, operationId) => {
+        const result = await deleteTagsBulk(input.ids);
+        removeItems(listKey, result.deleted_ids);
+        return { result, operationId };
+      },
+      receipt: ({ result, operationId }) => ({
+        operation_id: operationId, state: result.skipped_ids.length ? "partial" : "succeeded",
+        applied: result.deleted_ids.map(id => `tag:${id}`),
+        skipped: result.skipped_ids.map(id => ({ key: `tag:${id}`, reason: "not_found" })), failed: [], unknown: [],
+      }),
+    });
+    void operation.done.then(() => setIsDeleting(false));
   };
+
   return (
     <GalleryPage title="Tags" count={items.length}>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
@@ -94,7 +106,7 @@ export default function TagsPage() {
               color="error"
               size="small"
               disabled={selection.selectedIds.size === 0 || isDeleting}
-              onClick={() => setDeleteOpen(true)}
+              onClick={() => setDeleteTargets(Array.from(selection.selectedIds))}
             >
               Delete Selected
             </Button>
@@ -136,13 +148,13 @@ export default function TagsPage() {
         </Box>
       )}
       <ConfirmDialog
-        open={deleteOpen}
+        open={deleteTargets !== null}
         title="Delete Selected Tags"
-        message={`Delete ${selection.selectedIds.size} selected tag${selection.selectedIds.size === 1 ? "" : "s"}? This removes the tags from all media and people.`}
+        message={`Delete ${deleteTargets?.length ?? 0} selected tag${deleteTargets?.length === 1 ? "" : "s"}? This removes the tags from all media and people.`}
         confirmLabel="Delete"
         loading={isDeleting}
         onConfirm={handleDeleteSelected}
-        onClose={() => setDeleteOpen(false)}
+        onClose={() => setDeleteTargets(null)}
       />
     </GalleryPage>
   );

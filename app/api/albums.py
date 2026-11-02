@@ -50,6 +50,13 @@ class AlbumRead(BaseModel):
     cover_thumbnail: str | None
 
 
+class AlbumMembershipResult(AlbumRead):
+    """Backwards-compatible album fields plus the exact committed inverse."""
+    added_ids: list[int]
+    removed_ids: list[int]
+    skipped_ids: list[int]
+
+
 def _cover_thumbnail(session: Session, album: Album) -> str | None:
     if album.cover_media_id:
         cover = session.exec(
@@ -192,7 +199,7 @@ def delete_album(album_id: int, session: Session = Depends(get_session)):
     return {"status": "deleted"}
 
 
-@router.post("/{album_id}/media", response_model=AlbumRead)
+@router.post("/{album_id}/media", response_model=AlbumMembershipResult)
 def add_media_to_album(
     album_id: int,
     body: AlbumMediaRequest,
@@ -214,13 +221,18 @@ def add_media_to_album(
             select(Media.id).where(Media.id.in_(body.media_ids))
         ).all()
     )
-    for media_id in valid_ids - existing:
+    requested = list(dict.fromkeys(body.media_ids))
+    added_set = valid_ids - existing
+    added = [media_id for media_id in requested if media_id in added_set]
+    for media_id in added:
         session.add(AlbumMediaLink(album_id=album_id, media_id=media_id))
     safe_commit(session)
-    return _album_read(session, album)
+    return AlbumMembershipResult(**_album_read(session, album).model_dump(),
+                                 added_ids=added, removed_ids=[],
+                                 skipped_ids=[i for i in requested if i not in added_set])
 
 
-@router.delete("/{album_id}/media", response_model=AlbumRead)
+@router.delete("/{album_id}/media", response_model=AlbumMembershipResult)
 def remove_media_from_album(
     album_id: int,
     body: AlbumMediaRequest,
@@ -229,18 +241,23 @@ def remove_media_from_album(
     album = session.get(Album, album_id)
     if not album:
         raise HTTPException(404, "Album not found")
-    for link in session.exec(
+    links = session.exec(
         select(AlbumMediaLink).where(
             AlbumMediaLink.album_id == album_id,
             AlbumMediaLink.media_id.in_(body.media_ids),
         )
-    ).all():
+    ).all()
+    removed = {link.media_id for link in links}
+    for link in links:
         session.delete(link)
     if album.cover_media_id in body.media_ids:
         album.cover_media_id = None
         session.add(album)
     safe_commit(session)
-    return _album_read(session, album)
+    requested = list(dict.fromkeys(body.media_ids))
+    return AlbumMembershipResult(**_album_read(session, album).model_dump(),
+                                 added_ids=[], removed_ids=[i for i in requested if i in removed],
+                                 skipped_ids=[i for i in requested if i not in removed])
 
 
 @router.get("/{album_id}/media", response_model=CursorPage)

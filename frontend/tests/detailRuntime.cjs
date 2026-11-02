@@ -36,7 +36,7 @@ function load(relative, runtime, modules={}) {
     '../stores/mutationBus':{mutationBus:{emit:noop,subscribe:()=>noop},runOptimistic:async ({apply,request,rollback})=>{const snapshot=apply();try{return await request();}catch(err){rollback(snapshot);throw err;}}},
     '../services/config':{getConfig:async()=>({general:{}})},
     '../services/repairs':{listRepairs:async()=>({items:[]})},
-    '../stores/optimisticOperations':{optimisticOperations:{subscribe:()=>noop,getSnapshot:()=>[]},projectEntity:(_key,base)=>base,acknowledgeQuery:noop,operationVersion:()=>0},
+    '../stores/optimisticOperations':{startOperation:c=>({id:'harness',done:Promise.resolve().then(()=>c.request(c.input,'harness')).then(()=>({state:'committed'}),error=>({state:'unknown',error:error.message}))}),optimisticOperations:{subscribe:()=>noop,getSnapshot:()=>[]},projectEntity:(_key,base)=>base,acknowledgeQuery:noop,operationVersion:()=>0},
     '../stores/peopleCache':{patchPersonInGrids:noop,clearPeopleGrids:noop,removePeopleFromGrids:noop},
     'react-intersection-observer':{useInView:()=>({ref:noop,inView:false})},
     ...modules,
