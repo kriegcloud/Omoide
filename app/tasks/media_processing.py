@@ -60,10 +60,11 @@ def _media_processing_conditions() -> list:
     active_processors = {
         proc.name for proc in processors if getattr(proc, "active", False)
     }
-    if active_processors & {"faces", "embedding_extractor", "auto_tagger"}:
+    if active_processors & {"faces", "embedding_extractor", "auto_tagger", "person_detection"}:
         conditions.append(Media.extracted_scenes.is_(False))
     flag_columns = {
         "faces": Media.faces_extracted,
+        "person_detection": Media.persons_detected,
         "auto_tagger": Media.ran_auto_tagging,
         "embedding_extractor": Media.embeddings_created,
     }
@@ -717,6 +718,8 @@ def edit_processor_names() -> list[str]:
         names.append("auto_tagger")
     if settings.processors.quality_processor_active:
         names.append("quality")
+    if settings.processors.person_detection_processor_active:
+        names.append("person_detection")
     if settings.processors.blur_processor_active:
         names.append("blur")
     if settings.processors.exif_processor_active:

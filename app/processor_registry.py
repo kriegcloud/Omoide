@@ -29,6 +29,7 @@ def load_processors() -> list[MediaProcessor]:
     # Lazy import to avoid importing heavy deps (onnxruntime) on startup
     from app.processors.blur import BlurProcessor
     from app.processors.quality import QualityProcessor
+    from app.processors.person_detection import PersonDetectionProcessor
     from app.processors.exif import ExifProcessor
     from app.processors.embedding_extractor import EmbeddingExtractor
     from app.processors.faces import FaceProcessor
@@ -37,6 +38,7 @@ def load_processors() -> list[MediaProcessor]:
     known_processor_classes: list[type[MediaProcessor]] = [
         BlurProcessor,
         QualityProcessor,
+        PersonDetectionProcessor,
         ExifProcessor,
         EmbeddingExtractor,
         FaceProcessor,

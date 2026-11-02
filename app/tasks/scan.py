@@ -177,6 +177,8 @@ def _walk_media_candidates(
             start_dir = resolve_start_dir(Path(media_dir), start_parts)
             if start_dir is None:
                 continue
+            if '.beep-originals' in start_dir.parts:
+                continue
             for root, dirs, files in os.walk(
                 start_dir,
                 topdown=True,
@@ -190,6 +192,8 @@ def _walk_media_candidates(
                     root_parts = ()
                 safe_dirs: list[str] = []
                 for dirname in dirs:
+                    if dirname == '.beep-originals':
+                        continue
                     if scope.is_excluded((*root_parts, dirname)):
                         continue
                     try:

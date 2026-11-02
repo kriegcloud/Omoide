@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageOps
 
-PROTOCOL_VERSION = 'omoide-vision/v1'
+PROTOCOL_VERSION = 'omoide-vision/v2'
 MAX_REQUEST_BYTES = 64 * 1024 * 1024
 MAX_ITEMS = 64
 HEALTH_TTL = 5.0
@@ -188,6 +188,79 @@ class VisionClient:
                 raise VisionError('nonfinite quality scores')
             scores.extend(values)
         return scores
+
+
+    def _detections(self, action, images):
+        results = []
+        for _offset, chunk in _byte_batches([encode_image(i) for i in images]):
+            values = self.request(action, images=chunk).get('results')
+            if not isinstance(values, list) or len(values) != len(chunk):
+                raise VisionError('invalid detection result count')
+            results.extend(values)
+        return results
+
+    def detect_persons(self, images):
+        results = self._detections('detect_persons', images)
+        try:
+            for result in results:
+                score, boxes = result['score'], result['boxes']
+                if not isinstance(boxes, list) or not 0 <= float(score) <= 1:
+                    raise ValueError()
+                for box in boxes:
+                    if (len(box) != 5 or not all(math.isfinite(float(v)) for v in box)
+                            or min(box[:4]) < 0 or not .35 <= box[4] <= 1):
+                        raise ValueError()
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise VisionError('invalid person detections') from exc
+        return results
+
+    def detect_text(self, images):
+        results = self._detections('detect_text', images)
+        try:
+            for result in results:
+                if not isinstance(result['regions'], list):
+                    raise ValueError()
+                for region in result['regions']:
+                    if (not isinstance(region['text'], str) or len(region['quad']) != 8
+                            or not all(math.isfinite(float(v)) for v in region['quad'])):
+                        raise ValueError()
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise VisionError('invalid text detections') from exc
+        return results
+
+    def inpaint(self, image, mask):
+        """Return hard-composited RGB pixels, validating preservation independently."""
+        encoded = encode_image(image)
+        source = Image.frombytes('RGB', (encoded['width'], encoded['height']),
+                                 base64.b64decode(encoded['data']))
+        if isinstance(mask, bytes):
+            try:
+                with Image.open(io.BytesIO(mask)) as loaded:
+                    if loaded.format != 'PNG':
+                        raise ValueError('mask must be PNG')
+                    mask = loaded.convert('L')
+            except (OSError, ValueError) as exc:
+                raise VisionError('invalid inpaint mask') from exc
+        if not isinstance(mask, Image.Image) or mask.size != source.size:
+            raise VisionError('inpaint mask dimensions must match image')
+        mask = mask.convert('L')
+        buffer = io.BytesIO()
+        mask.save(buffer, format='PNG')
+        response = self.request('inpaint', image=encoded,
+                                mask=base64.b64encode(buffer.getvalue()).decode('ascii'))
+        try:
+            result = response['image']
+            raw = base64.b64decode(result['data'], validate=True)
+            if (result['format'] != 'rgb24' or result['width'] != source.width
+                    or result['height'] != source.height or len(raw) != source.width * source.height * 3):
+                raise ValueError()
+            output = Image.frombytes('RGB', source.size, raw)
+            outside = np.asarray(mask) == 0
+            if not np.array_equal(np.asarray(output)[outside], np.asarray(source)[outside]):
+                raise ValueError()
+        except (KeyError, TypeError, ValueError) as exc:
+            raise VisionError('invalid inpaint pixels or outside-mask mutation') from exc
+        return output
 
 
 _client = None

@@ -142,17 +142,17 @@ class ReadQueryBudgets(DatabaseCase):
             self.assertEqual(search._text_embedding_pending, {})
 
     def test_review_counts_remain_fresh_on_continuation(self):
-        from app.api.nopersons import get_no_persons_media
+        from app.api.nofaces import get_no_faces_media
         for _ in range(3):
             self.media(faces_extracted=True)
-        first, _ = self.measure(lambda: get_no_persons_media(
+        first, _ = self.measure(lambda: get_no_faces_media(
             self.session, cursor=None, limit=1, media_type=None, scope='processed'))
         self.assertEqual(first.total, 3)
         hidden = self.session.get(Media, first.items[0].id)
         hidden.missing_since = datetime.now()
         self.session.add(hidden)
         self.session.commit()
-        second, _ = self.measure(lambda: get_no_persons_media(
+        second, _ = self.measure(lambda: get_no_faces_media(
             self.session, cursor=first.next_cursor, limit=1, media_type=None, scope='processed'))
         self.assertEqual(second.total, 2)
 
@@ -160,7 +160,7 @@ class ReadQueryBudgets(DatabaseCase):
         from app.api.blur import get_blurry_media
         from app.api.lowresolution import get_low_res_media
         from app.api.noexifdate import get_no_exif_date_media
-        from app.api.nopersons import get_no_persons_media
+        from app.api.nofaces import get_no_faces_media
         from app.api.shortvideos import get_short_videos
         from app.api.untagged import get_untagged_media
         self.media(duration=1, width=10, height=10, laplacian_score=1, faces_extracted=True)
@@ -168,7 +168,7 @@ class ReadQueryBudgets(DatabaseCase):
             (get_blurry_media, dict(threshold=100, media_type=None)),
             (get_low_res_media, dict(max_pixels=1000, media_type=None)),
             (get_no_exif_date_media, dict(media_type=None)),
-            (get_no_persons_media, dict(media_type=None, scope='processed')),
+            (get_no_faces_media, dict(media_type=None, scope='processed')),
             (get_short_videos, dict(max_duration=10)),
             (get_untagged_media, dict(media_type=None)),
         ):

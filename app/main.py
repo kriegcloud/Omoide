@@ -122,6 +122,7 @@ from app.api import (
     missing,
     noexifdate,
     nopersons,
+    nofaces,
     person,
     places,
     repairs,
@@ -748,6 +749,9 @@ app.include_router(duplicates, prefix="/api/duplicates", tags=["duplicates"])
 app.include_router(config, prefix="/api/config", tags=["config"])
 app.include_router(missing, prefix="/api/missing", tags=["missing"])
 app.include_router(nopersons, prefix="/api/nopersons", tags=["nopersons"])
+from app.api.watermarks import router as watermarks_router
+app.include_router(watermarks_router, prefix="/api/watermarks", tags=["watermarks"])
+app.include_router(nofaces, prefix="/api/nofaces", tags=["nofaces"])
 app.include_router(untagged, prefix="/api/untagged", tags=["untagged"])
 app.include_router(
     shortvideos, prefix="/api/shortvideos", tags=["shortvideos"]

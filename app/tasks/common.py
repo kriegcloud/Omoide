@@ -133,6 +133,7 @@ def create_and_run_task(
         "batch_edit_media",
         "dataset_caption_generation",
         "dataset_frame_mining",
+        "detect_watermarks",
     ],
     callable_task: Callable[[str], None],
     *,

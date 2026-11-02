@@ -87,6 +87,7 @@ def _resume_curation(params: dict, kind: str) -> Callable[[str], None]:
 
 
 RESUMABLE_TASK_TYPES: dict[str, Callable[[dict], Callable[[str], None]]] = {
+    "detect_watermarks": lambda params: _resume_watermarks(params),
     "scan": lambda params: run_scan_and_chain if params.get("chain") else run_scan,
     "process_media": lambda params: run_media_processing_and_chain if params.get("chain") else run_media_processing,
     "cluster_persons": lambda params: run_person_clustering,
@@ -103,6 +104,14 @@ RESUMABLE_TASK_TYPES: dict[str, Callable[[dict], Callable[[str], None]]] = {
     "curation_export": lambda params: _resume_curation(params, "export"),
     "curation_materialize": lambda params: _resume_curation(params, "materialize"),
 }
+
+
+def _resume_watermarks(params: dict) -> Callable[[str], None]:
+    from app.tasks.watermarks import run_detect_watermarks
+    scope, folder = params.get('scope', 'pending'), params.get('folder')
+    if scope not in ('pending', 'all') or (folder is not None and not isinstance(folder, str)):
+        raise ValueError('Invalid watermark scan scope')
+    return lambda task_id: run_detect_watermarks(task_id, scope, folder)
 
 
 def build_resume_callable(task: ProcessingTask) -> Callable[[str], None]:

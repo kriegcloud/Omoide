@@ -276,6 +276,10 @@ class Media(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.now, index=True)
 
     faces_extracted: bool = Field(default=False, index=True)
+    person_score: float | None = Field(default=None)
+    person_siglip_margin: float | None = Field(default=None)
+    persons_detected: bool = Field(default=False, index=True)
+    has_persons: bool | None = Field(default=None, index=True)
     embeddings_created: bool = Field(default=False, index=True)
     ran_auto_tagging: bool = Field(default=False)
     extracted_scenes: bool = Field(default=False)
@@ -327,6 +331,41 @@ def _sync_media_query_columns(mapper, connection, media: Media) -> None:
         if media.width is not None and media.height is not None
         else None
     )
+
+
+class WatermarkCandidate(SQLModel, table=True):
+    """Reviewable OCR/mask observation and original-file recovery receipt."""
+
+    __tablename__ = "watermark_candidate"
+    __table_args__ = (sa.CheckConstraint("status IN ('proposed','approved','rejected','applied','restored','failed')", name="ck_watermark_candidate_status"),)
+    id: int | None = Field(default=None, primary_key=True)
+    media_id: int = Field(foreign_key="media.id", index=True)
+    status: str = Field(default="proposed", index=True)
+    regions: list = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    mask_path: str | None = None
+    preview_path: str | None = None
+    detector_version: str = "florence-community/Florence-2-large"
+    model_version: str = "big-lama"
+    score: float | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    decided_at: datetime | None = None
+    applied_at: datetime | None = None
+    backup_path: str | None = None
+    original_sha256: str | None = None
+    cleaned_sha256: str | None = None
+    error: str | None = None
+
+
+class WatermarkHandle(SQLModel, table=True):
+    """Learned OCR handle usable away from image edges."""
+
+    __tablename__ = "watermark_handle"
+    id: int | None = Field(default=None, primary_key=True)
+    text_normalized: str = Field(unique=True, index=True)
+    display_text: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    source_candidate_id: int | None = Field(default=None, foreign_key="watermark_candidate.id", ondelete="SET NULL")
+    match_count: int = 0
 
 
 class AnnotationAttempt(SQLModel, table=True):

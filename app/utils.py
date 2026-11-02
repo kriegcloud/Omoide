@@ -66,6 +66,7 @@ from app.models import (
     Scene,
     Tag,
     TimelineEvent,
+    WatermarkCandidate,
 )
 from app.services.face_provenance import stamp_face_assignment
 from app.subprocess_helpers import run_silent
@@ -1633,6 +1634,14 @@ def _delete_record_locked(media_id, session: Session, *, delete_original: bool =
         delete(PersonMediaLink).where(PersonMediaLink.media_id == media_id)
     )
     session.exec(delete(MediaTagLink).where(MediaTagLink.media_id == media_id))
+    watermark_rows = session.exec(select(WatermarkCandidate).where(WatermarkCandidate.media_id == media_id)).all()
+    for candidate in watermark_rows:
+        for artifact in (candidate.mask_path, candidate.preview_path):
+            if artifact:
+                path = (settings.general.thumb_dir / artifact).resolve()
+                if path.is_relative_to(settings.general.thumb_dir.resolve()) and path.is_file():
+                    to_unlink.append(path)
+    session.exec(delete(WatermarkCandidate).where(WatermarkCandidate.media_id == media_id))
     session.exec(delete(ExifData).where(ExifData.media_id == media_id))
     session.exec(delete(Scene).where(Scene.media_id == media.id))
     session.exec(

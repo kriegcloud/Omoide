@@ -8,6 +8,7 @@ from .duplicates import router as duplicates
 from .config import router as config
 from .missing import router as missing
 from .nopersons import router as nopersons
+from .nofaces import router as nofaces
 from .untagged import router as untagged
 from .shortvideos import router as shortvideos
 from .lowresolution import router as lowresolution
@@ -18,4 +19,4 @@ from .albums import router as albums
 from .events import router as events
 from .places import router as places
 
-__all__ = ["media", "person", "tasks", "face", "tags", "search", "duplicates", "config", "missing", "nopersons", "untagged", "shortvideos", "lowresolution", "noexifdate", "memories", "stats", "albums", "events", "places"]
+__all__ = ["media", "person", "tasks", "face", "tags", "search", "duplicates", "config", "missing", "nopersons", "nofaces", "untagged", "shortvideos", "lowresolution", "noexifdate", "memories", "stats", "albums", "events", "places"]

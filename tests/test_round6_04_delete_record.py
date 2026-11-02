@@ -7,7 +7,7 @@ from app.models import (
     Album, AlbumMediaLink, DatasetItem, DuplicateGroup, DuplicateIgnore,
     DuplicateMedia, Event, EventMediaLink, ExifData, Face, Media,
     MediaCurationStats, MediaTagLink, PersonMediaLink, PersonRelationship,
-    Scene, Tag, TrainingDataset,
+    Scene, Tag, TrainingDataset, WatermarkCandidate, WatermarkHandle,
 )
 from app.utils import delete_record
 
@@ -36,8 +36,12 @@ class MediaForeignKeyDeletionTests(DatabaseCase):
             PersonMediaLink(media_id=media.id, person_id=first.id),
             PersonRelationship(person_a_id=first.id, person_b_id=second.id, last_media_id=media.id),
             Scene(media_id=media.id, start_time=0, end_time=1),
+            WatermarkCandidate(media_id=media.id),
         ]
         self.session.add_all(refs)
+        self.session.commit()
+        handle = WatermarkHandle(text_normalized="learnedhandle", display_text="@learned.handle", source_candidate_id=refs[13].id)
+        self.session.add(handle)
         self.session.commit()
         expected = {(row.__tablename__, key) for row, key in [
             (refs[0], "media_id"), (album, "cover_media_id"),
@@ -46,6 +50,7 @@ class MediaForeignKeyDeletionTests(DatabaseCase):
             (refs[5], "media_id_a"), (refs[6], "media_id_b"),
             *[(row, "media_id") for row in refs[7:11]],
             (refs[11], "last_media_id"), (refs[12], "media_id"),
+            (refs[13], "media_id"),
         ]}
         discovered = set()
         for (table,) in self.session.exec(text("SELECT name FROM sqlite_master WHERE type='table'")):
@@ -59,5 +64,7 @@ class MediaForeignKeyDeletionTests(DatabaseCase):
         self.assertIsNone(self.session.get(Media, media_id))
         self.assertEqual(self.session.exec(select(DatasetItem)).all(), [])
         self.assertEqual(self.session.exec(select(MediaCurationStats)).all(), [])
+        self.assertEqual(self.session.exec(select(WatermarkCandidate)).all(), [])
+        self.assertIsNone(self.session.get(WatermarkHandle, handle.id).source_candidate_id)
         self.assertIsNone(self.session.get(TrainingDataset, dataset.id).cover_media_id)
         self.assertEqual(self.session.exec(text("PRAGMA foreign_key_check")).all(), [])

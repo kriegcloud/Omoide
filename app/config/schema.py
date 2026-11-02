@@ -800,6 +800,7 @@ class ContentProcessorSettings(BaseModel):
     # compute Laplacian variance for blur detection during media processing
     blur_processor_active: bool = True
     quality_processor_active: bool = True
+    person_detection_processor_active: bool = True
     # number of media rows processed per batch when running the heavy pipeline
     media_batch_size: int = 125
     # use GPU acceleration when available (CUDA/MPS for CLIP, CUDA/DML for InsightFace)

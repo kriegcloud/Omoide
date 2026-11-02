@@ -15,6 +15,10 @@ class NoPersonsMediaItem(BaseModel):
     duration: float | None
     inserted_at: datetime
     faces_extracted: bool
+    persons_detected: bool = False
+    has_persons: bool | None = None
+    person_score: float | None = None
+    person_siglip_margin: float | None = None
 
     class Config:
         from_attributes = True

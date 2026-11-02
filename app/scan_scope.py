@@ -33,7 +33,7 @@ FolderStatus = Literal["scanned", "partial", "outside", "excluded"]
 
 # Folders that are never media: app state, OS trash and volume metadata.
 INTERNAL_SKIPPED_DIR_NAMES = frozenset(
-    {".omoide", ".Trash", "$RECYCLE.BIN", "System Volume Information"}
+    {".omoide", ".beep-originals", ".Trash", "$RECYCLE.BIN", "System Volume Information"}
 )
 
 

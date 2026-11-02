@@ -4,7 +4,7 @@ from round6_support import DatabaseCase
 from app.api.blur import get_blurry_media
 from app.api.lowresolution import get_low_res_media
 from app.api.noexifdate import get_no_exif_date_media
-from app.api.nopersons import get_no_persons_media
+from app.api.nofaces import get_no_faces_media
 from app.api.shortvideos import get_short_videos
 from app.api.untagged import get_untagged_media
 
@@ -20,7 +20,7 @@ class ReviewVisibilityContracts(DatabaseCase):
             (get_blurry_media, dict(threshold=100, media_type=None)),
             (get_low_res_media, dict(max_pixels=1000, media_type=None)),
             (get_no_exif_date_media, dict(media_type=None)),
-            (get_no_persons_media, dict(media_type=None, scope="processed")),
+            (get_no_faces_media, dict(media_type=None, scope="processed")),
             (get_short_videos, dict(max_duration=10)),
             (get_untagged_media, dict(media_type=None)),
         ):

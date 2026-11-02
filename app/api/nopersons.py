@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from app.api._resolve import resolve_media_action
 from app.api._media_filters import exclude_missing, folder_filter
 from app.database import get_session
-from app.models import Face, Media
+from app.models import Media
 from app.pagination import count_rows, paginate
 from app.schemas.nopersons import NoPersonsMediaItem, NoPersonsPage, NoPersonsResolveRequest
 
@@ -21,15 +21,10 @@ class NoPersonsPageResponse(NoPersonsPage):
 
 
 def _base_filter(media_type: str | None, scope: str):
-    has_any_face = select(Face.media_id)
-
-    if scope == "processed":
-        base_filter = and_(
-            Media.faces_extracted == True,  # noqa: E712
-            Media.id.not_in(has_any_face),
-        )
+    if scope == "pending":
+        base_filter = Media.persons_detected.is_(False)
     else:
-        base_filter = and_(Media.id.not_in(has_any_face))
+        base_filter = and_(Media.persons_detected.is_(True), Media.has_persons.is_(False))
 
     if media_type == "image":
         base_filter = and_(base_filter, Media.duration.is_(None))
@@ -44,11 +39,11 @@ def get_no_persons_media(
     cursor: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     media_type: str | None = Query(None, description="'image', 'video', or omit for all"),
-    scope: str = Query("processed", description="'processed' (faces_extracted=true only) or 'all'"),
+    scope: str = Query("processed", description="'processed' (hybrid scan found no persons) or 'pending'"),
     folder: str | None = None,
     include_total: bool = True,
 ):
-    """Paginated list of media where face detection ran but found no faces."""
+    """Paginated list of confirmed person-free media, or pending hybrid scans."""
     base_filter = _base_filter(media_type, scope)
     base_filter = and_(base_filter, folder_filter(folder), Media.missing_since.is_(None))
 
@@ -73,6 +68,10 @@ def get_no_persons_media(
             duration=m.duration,
             inserted_at=m.inserted_at,
             faces_extracted=m.faces_extracted,
+            persons_detected=m.persons_detected,
+            has_persons=m.has_persons,
+            person_score=m.person_score,
+            person_siglip_margin=m.person_siglip_margin,
         )
         for m in rows
     ]

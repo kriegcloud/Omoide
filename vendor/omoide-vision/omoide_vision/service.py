@@ -15,10 +15,15 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageOps
 
-PROTOCOL_VERSION = 'omoide-vision/v1'
+PROTOCOL_VERSION = 'omoide-vision/v2'
 MODEL_NAME = 'ViT-SO400M-16-SigLIP2-384'
 MODEL_ID = 'immich-app/ViT-SO400M-16-SigLIP2-384__webli'
 EMBED_DIM = 1152
+PERSON_MODEL_ID = 'PekingU/rtdetr_v2_r101vd'
+TEXT_MODEL_ID = 'florence-community/Florence-2-large'
+LAMA_PATH = Path.home() / '.cache/omoide/vision/models/big-lama.pt'
+PERSON_THRESHOLD = 0.35
+FLORENCE_TASK = '<OCR_WITH_REGION>'
 MAX_REQUEST_BYTES = 64 * 1024 * 1024
 MAX_IMAGE_BYTES = 16 * 1024 * 1024
 MAX_ITEMS = 64
@@ -107,6 +112,65 @@ def decode_image(encoded):
         raise WorkerError('invalid-image', 'image cannot be decoded safely') from exc
 
 
+def encode_image(image):
+    image = image.convert('RGB')
+    return {'format': 'rgb24', 'width': image.width, 'height': image.height,
+            'data': base64.b64encode(image.tobytes()).decode('ascii')}
+
+
+def decode_mask(value, size):
+    """Masks use bounded PNG transport; nonzero pixels are hard support."""
+    if not isinstance(value, str) or len(value) > ((MAX_IMAGE_BYTES + 2) // 3) * 4:
+        raise WorkerError('input-limit-exceeded', 'mask must be bounded base64 PNG')
+    try:
+        raw = base64.b64decode(value, validate=True)
+        with Image.open(io.BytesIO(raw)) as image:
+            if image.format != 'PNG' or image.size != size:
+                raise WorkerError('invalid-image', 'mask must be PNG matching image dimensions')
+            return image.convert('L')
+    except (ValueError, OSError, Image.DecompressionBombError) as exc:
+        raise WorkerError('invalid-image', 'mask cannot be decoded safely') from exc
+
+
+def composite(source, generated, mask):
+    """Keep every source byte outside nonzero mask support."""
+    result = source.copy()
+    selected = mask > 0
+    result[selected] = generated[selected]
+    if not np.array_equal(result[~selected], source[~selected]):
+        raise WorkerError('inference-failed', 'outside-mask preservation failed')
+    return result
+
+
+def repair(image, mask, model, torch, device, context=192):
+    """LaMa crop/context, pad to eight, then hard composite at original size."""
+    box = mask.getbbox()
+    if box is None:
+        return image.copy()
+    x0, y0, x1, y1 = box
+    x0, y0 = max(0, x0 - context), max(0, y0 - context)
+    x1, y1 = min(image.width, x1 + context), min(image.height, y1 + context)
+    source = np.asarray(image.convert('RGB')).copy()
+    crop = source[y0:y1, x0:x1]
+    mcrop = np.asarray(mask)[y0:y1, x0:x1]
+    rgb = torch.from_numpy(crop.copy()).permute(2, 0, 1).unsqueeze(0).float() / 255
+    mt = torch.from_numpy((mcrop > 0).astype(np.float32)).unsqueeze(0).unsqueeze(0)
+    height, width = crop.shape[:2]
+    padding = (0, (-width) % 8, 0, (-height) % 8)
+    rgb = torch.nn.functional.pad(rgb, padding, mode='replicate').to(device)
+    mt = torch.nn.functional.pad(mt, padding).to(device)
+    with torch.inference_mode():
+        prediction = model(rgb, mt)
+    if (not isinstance(prediction, torch.Tensor) or prediction.ndim != 4
+            or prediction.shape[0] != 1 or prediction.shape[1] != 3
+            or prediction.shape[2] < height or prediction.shape[3] < width
+            or not torch.isfinite(prediction).all()):
+        raise WorkerError('inference-failed', 'unsupported or nonfinite LaMa output')
+    pixels = prediction[0, :, :height, :width].permute(1, 2, 0).clamp(0, 1).mul(255).round().byte().cpu().numpy()
+    source[y0:y1, x0:x1] = composite(crop, pixels, mcrop)
+    return Image.fromarray(source)
+
+
 def encode_vectors(features):
     vectors = np.asarray(features, dtype=np.float32)
     if vectors.ndim != 2 or not np.isfinite(vectors).all():
@@ -165,6 +229,9 @@ class VisionService:
         self.model.eval()
         self.tokenizer = open_clip.get_tokenizer(MODEL_NAME)
         self.quality_model = None
+        self.person_model = self.person_processor = None
+        self.text_model = self.text_processor = None
+        self.lama_model = None
 
     def embed_images(self, images):
         torch = self.torch
@@ -205,6 +272,75 @@ class VisionService:
                         scores[index] = value
         return scores
 
+    def detect_persons(self, images):
+        if self.person_model is None:
+            from transformers import AutoImageProcessor, AutoModelForObjectDetection
+            self.person_processor = AutoImageProcessor.from_pretrained(PERSON_MODEL_ID, local_files_only=True)
+            self.person_model = AutoModelForObjectDetection.from_pretrained(
+                PERSON_MODEL_ID, local_files_only=True, torch_dtype=self.torch.float16).to(self.device).eval()
+        results = []
+        with self.torch.inference_mode():
+            for start in range(0, len(images), self.batch_size):
+                chunk = images[start:start + self.batch_size]
+                inputs = self.person_processor(images=chunk, return_tensors='pt',
+                                               size={'height': 640, 'width': 640})
+                inputs = inputs.to(device=self.device, dtype=self.torch.float16)
+                outputs = self.person_model(**inputs)
+                # Retain the maximum person score even below the decision threshold.
+                detections = self.person_processor.post_process_object_detection(
+                    outputs, threshold=0.0, target_sizes=[(i.height, i.width) for i in chunk])
+                for image, detection in zip(chunk, detections):
+                    boxes, maximum = [], 0.0
+                    for score, label, box in zip(detection['scores'].tolist(), detection['labels'].tolist(),
+                                                  detection['boxes'].tolist()):
+                        if str(self.person_model.config.id2label.get(label, '')).lower() != 'person':
+                            continue
+                        if not math.isfinite(score) or not all(math.isfinite(v) for v in box):
+                            raise WorkerError('inference-failed', 'nonfinite person detection')
+                        maximum = max(maximum, float(score))
+                        if score >= PERSON_THRESHOLD:
+                            x0, y0, x1, y1 = box
+                            x0, x1 = max(0., min(image.width, x0)), max(0., min(image.width, x1))
+                            y0, y1 = max(0., min(image.height, y0)), max(0., min(image.height, y1))
+                            if x1 > x0 and y1 > y0:
+                                boxes.append([x0, y0, x1-x0, y1-y0, float(score)])
+                    results.append({'score': maximum, 'boxes': boxes})
+        return results
+
+    def detect_text(self, images):
+        if self.text_model is None:
+            from transformers import AutoProcessor, Florence2ForConditionalGeneration
+            self.text_processor = AutoProcessor.from_pretrained(TEXT_MODEL_ID, local_files_only=True)
+            self.text_model = Florence2ForConditionalGeneration.from_pretrained(
+                TEXT_MODEL_ID, local_files_only=True, torch_dtype=self.torch.float16).to(self.device).eval()
+        results = []
+        with self.torch.inference_mode():
+            for image in images:
+                # Explicitly fixed image dimensions avoid ROCm shape autotuning.
+                inputs = self.text_processor(text=FLORENCE_TASK, images=image.resize((768, 768)),
+                                             return_tensors='pt', size={'height': 768, 'width': 768})
+                inputs = inputs.to(device=self.device, dtype=self.torch.float16)
+                ids = self.text_model.generate(**inputs, num_beams=3, max_new_tokens=256)
+                text = self.text_processor.batch_decode(ids, skip_special_tokens=False)[0]
+                parsed = self.text_processor.post_process_generation(
+                    text, task=FLORENCE_TASK, image_size=image.size).get(FLORENCE_TASK, {})
+                regions = []
+                for label, quad in zip(parsed.get('labels', []), parsed.get('quad_boxes', [])):
+                    if len(quad) != 8 or not all(math.isfinite(float(v)) for v in quad):
+                        raise WorkerError('inference-failed', 'invalid OCR quad')
+                    regions.append({'text': str(label), 'quad': [float(v) for v in quad]})
+                results.append({'regions': regions})
+        return results
+
+    def inpaint(self, image, mask):
+        if mask.getbbox() is None:
+            return image.copy()
+        if self.lama_model is None:
+            if not LAMA_PATH.is_file():
+                raise WorkerError('model-unavailable', 'staged LaMa model is missing')
+            self.lama_model = self.torch.jit.load(str(LAMA_PATH), map_location=self.device).eval()
+        return repair(image, mask, self.lama_model, self.torch, self.device)
+
     def handle(self, request):
         if request.get('protocol') != PROTOCOL_VERSION:
             raise WorkerError('protocol-error', 'unsupported protocol version')
@@ -212,14 +348,22 @@ class VisionService:
         result = {'ok': True, 'protocol': PROTOCOL_VERSION, 'model_id': MODEL_ID}
         if action == 'health':
             return {**result, 'models': [MODEL_ID] + (['topiq_nr'] if self.quality_model is not None else []),
+                    'operations': ['embed_images', 'embed_texts', 'quality', 'detect_persons', 'detect_text', 'inpaint'],
+                    'person_model': PERSON_MODEL_ID, 'text_model': TEXT_MODEL_ID,
                     'quality_model': 'topiq_nr', 'quality_loaded': self.quality_model is not None,
                     'device': self.device, 'device_name': self.device_name, 'dtype': 'float16', 'embed_dim': EMBED_DIM}
         if action == 'embed_texts':
             vectors = self.embed_texts(_items(request, 'texts'))
             return {**result, 'vectors': encode_vectors(vectors)}
-        if action not in ('embed_images', 'quality'):
+        if action == 'inpaint':
+            image = decode_image(request.get('image'))
+            mask = decode_mask(request.get('mask'), image.size)
+            return {**result, 'image': encode_image(self.inpaint(image, mask))}
+        if action not in ('embed_images', 'quality', 'detect_persons', 'detect_text'):
             raise WorkerError('protocol-error', 'unsupported action')
         images = [decode_image(value) for value in _items(request, 'images')]
+        if action in ('detect_persons', 'detect_text'):
+            return {**result, 'results': getattr(self, action)(images)}
         if action == 'embed_images':
             return {**result, 'vectors': encode_vectors(self.embed_images(images))}
         return {**result, 'scores': self.score_images(images), 'quality_model': 'topiq_nr'}
