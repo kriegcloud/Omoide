@@ -1,4 +1,5 @@
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -46,6 +47,7 @@ class DuplicateStats(BaseModel):
 
 
 class ResolveDuplicatesRequest(BaseModel):
+    operation_id: UUID | None = None
     group_id: int
     master_media_id: int | None = None
     action: Literal[

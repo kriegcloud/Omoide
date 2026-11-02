@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 from app.logger import logger
 from app.models import Blacklist, Media
 from app.records import delete_file, delete_record
+from app.services.mutation_operations import begin_operation, mutation_member
 
 
 def resolve_media_action(
@@ -20,6 +21,7 @@ def resolve_media_action(
     filter_ids: bool = True,
     not_found_detail: str = "No matching media found.",
     allow_empty: bool = False,
+    operation_id: str | None = None,
 ) -> dict:
     """Shared handler for the maintenance resolve endpoints.
 
@@ -53,6 +55,12 @@ def resolve_media_action(
     requested_ids = list(dict.fromkeys(media_ids))
     selected_id_set = set(selected_ids)
     skipped_ids = [media_id for media_id in requested_ids if media_id not in selected_id_set]
+    operation = None
+    if operation_id is not None:
+        operation = begin_operation(session, operation_id,
+            {'action': action, 'media_ids': requested_ids, 'select_all': select_all}, selected_ids,
+            skipped=[{'key': f'media:{i}', 'reason': 'not_selected'} for i in skipped_ids])
+        session.info['mutation_operation'] = operation
     errors: list[dict] = []
     for media_id in selected_ids:
         try:
@@ -60,16 +68,17 @@ def resolve_media_action(
             if media is None:
                 skipped_ids.append(media_id)
                 continue
-            if action == "DELETE_FILES":
-                delete_file(session, media_id)
-            elif action == "DELETE_RECORDS":
-                delete_record(media_id, session)
-            else:
-                existing = session.exec(select(Blacklist).where(Blacklist.path == media.path)).first()
-                if existing is None:
-                    session.add(Blacklist(path=media.path))
-                delete_record(media_id, session)
-            session.commit()
+            with mutation_member(session, media_id):
+                if action == "DELETE_FILES":
+                    delete_file(session, media_id)
+                elif action == "DELETE_RECORDS":
+                    delete_record(media_id, session)
+                else:
+                    existing = session.exec(select(Blacklist).where(Blacklist.path == media.path)).first()
+                    if existing is None:
+                        session.add(Blacklist(path=media.path))
+                    delete_record(media_id, session)
+                session.commit()
             processed_ids.append(media_id)
         except Exception as exc:
             session.rollback()
@@ -77,9 +86,13 @@ def resolve_media_action(
             reason = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
             errors.append({"id": media_id, "reason": reason})
             logger.warning("Could not resolve media id=%s: %s", media_id, reason)
-    return {
+    result = {
         "removed": len(processed_ids),
         "processed_ids": processed_ids,
         "skipped_ids": skipped_ids,
         "errors": errors,
     }
+    if operation is not None:
+        session.info.pop('mutation_operation', None)
+        result['receipt'] = operation.finish(result.copy(), 200)
+    return result

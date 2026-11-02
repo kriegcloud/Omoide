@@ -118,7 +118,7 @@ class SuggestionRejectionTests(DatabaseCase):
 
     def test_rejection_migration_is_the_single_head(self):
         script = ScriptDirectory.from_config(Config("alembic.ini"))
-        self.assertEqual(script.get_heads(), ["a7b8c9d0e1f2"])
+        self.assertEqual(script.get_heads(), ["598e24827831"])
         self.assertEqual(script.get_revision("4e5f60718293").down_revision, "3d4e5f607182")
 
     def test_rejection_cleanup_when_media_face_processing_is_reset(self):

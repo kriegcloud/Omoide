@@ -1698,6 +1698,9 @@ def _delete_record_locked(media_id, session: Session, *, delete_original: bool =
         except OSError as exc:
             session.rollback()
             raise HTTPException(status_code=409, detail=f"Could not delete original file: {exc}") from exc
+    checkpoint = session.info.get('mutation_operation_checkpoint')
+    if checkpoint is not None:
+        checkpoint()
     safe_commit(session)
 
     for path in to_unlink:

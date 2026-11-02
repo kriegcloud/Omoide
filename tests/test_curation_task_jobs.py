@@ -418,7 +418,7 @@ class CurationJobMigrationTests(unittest.TestCase):
         heads = script.get_heads()
         module = self._module()
         self.assertEqual(module.down_revision, '60718293a4b5')
-        self.assertEqual(list(heads), ["a7b8c9d0e1f2"])
+        self.assertEqual(list(heads), ["598e24827831"])
         ancestors = {revision.revision for revision in script.walk_revisions()}
         self.assertIn(module.revision, ancestors)
         self.assertIn(module.revision, script.get_revision("e0f1a2b3c4d5").down_revision)

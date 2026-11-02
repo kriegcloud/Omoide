@@ -907,3 +907,17 @@ class EventMediaLink(SQLModel, table=True):
 
 # Register additive fixture curation tables for SQLModel/Alembic metadata.
 from app import curation_models as _curation_models  # noqa: E402,F401
+
+
+class MutationOperation(SQLModel, table=True):
+    """Durable immutable intent and per-member checkpoints; no media FKs.
+
+    Records deliberately survive deletion of the catalog identities they name.
+    Incomplete intent is never automatically replayed after a process restart.
+    """
+    id: str = Field(primary_key=True)
+    snapshot: dict = Field(sa_column=Column(JSON, nullable=False))
+    receipt: dict = Field(sa_column=Column(JSON, nullable=False))
+    response: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    status_code: int | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

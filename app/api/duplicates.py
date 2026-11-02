@@ -33,6 +33,11 @@ from app.schemas.duplicates import (
 )
 from app.schemas.media import MediaPreview
 from app.records import delete_file, delete_record
+from app.models import MutationOperation
+from app.schemas.mutation_operations import MutationReceipt
+from app.services.mutation_operations import (
+    begin_operation, lookup_operation, mutation_member, operation_headers,
+)
 
 router = APIRouter()
 
@@ -60,6 +65,7 @@ def get_duplicates(
         select(
             DuplicateMedia.group_id,
             func.count(DuplicateMedia.media_id).label("item_count"),
+            func.coalesce(func.sum(Media.size), 0).label("total_size"),
         )
         .join(Media, Media.id == DuplicateMedia.media_id)
         .where(Media.missing_since.is_(None))
@@ -77,23 +83,8 @@ def get_duplicates(
         )
         .where(counts_subquery.c.item_count >= min_count)
     )
-    if sort_by == "size":
-        size_subquery = (
-            select(
-                DuplicateMedia.group_id,
-                func.coalesce(func.sum(Media.size), 0).label("total_size"),
-            )
-            .join(Media, Media.id == DuplicateMedia.media_id)
-            .where(Media.missing_since.is_(None))
-            .group_by(DuplicateMedia.group_id)
-            .subquery()
-        )
-        query = query.join(
-            size_subquery, DuplicateGroup.id == size_subquery.c.group_id
-        )
-        sort_col = size_subquery.c.total_size
-    else:
-        sort_col = counts_subquery.c.item_count
+    sort_col = (counts_subquery.c.total_size if sort_by == "size"
+                else counts_subquery.c.item_count)
 
     if media_type is not None or folder is not None:
         type_filter = (
@@ -260,8 +251,7 @@ def get_duplicate_stats(
     )
 
 
-@router.post("/resolve")
-def resolve_duplicate_group(
+def _resolve_duplicate_group(
     request: ResolveDuplicatesRequest, session: Session = Depends(get_session)
 ):
     # Actions cover the same visible members shown in the review group.
@@ -275,6 +265,15 @@ def resolve_duplicate_group(
     all_media_ids_in_group = {media_id for media_id, _ in all_duplicates_in_group}
     visible_media_ids = {media_id for media_id, missing_since in all_duplicates_in_group if missing_since is None}
     hidden_media_ids = all_media_ids_in_group - visible_media_ids
+
+    operation = session.info.get('mutation_operation')
+    if operation is not None:
+        admitted = session.get(MutationOperation, operation.id).snapshot
+        admitted_ids = set(admitted['selected_ids'])
+        if request.master_media_id is not None:
+            admitted_ids.add(request.master_media_id)
+        if admitted_ids != visible_media_ids:
+            raise HTTPException(409, 'Duplicate membership changed after admission; review the group again.')
 
     if not all_media_ids_in_group:
         raise HTTPException(
@@ -324,36 +323,28 @@ def resolve_duplicate_group(
         media_to_process_stmt = exclude_missing(select(Media)).where(
             Media.id.in_(ids_to_process)
         )
-        media_to_process = session.exec(media_to_process_stmt).all()
+        media_to_process = session.exec(media_to_process_stmt.order_by(Media.id)).all()
 
         # 2. Perform the requested action on all other media items
         for media in media_to_process:
-            if request.action == "DELETE_FILES":
-                try:
-                    delete_file(session, media.id)
-                except HTTPException as exc:
-                    if exc.status_code == 403:
-                        logger.warning(
-                            "Skipping delete for media id=%s: %s",
-                            media.id,
-                            exc.detail,
-                        )
-                        skipped_read_only += 1
-                        continue
-                    raise
-
-            elif request.action == "DELETE_RECORDS":
-                delete_record(media.id, session)
-
-            elif request.action == "BLACKLIST_RECORDS":
-                blacklist_entry = Blacklist(path=media.path)
-                session.add(blacklist_entry)
-                delete_record(media.id, session)
-            else:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Unsupported action {request.action}",
-                )
+            media_id, media_path = media.id, media.path
+            try:
+                with mutation_member(session, media_id):
+                    if request.action == "DELETE_FILES":
+                        delete_file(session, media_id)
+                    elif request.action == "DELETE_RECORDS":
+                        delete_record(media_id, session)
+                    elif request.action == "BLACKLIST_RECORDS":
+                        session.add(Blacklist(path=media_path))
+                        delete_record(media_id, session)
+                    else:
+                        raise HTTPException(400, f"Unsupported action {request.action}")
+            except HTTPException as exc:
+                if request.action == "DELETE_FILES" and exc.status_code == 403:
+                    logger.warning("Skipping delete for media id=%s: %s", media_id, exc.detail)
+                    skipped_read_only += 1
+                    continue
+                raise
 
     # 3. Delete the original DuplicateMedia entries and the group itself.
     # Successful file deletions already remove their media links through
@@ -396,3 +387,49 @@ def resolve_duplicate_group(
         "message": f"Group {request.group_id} resolved successfully.",
         "skipped_read_only": 0,
     }
+
+
+@router.get("/operations/{operation_id}", response_model=MutationReceipt)
+def get_mutation_operation(operation_id: str, session: Session = Depends(get_session)):
+    """Read durable progress after a lost response; this endpoint never retries."""
+    return lookup_operation(session, operation_id)
+
+
+@router.post("/resolve")
+def resolve_duplicate_group(
+    request: ResolveDuplicatesRequest, session: Session = Depends(get_session)
+):
+    if request.operation_id is None:
+        return _resolve_duplicate_group(request, session)
+    operation_id = str(request.operation_id)
+    snapshot = request.model_dump(mode='json', exclude={'operation_id'})
+    existing = session.get(MutationOperation, operation_id)
+    if existing is not None:
+        saved_input = {key: value for key, value in existing.snapshot.items() if key != 'selected_ids'}
+        if saved_input != snapshot:
+            raise HTTPException(409, 'operation_id belongs to a different request.', headers=operation_headers(operation_id))
+        if existing.status_code is None:
+            raise HTTPException(409, 'Operation outcome is not terminal; read its receipt.', headers=operation_headers(operation_id))
+        if existing.status_code >= 400:
+            raise HTTPException(existing.status_code, existing.response['detail'], headers=operation_headers(operation_id))
+        return {**existing.response, 'receipt': existing.receipt}
+
+    members = session.exec(select(DuplicateMedia.media_id, Media.missing_since).join(
+        Media, Media.id == DuplicateMedia.media_id).where(DuplicateMedia.group_id == request.group_id)).all()
+    selected = sorted(media_id for media_id, missing in members if missing is None and media_id != request.master_media_id)
+    skipped = [{'key': f'media:{media_id}', 'reason': 'missing'} for media_id, missing in members if missing is not None]
+    operation = begin_operation(session, operation_id, snapshot, selected, skipped=skipped)
+    session.info['mutation_operation'] = operation
+    try:
+        result = _resolve_duplicate_group(request, session)
+    except Exception as exc:
+        session.rollback()
+        status = exc.status_code if isinstance(exc, HTTPException) else 500
+        detail = exc.detail if isinstance(exc, HTTPException) else 'Mutation failed; read the operation receipt before taking further action.'
+        operation.finish({'detail': detail}, status)
+        raise HTTPException(status, detail, headers=operation_headers(operation_id)) from exc
+    finally:
+        session.info.pop('mutation_operation', None)
+    keys = [f'duplicate:{request.group_id}'] if request.action == 'MARK_NOT_DUPLICATE' else []
+    receipt = operation.finish(result, 200, applied_keys=keys)
+    return {**result, 'receipt': receipt}
