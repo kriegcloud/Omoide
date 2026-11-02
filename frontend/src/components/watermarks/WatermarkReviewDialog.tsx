@@ -18,7 +18,7 @@ export default function WatermarkReviewDialog({ id, onClose, onStep, onAction }:
   const refresh = async () => { const candidate = await watermarkJson<WatermarkCandidate>(`/api/watermarks/${id}`); setItem(candidate); setRevision(x => x + 1); };
   useEffect(() => {
     let live = true; setItem(null); setOriginal(''); setError(''); setHeldOriginal(false);
-    void watermarkJson<WatermarkCandidate>(`/api/watermarks/${id}`).then(async candidate => { const media = await watermarkJson<{ path: string }>(`/api/media/${candidate.media_id}`); if (live) { setItem(candidate); setOriginal(`${API}/originals/${encodeFilePath(candidate.backup_path || media.path)}`); } }).catch(e => { if (live) setError(String(e)); });
+    void watermarkJson<WatermarkCandidate>(`/api/watermarks/${id}`).then(async candidate => { const detail = await watermarkJson<{ media?: { path?: string }; path?: string }>(`/api/media/${candidate.media_id}`); const path = candidate.backup_path || detail.media?.path || detail.path; if (!path) throw new Error('Media file path is unavailable'); if (live) { setItem(candidate); setOriginal(`${API}/originals/${encodeFilePath(path)}`); } }).catch(e => { if (live) setError(String(e)); });
     return () => { live = false; };
   }, [id]);
   useEffect(() => { const release = (event: KeyboardEvent) => { if (event.code === 'Space') setHeldOriginal(false); }; const blur = () => setHeldOriginal(false); window.addEventListener('keyup', release); window.addEventListener('blur', blur); return () => { window.removeEventListener('keyup', release); window.removeEventListener('blur', blur); }; }, []);
