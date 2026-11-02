@@ -97,7 +97,24 @@ export function enhanceEditorControls(root: ParentNode, doc: ParentNode = root) 
 /** Keeps controls enhanced as Filerobot re-renders (and portals its menus); returns a cleanup. */
 export function observeEditorAccessibility(root: HTMLElement): () => void {
   const doc = root.ownerDocument;
-  const run = () => enhanceEditorControls(root, doc);
+  // The zoom menu lives in a <body>-level portal; opening/closing it only changes
+  // attributes there, which the host observer cannot see. Watch that portal too.
+  let watchedPortal: Element | null = null;
+  let portalAttrs: MutationObserver | null = null;
+  const watchMenuPortal = () => {
+    const menu = doc.querySelector(ZOOM_MENU);
+    let portal: Element | null = menu;
+    while (portal?.parentElement && portal.parentElement !== doc.body) portal = portal.parentElement;
+    if (!portal || portal === watchedPortal) return;
+    portalAttrs?.disconnect();
+    watchedPortal = portal;
+    portalAttrs = new MutationObserver(records => {
+      // Ignore our own aria/tabindex writes to avoid feedback loops.
+      if (records.some(record => !["aria-hidden", "aria-expanded", "tabindex", "role", "aria-label", "data-editor-a11y", "data-editor-a11y-unhidden"].includes(record.attributeName ?? ""))) schedule();
+    });
+    portalAttrs.observe(portal, { attributes: true, subtree: true, attributeFilter: ["class", "style", "open", "data-popper-placement"] });
+  };
+  const run = () => { enhanceEditorControls(root, doc); watchMenuPortal(); };
   run();
   let queued = false;
   const schedule = () => {
@@ -132,7 +149,7 @@ export function observeEditorAccessibility(root: HTMLElement): () => void {
   };
   doc.addEventListener("transitionend", onTransitionEnd, true);
   return () => {
-    observer.disconnect(); portals.disconnect();
+    observer.disconnect(); portals.disconnect(); portalAttrs?.disconnect();
     doc.removeEventListener("keydown", onKeyDown, true);
     doc.removeEventListener("click", recheck, true);
     doc.removeEventListener("keyup", recheck, true);
