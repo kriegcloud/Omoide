@@ -1,3 +1,4 @@
+import { startReviewResolve } from "../services/review";
 import { SelectionHotkeyDialogs } from "../hotkeys/SelectionHotkeyDialogs";
 import { useHotkeys, useHotkey } from "../hotkeys/useHotkey";
 import { selectionBindings } from "../hotkeys/keymap";
@@ -127,6 +128,7 @@ interface BulkResolveToolbarProps {
   extraActions?: React.ReactNode;
   /** The shared operation feedback owns settlement for non-blocking mutations. */
   deferredFeedback?: boolean;
+  refresh?: () => Promise<void>;
 }
 
 const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
@@ -143,9 +145,9 @@ const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
   onFeedback,
   extraActions,
   deferredFeedback = false,
+  refresh,
 }) => {
-  const [pending, setPending] = useState<{ action: BulkResolveAction; selectAll: boolean } | null>(null);
-  const [isActionLoading, setIsActionLoading] = useState(false);
+  const [pending, setPending] = useState<{ action: BulkResolveAction; selectAll: boolean; ids: number[]; count: number; resolve: BulkResolveToolbarProps["resolve"]; refresh?: () => Promise<void>; onResolved: BulkResolveToolbarProps["onResolved"] } | null>(null);
   const [allMenuAnchor, setAllMenuAnchor] = useState<null | HTMLElement>(null);
   const [assignIds, setAssignIds] = useState<number[] | null>(null);
 
@@ -154,52 +156,51 @@ const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
   const requestAction = (action: BulkResolveAction, selectAll = false) => {
     setAllMenuAnchor(null);
     if (!selectAll && selectedCount === 0) return;
-    setPending({ action, selectAll });
+    if (config.PRESENTATION_MODE) return;
+    setPending({ action, selectAll, ids: [...selectedIds], count: selectAll ? total : selectedCount, resolve, refresh, onResolved });
   };
 
   useHotkeys(selectionBindings.filter(binding => ["Delete", "x", "a"].includes(binding.key)), (event) => {
     if (event.key === "Delete") requestAction(event.shiftKey ? "DELETE_RECORDS" : "DELETE_FILES");
     else if (event.key.toLowerCase() === "x") requestAction("BLACKLIST_RECORDS");
     else setAssignIds(Array.from(selectedIds));
-  }, { scope: "page", enabled: selectedCount > 0 && !isActionLoading && !config.PRESENTATION_MODE });
+  }, { scope: "page", enabled: selectedCount > 0 && !config.PRESENTATION_MODE });
   useHotkey({ key: "Escape" }, onClearSelection, { scope: "page", enabled: selectedCount > 0, description: "Clear selection" });
 
-  const handleConfirm = async () => {
-    if (!pending) return;
-    const ids = pending.selectAll ? [] : Array.from(selectedIds);
-    setIsActionLoading(true);
-    try {
-      const { removed, processed_ids } = await resolve(
-        pending.selectAll
-          ? { action: pending.action, selectAll: true }
-          : { action: pending.action, mediaIds: ids }
-      );
-      if (deferredFeedback) {
-        setPending(null);
-        return;
-      }
-      if (removed > 0) {
-        onFeedback(`${removed} item(s) processed`, "success");
-      } else {
-        onFeedback("No items matched", "warning");
-      }
-      onResolved(processed_ids ?? [], removed, pending.selectAll || !Array.isArray(processed_ids));
-      setPending(null);
-    } catch (e) {
-      onFeedback(e instanceof Error ? e.message : "Action failed", "error");
-      setPending(null);
-    } finally {
-      setIsActionLoading(false);
+  const handleConfirm = () => {
+    if (!pending || config.PRESENTATION_MODE) return;
+    const snapshot = pending;
+    setPending(null);
+    const params = snapshot.selectAll
+      ? { action: snapshot.action, selectAll: true }
+      : { action: snapshot.action, mediaIds: snapshot.ids };
+    onClearSelection?.();
+    if (deferredFeedback) {
+      // Existing consumers already submit to the shared controller.
+      void snapshot.resolve(params).catch(error => onFeedback(error instanceof Error ? error.message : "Action failed", "error"));
+    } else {
+      let result: Awaited<ReturnType<typeof resolve>> | undefined;
+      return startReviewResolve({
+        label: snapshot.selectAll ? "Review all matching items" : `Review ${snapshot.ids.length} selected item(s)`,
+        ids: snapshot.selectAll ? [] : snapshot.ids,
+        request: async () => {
+          result = await snapshot.resolve(params);
+          return result;
+        },
+        refresh: snapshot.refresh ?? (async () => {
+          if (result) snapshot.onResolved(result.processed_ids ?? [], result.removed, snapshot.selectAll || !Array.isArray(result.processed_ids));
+        }),
+      }).done;
     }
   };
 
   const copy = pending
-    ? resolveConfirmCopy(pending.action, pending.selectAll ? total : selectedCount)
+    ? resolveConfirmCopy(pending.action, pending.count)
     : null;
 
   return (
     <>
-      <SelectionHotkeyDialogs mediaIds={[...selectedIds]} enabled={!isActionLoading} />
+      <SelectionHotkeyDialogs mediaIds={[...selectedIds]} enabled />
       <StickySelectionToolbar variant="outlined" sx={{ mb: 3 }}>
         <Stack
           direction={{ xs: "column", md: "row" }}
@@ -239,7 +240,7 @@ const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
               variant="outlined"
               startIcon={<PersonAddIcon />}
               onClick={() => setAssignIds(Array.from(selectedIds))}
-              disabled={selectedCount === 0 || isActionLoading}
+              disabled={selectedCount === 0}
             >
               Assign to person…
             </Button>
@@ -253,7 +254,7 @@ const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
                   color="error"
                   startIcon={<DeleteForeverIcon />}
                   onClick={() => requestAction("DELETE_FILES")}
-                  disabled={selectedCount === 0 || isActionLoading}
+                  disabled={selectedCount === 0}
                 >
                   Delete files
                 </Button>
@@ -267,7 +268,7 @@ const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
                   color="error"
                   startIcon={<DeleteIcon />}
                   onClick={() => requestAction("DELETE_RECORDS")}
-                  disabled={selectedCount === 0 || isActionLoading}
+                  disabled={selectedCount === 0}
                 >
                   Remove records
                 </Button>
@@ -280,7 +281,7 @@ const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
                   variant="outlined"
                   startIcon={<BlockIcon />}
                   onClick={() => requestAction("BLACKLIST_RECORDS")}
-                  disabled={selectedCount === 0 || isActionLoading}
+                  disabled={selectedCount === 0}
                 >
                   Blacklist
                 </Button>
@@ -293,7 +294,7 @@ const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
                   color="error"
                   endIcon={<ArrowDropDownIcon />}
                   onClick={(e) => setAllMenuAnchor(e.currentTarget)}
-                  disabled={total === 0 || isActionLoading}
+                  disabled={total === 0}
                 >
                   All {total.toLocaleString()} matching
                 </Button>
@@ -339,7 +340,6 @@ const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
         title={copy?.title ?? ""}
         message={copy?.message ?? ""}
         confirmLabel={copy?.confirmLabel}
-        loading={isActionLoading}
         onConfirm={handleConfirm}
         onClose={() => setPending(null)}
       />

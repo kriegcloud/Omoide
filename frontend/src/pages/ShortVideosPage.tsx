@@ -1,3 +1,4 @@
+import { queryKey } from "../stores/queryKeys";
 import GalleryPage from "../components/GalleryPage";
 import React, { useCallback, useRef, useState } from "react";
 import {
@@ -67,7 +68,7 @@ const ShortVideosPage: React.FC = () => {
     selectVisible,
     clearSelection,
     refetch,
-  } = useCursorList<ShortVideoItem>(fetcher);
+  } = useCursorList<ShortVideoItem>(fetcher, 0, { queryKey: queryKey("ShortVideosPage", { folder, max_duration: maxDuration }), entityKind: "media" });
 
   const gridRef = useRef<HTMLDivElement>(null);
   const { isSelecting: globalSelecting } = useSelection();
@@ -114,6 +115,7 @@ const ShortVideosPage: React.FC = () => {
         onSelectVisible={selectVisible}
         onClearSelection={clearSelection}
         resolve={resolveSelection}
+        refresh={refetch}
         onResolved={handleResolved}
         onFeedback={showFeedback}
       />}>

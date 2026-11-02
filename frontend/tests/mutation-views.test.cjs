@@ -18,7 +18,7 @@ function requireTranspiled(file){return load(file,hooks());}
 test('bulk resolve reconciles processed ids and uses refetch mode for count-only results',async()=>{
  for(const [response,expected] of [[{removed:1,processed_ids:[7]},[[7],1,false]],[{removed:1},[[],1,true]]]){
   const runtime=hooks();let actual;
-  const Toolbar=load('components/BulkResolveToolbar.tsx',runtime,{'../hotkeys/useHotkey':{useHotkeys:noop,useHotkey:noop},'../hotkeys/keymap':{selectionBindings:[]},'../formatUtils':{formatBytes:String}}).default;
+  const Toolbar=load('components/BulkResolveToolbar.tsx',runtime,{'../services/review':{startReviewResolve:({request,refresh})=>({done:request().then(()=>refresh?.())})},'../hotkeys/useHotkey':{useHotkeys:noop,useHotkey:noop},'../hotkeys/keymap':{selectionBindings:[]},'../formatUtils':{formatBytes:String}}).default;
   const props={total:2,shownCount:2,shownSize:0,selectedIds:new Set([7,8]),onFeedback:noop,onResolved:(...args)=>actual=args,resolve:async()=>response};
   const render=()=>runtime.render(()=>Toolbar(props));let view=render();
   const {find}=require('./detailRuntime.cjs');find(view,n=>n.type==='Button'&&n.props.children==='Remove records').props.onClick();

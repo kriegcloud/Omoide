@@ -1,3 +1,5 @@
+import { startReviewResolve } from "../services/review";
+import { useOptimisticCachedList, refreshCachedList } from "../stores/useListStore";
 import GalleryPage from "../components/GalleryPage";
 import { useState } from "react";
 import {
@@ -45,14 +47,18 @@ const BrokenMediaPage: React.FC = () => {
     (cursor, signal) => getBrokenMedia({ cursor }, signal),
     { infiniteScroll: false, refetchOnMount: true }
   );
-  const { items, isLoading, error, hasMore, loadMore } = list;
-  const total = list.total ?? 0;
+  const visibleList = useOptimisticCachedList<BrokenMediaItem>("broken-media");
+  const { items, isLoading, error, hasMore } = visibleList ?? list;
+  const { loadMore } = list;
+  const total = (visibleList ?? list).total ?? 0;
   const selection = useIdSelection<number>();
   const { selectedIds, toggle: toggleSelection, clear: clearSelection } = selection;
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [pendingAction, setPendingAction] = useState<{
     action: BulkResolveAction;
     selectAll: boolean;
+    ids: number[];
+    count: number;
   } | null>(null);
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
@@ -67,46 +73,24 @@ const BrokenMediaPage: React.FC = () => {
 
   const selectAllVisible = () => selection.selectAll(items.map((i) => i.id));
 
-  const removeLocalItems = (ids: number[], removed: number) => {
-    list.removeItems(ids, removed);
-    selection.deselect(ids);
-  };
-
   const requestAction = (action: BulkResolveAction, selectAll = false) => {
     if ((selectAll ? total : selectedIds.size) === 0) return;
-    setPendingAction({ action, selectAll });
+    setPendingAction({ action, selectAll, ids: [...selectedIds], count: selectAll ? total : selectedIds.size });
   };
 
-  const handleConfirmAction = async () => {
+  const handleConfirmAction = () => {
     if (!pendingAction) return;
-    const ids = pendingAction.selectAll ? [] : Array.from(selectedIds);
-    setIsActionLoading(true);
-    try {
-      const payload = pendingAction.selectAll
-        ? { select_all: true, action: pendingAction.action }
-        : { media_ids: ids, action: pendingAction.action };
-      const result = await resolveBroken(payload);
-      setSnackbar({
-        open: true,
-        message: result.removed > 0 ? `${result.removed} item(s) processed` : "No items matched",
-        severity: result.removed > 0 ? "success" : "warning",
-      });
-      if (pendingAction.selectAll) {
-        reload();
-      } else if (result.removed > 0) {
-        removeLocalItems(ids, result.removed);
-      }
-      setPendingAction(null);
-    } catch (err) {
-      setSnackbar({
-        open: true,
-        message: err instanceof Error ? err.message : "Action failed",
-        severity: "error",
-      });
-      setPendingAction(null);
-    } finally {
-      setIsActionLoading(false);
-    }
+    const snapshot = pendingAction;
+    setPendingAction(null);
+    startReviewResolve({
+      label: snapshot.selectAll ? "Resolve all broken media" : `Resolve ${snapshot.ids.length} broken item(s)`,
+      ids: snapshot.selectAll ? [] : snapshot.ids,
+      request: () => resolveBroken(snapshot.selectAll
+        ? { select_all: true, action: snapshot.action }
+        : { media_ids: snapshot.ids, action: snapshot.action }),
+      refresh: () => refreshCachedList("broken-media"),
+    });
+    selection.deselect(snapshot.ids);
   };
 
   const handleRetry = async (selectAll = false) => {
@@ -151,7 +135,7 @@ const BrokenMediaPage: React.FC = () => {
   const selectedCount = selectedIds.size;
   const allVisibleSelected = items.length > 0 && selectedCount === items.length;
   const pendingCopy = pendingAction
-    ? resolveConfirmCopy(pendingAction.action, pendingAction.selectAll ? total : selectedCount)
+    ? resolveConfirmCopy(pendingAction.action, pendingAction.count)
     : null;
 
   return (

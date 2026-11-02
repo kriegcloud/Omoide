@@ -1,3 +1,4 @@
+import { queryKey } from "../stores/queryKeys";
 import GalleryPage from "../components/GalleryPage";
 import React, { useCallback, useRef, useState } from "react";
 import {
@@ -82,7 +83,7 @@ const LowResolutionPage: React.FC = () => {
     selectVisible,
     clearSelection,
     refetch,
-  } = useCursorList<LowResMediaItem>(fetcher, refreshKey);
+  } = useCursorList<LowResMediaItem>(fetcher, refreshKey, { queryKey: queryKey("LowResolutionPage", { folder, max_pixels: Math.round(maxMp * 1_000_000), media_type: mediaType }), entityKind: "media" });
 
   const gridRef = useRef<HTMLDivElement>(null);
   const { isSelecting: globalSelecting } = useSelection();
@@ -141,6 +142,7 @@ const LowResolutionPage: React.FC = () => {
         onSelectVisible={selectVisible}
         onClearSelection={clearSelection}
         resolve={resolveSelection}
+        refresh={refetch}
         onResolved={handleResolved}
         onFeedback={showFeedback}
       />}>

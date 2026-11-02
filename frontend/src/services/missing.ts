@@ -1,3 +1,4 @@
+import { DefinitiveMutationError } from "../stores/optimisticOperations";
 import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
 import {
@@ -58,6 +59,7 @@ const postMissingAction = async <T>(
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
+    if ([400, 403, 422].includes(response.status)) throw new DefinitiveMutationError(error.detail || "Missing media action failed");
     throw new Error(error.detail || "Missing media action failed");
   }
   const result = await response.json();
