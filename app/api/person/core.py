@@ -35,6 +35,7 @@ from app.models import (
     Person,
     PersonMediaLink,
 )
+from app.services.social_links import social_link_read
 from app.pagination import paginate
 from app.persons import (
     auto_select_profile_face,
@@ -170,12 +171,7 @@ def get_person(person_id: int, session: Session = Depends(get_session)):
         select(func.count(distinct(media_ids_union.c.media_id)))
     )
     if profile_face:
-        profile_face = ProfileFace(
-            id=person.profile_face.id,
-            thumbnail_path=person.profile_face.thumbnail_path,
-            assigned_at=person.profile_face.assigned_at,
-            assignment_source=person.profile_face.assignment_source,
-        )
+        profile_face = ProfileFace.model_validate(person.profile_face)
     return PersonDetail(
         id=person.id,
         name=person.name,
@@ -189,11 +185,11 @@ def get_person(person_id: int, session: Session = Depends(get_session)):
         gender_manual=person.gender_manual,
         age=person.age,
         social_links=[
-            SocialLinkRead.model_validate(link)
+            social_link_read(session, link)
             for link in session.exec(
                 select(PersonSocialLink)
                 .where(PersonSocialLink.person_id == person_id)
-                .order_by(PersonSocialLink.created_at, PersonSocialLink.id)
+                .order_by(PersonSocialLink.sort_order, PersonSocialLink.created_at, PersonSocialLink.id)
             ).all()
         ],
         is_favorite=bool(person.is_favorite),
@@ -251,7 +247,7 @@ def update_person_favorite(
 
 @router.post(
     "/{person_id}/profile_face/auto",
-    response_model=Person,
+    response_model=PersonDetail,
 )
 def auto_profile_face(
     person_id: int,
@@ -263,7 +259,7 @@ def auto_profile_face(
     auto_select_profile_face(session, person_id)
     safe_commit(session)
     session.refresh(person)
-    return person
+    return get_person(person_id, session)
 
 
 @router.post(

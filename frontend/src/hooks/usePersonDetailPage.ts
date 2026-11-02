@@ -1,5 +1,6 @@
+import { optimisticOperations, projectEntity, acknowledgeQuery, operationVersion } from "../stores/optimisticOperations";
 import { readCachedList } from "../stores/useListStore";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useUndo, useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
 import { runOptimistic } from "../stores/mutationBus";
@@ -49,7 +50,8 @@ export const usePersonDetailPage = () => {
   const { push, refreshVisible } = useUndo();
 
   const [storedPerson, setPerson] = useState<Person | null>(null);
-  const person = storedPerson && String(storedPerson.id) === id ? storedPerson : null;
+  useSyncExternalStore(optimisticOperations.subscribe, optimisticOperations.getSnapshot);
+  const person = storedPerson && String(storedPerson.id) === id ? projectEntity(`person:${storedPerson.id}`, storedPerson, `person-detail:${id}`) : null;
   const routeId = useRef(id);
   routeId.current = id;
   const requests = useRef({ detail: 0, suggestions: 0, similar: 0, relationships: 0 });
@@ -175,11 +177,13 @@ export const usePersonDetailPage = () => {
     async (signal?: AbortSignal) => {
       if (!id || routeId.current !== id) return;
       const isCurrent = beginRequest("detail", signal);
+      const started = operationVersion();
       setLoadError(null);
       try {
         const personData = await getPerson(id, signal);
         if (!isCurrent()) return;
         setPerson(personData);
+        acknowledgeQuery(`person-detail:${id}`, started);
         setForm({
           name: personData.name ?? "",
         });

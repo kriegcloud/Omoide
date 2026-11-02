@@ -1,3 +1,4 @@
+import { DefinitiveMutationError } from "../stores/optimisticOperations";
 import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
 import {
@@ -12,6 +13,8 @@ import {
   SocialLink,
   SocialLinkSuggestion,
   SocialPlatform,
+  SocialLinkPreview,
+  SocialBrand,
 } from "../types";
 
 export interface MergeResult {
@@ -48,15 +51,19 @@ export interface PersonMediaBulkResult {
 }
 
 export interface SocialLinkCreate {
-  platform: SocialPlatform;
-  handle: string;
-  url?: string;
+  platform?: SocialPlatform;
+  handle?: string;
+  url: string;
+  label?: string | null;
+  sort_order?: number;
 }
 
 const socialLinkError = async (response: Response, fallback: string) => {
   try {
     const body = await response.json();
-    return new Error(body.detail || fallback);
+    return response.status >= 400 && response.status < 500
+      ? new DefinitiveMutationError(typeof body.detail === "string" ? body.detail : fallback)
+      : new Error(fallback);
   } catch {
     return new Error(fallback);
   }
@@ -104,6 +111,33 @@ export const deleteSocialLink = async (
     throw await socialLinkError(response, "Failed to delete social link");
   }
   mutationBus.emit({ type: "person:changed", ids: [personId] });
+};
+
+
+export const previewSocialLink = async (url: string, signal?: AbortSignal): Promise<SocialLinkPreview> => {
+  const response = await fetch(`${API}/api/person/social-links/preview`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }), signal });
+  if (!response.ok) throw await socialLinkError(response, "Enter a valid profile URL");
+  return response.json();
+};
+export const editSocialLink = async (personId: number, linkId: number, data: Partial<SocialLinkCreate>): Promise<SocialLink> => {
+  const response = await fetch(`${API}/api/person/${personId}/social-links/${linkId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+  if (!response.ok) throw await socialLinkError(response, "Failed to edit social link");
+  return response.json();
+};
+export const reorderSocialLinks = async (personId: number, linkIds: number[]): Promise<SocialLink[]> => {
+  const response = await fetch(`${API}/api/person/${personId}/social-links/reorder`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ link_ids: linkIds }) });
+  if (!response.ok) throw await socialLinkError(response, "Failed to reorder links");
+  return response.json();
+};
+export const getSocialBrand = async (domain: string, signal?: AbortSignal): Promise<SocialBrand> => {
+  const response = await fetch(`${API}/api/social-brands/${encodeURIComponent(domain)}`, { signal });
+  if (!response.ok) throw await socialLinkError(response, "Failed to check icon");
+  return response.json();
+};
+export const updateSocialBrand = async (domain: string, file?: File): Promise<SocialBrand> => {
+  const response = await fetch(`${API}/api/social-brands/${encodeURIComponent(domain)}/${file ? "icon" : "retry"}`, { method: "POST", ...(file ? { body: file, headers: { "Content-Type": file.type || "application/octet-stream" } } : {}) });
+  if (!response.ok) throw await socialLinkError(response, "Failed to update icon");
+  return response.json();
 };
 
 export const getSocialLinkSuggestions = async (

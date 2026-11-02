@@ -141,12 +141,7 @@ class PersonPairDecision(SQLModel, table=True):
 
 class PersonSocialLink(SQLModel, table=True):
     __table_args__ = (
-        sa.UniqueConstraint(
-            "person_id",
-            "platform",
-            "handle",
-            name="uq_person_social_link",
-        ),
+        sa.UniqueConstraint("person_id", "normalized_url", name="uq_person_social_link_url"),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -154,9 +149,27 @@ class PersonSocialLink(SQLModel, table=True):
     platform: str
     handle: str
     url: str
+    normalized_url: str | None = None
+    brand_domain: str | None = None
+    label: str | None = None
+    sort_order: int = 0
     created_at: datetime = Field(default_factory=datetime.now)
 
     person: "Person" = Relationship(back_populates="social_links")
+
+
+class SocialBrand(SQLModel, table=True):
+    __tablename__ = "social_brand"
+
+    domain: str = Field(primary_key=True)
+    display_name: str
+    simple_icons_slug: str | None = None
+    colour: str | None = None
+    icon_path: str | None = None
+    source: str | None = None
+    fetched_at: datetime | None = None
+    status: str = "pending"
+    error: str | None = None
 
 
 class Blacklist(SQLModel, table=True):

@@ -96,3 +96,48 @@ def suggest_from_paths(paths: Iterable[str]) -> list[SocialLinkSuggestion]:
         suggestions,
         key=lambda item: (-item.media_count, item.handle.casefold()),
     )
+
+
+def preview_social_url(raw: str):
+    """Normalize without writing a cache row or performing network requests."""
+    from app.models import SocialBrand
+    from app.schemas.person import SocialBrandRead, SocialLinkPreview
+    from app.services.social_registry import normalize_social_url, brand_metadata
+    values = normalize_social_url(raw)
+    metadata = brand_metadata(values['brand_domain'], values['platform'])
+    known = bool(metadata['simple_icons_slug'])
+    brand = SocialBrand(domain=values['brand_domain'], **metadata,
+                        source='simple-icons' if known else None,
+                        status='ready' if known else 'pending')
+    return SocialLinkPreview(**values, brand=SocialBrandRead.model_validate(brand))
+
+
+def ensure_social_brand(session, domain: str, platform: str | None = None):
+    from app.models import SocialBrand
+    from app.services.social_registry import brand_metadata
+    brand = session.get(SocialBrand, domain)
+    if brand is None:
+        metadata = brand_metadata(domain, platform)
+        known = bool(metadata['simple_icons_slug'])
+        brand = SocialBrand(domain=domain, **metadata,
+                            source='simple-icons' if known else None,
+                            status='ready' if known else 'pending')
+        session.add(brand)
+    return brand
+
+
+def social_link_read(session, link):
+    from app.models import SocialBrand
+    from app.schemas.person import SocialBrandRead, SocialLinkRead
+    result = SocialLinkRead.model_validate(link)
+    if link.brand_domain:
+        brand = session.get(SocialBrand, link.brand_domain)
+        if brand:
+            result.brand = SocialBrandRead.model_validate(brand)
+    return result
+
+
+def resolve_social_brand(domain: str):
+    """Lazy import keeps normalization and migration entirely offline."""
+    from app.services.social_brands import resolve_brand
+    resolve_brand(domain)

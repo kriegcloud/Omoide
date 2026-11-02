@@ -5,10 +5,10 @@ over ``/{person_id}``."""
 from fastapi import APIRouter, Depends
 from app.config import require_mutation_allowed
 
-from . import extensions, appearances, core, merging, relationships, timeline
+from . import extensions, appearances, avatar, core, merging, relationships, timeline
 
 router = APIRouter(dependencies=[Depends(require_mutation_allowed)])
-for _module in (extensions, core, timeline, appearances, merging, relationships):
+for _module in (extensions, core, timeline, appearances, avatar, merging, relationships):
     router.include_router(_module.router)
 
 # Preserve callable imports used by local services and integrations.

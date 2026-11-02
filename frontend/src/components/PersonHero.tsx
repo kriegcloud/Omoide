@@ -6,11 +6,9 @@ import React, { useState, useEffect } from "react";
 import {
   Box,
   Typography,
-  Avatar,
   Stack,
   Button,
   Paper,
-  useTheme,
   CircularProgress,
   Chip,
   Menu,
@@ -22,8 +20,12 @@ import { alpha } from "@mui/material/styles";
 import Grid from "@mui/material/Grid";
 import { Person } from "../types";
 import { PersonEditForm } from "./PersonEditForm";
-import config, { API } from "../config";
-import { encodeFilePath } from "../urlUtils";
+import config from "../config";
+import EditIcon from "@mui/icons-material/Edit";
+import { Alert, ButtonBase, Snackbar } from "@mui/material";
+import AvatarPicker from "./AvatarPicker";
+import PersonAvatar from "./PersonAvatar";
+import { usePersonAvatar } from "../hooks/usePersonAvatar";
 import { PersonSocialLinks } from "./PersonSocialLinks";
 import { useNavigate } from "react-router-dom";
 import { createDatasetFromPerson } from "../services/datasets";
@@ -45,21 +47,20 @@ interface PersonHeroProps {
 }
 
 export function PersonHero({
-  person,
+  person: initialPerson,
   onSave,
   onGenderChange,
   onMerge,
   onDelete,
   onRefreshSimilar,
-  onAutoSelectProfile,
   onHideToggle,
   onExportMedia,
   saving,
-  autoSelectingProfile,
   canExportMedia,
   exportingMedia,
 }: PersonHeroProps) {
-  const theme = useTheme();
+  const avatar = usePersonAvatar(initialPerson);
+  const person = avatar.person;
   const [favorite, setFavorite] = useState(Boolean(person.is_favorite));
   const [favoriteBusy, setFavoriteBusy] = useState(false);
   useEffect(() => setFavorite(Boolean(person.is_favorite)), [person.id, person.is_favorite]);
@@ -72,28 +73,19 @@ export function PersonHero({
   const navigate = useNavigate();
   const [creatingDataset, setCreatingDataset] = useState(false);
   const [genderAnchor, setGenderAnchor] = useState<HTMLElement | null>(null);
-  const thumbUrl = person.profile_face?.thumbnail_path
-    ? `${API}/thumbnails/${encodeFilePath(
-        person.profile_face.thumbnail_path
-      )}`
-    : undefined;
 
   return (
     <Box sx={{ mb: 4 }}>
+      {!config.PRESENTATION_MODE && <AvatarPicker person={person} open={avatar.open} busy={avatar.busy} uncertain={avatar.uncertain} onCheckStatus={avatar.checkStatus} onClose={() => avatar.setOpen(false)} onSelect={avatar.change} onAutoPick={avatar.autoPick} />}
+      <Snackbar open={Boolean(avatar.error)} onClose={avatar.clearError}><Alert severity="error" onClose={avatar.clearError} action={avatar.uncertain ? <Button color="inherit" disabled={avatar.busy} onClick={() => void avatar.checkStatus()}>Check status</Button> : undefined}>{avatar.error}</Alert></Snackbar>
       {/* CORRECTED: Using the standard Grid component with your project's 'size' prop syntax */}
       <Grid container spacing={{ xs: 2, md: 4 }} alignItems="center">
         {/* Profile Avatar */}
         <Grid size={{ xs: 12, sm: 4, md: 3 }} sx={{ textAlign: "center" }}>
-          <Avatar
-            src={thumbUrl}
-            sx={{
-              width: { xs: 120, md: 160 },
-              height: { xs: 120, md: 160 },
-              mx: "auto",
-              border: `4px solid ${theme.palette.background.paper}`,
-              boxShadow: theme.shadows[6],
-            }}
-          />
+          {config.PRESENTATION_MODE ? <Box sx={{ display: "inline-flex" }}><PersonAvatar face={person.profile_face} /></Box> : <ButtonBase aria-label="Change profile photo" aria-haspopup="dialog" onClick={() => avatar.setOpen(true)} disabled={avatar.busy} sx={{ position: "relative", borderRadius: "50%", "& .avatar-edit": { opacity: 0 }, "&:hover .avatar-edit, &:focus-visible .avatar-edit": { opacity: 1 }, "&:focus-visible": { outline: "3px solid", outlineColor: "primary.main", outlineOffset: 4 } }}>
+            <PersonAvatar face={person.profile_face} />
+            <Box className="avatar-edit" sx={{ position: "absolute", bottom: 2, right: 2, borderRadius: "50%", p: 1, bgcolor: "primary.main", color: "primary.contrastText", display: "flex", "@media (hover: none)": { opacity: 1 } }}><EditIcon fontSize="small" /></Box>
+          </ButtonBase>}
         </Grid>
 
         {/* Person Details and Actions */}
@@ -193,10 +185,10 @@ export function PersonHero({
               </Button>
               <Button
                 variant="outlined"
-                onClick={onAutoSelectProfile}
-                disabled={saving || autoSelectingProfile}
+                onClick={() => void avatar.autoPick()}
+                disabled={saving || avatar.busy || avatar.uncertain}
               >
-                {autoSelectingProfile ? (
+                {avatar.busy ? (
                   <CircularProgress size={18} thickness={5} />
                 ) : (
                   "Auto Profile"

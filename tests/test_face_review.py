@@ -200,7 +200,7 @@ class IgnoreMigrationTests(unittest.TestCase):
         from sqlalchemy import inspect
         from sqlmodel import create_engine
         script = ScriptDirectory.from_config(Config('alembic.ini'))
-        self.assertEqual(script.get_heads(), ['b8c9d0e1f203'])
+        self.assertEqual(script.get_heads(), ['c9d0e1f20314'])
         revision = script.get_revision('f0611a9c2e74')
         self.assertEqual(revision.down_revision, '598e24827831')
         engine = create_engine('sqlite://')

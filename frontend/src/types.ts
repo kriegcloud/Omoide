@@ -99,7 +99,36 @@ export type SocialPlatform =
   | "threads"
   | "facebook"
   | "snapchat"
+  | "bluesky"
+  | "mastodon"
+  | "reddit"
+  | "twitch"
+  | "patreon"
+  | "fansly"
+  | "linkedin"
+  | "pinterest"
   | "other";
+
+export interface SocialBrand {
+  domain: string;
+  display_name: string;
+  simple_icons_slug?: string | null;
+  colour?: string | null;
+  icon_path?: string | null;
+  source?: string | null;
+  fetched_at?: string | null;
+  status: "ready" | "pending" | "needs_icon" | "error";
+  error?: string | null;
+}
+
+export interface SocialLinkPreview {
+  platform: SocialPlatform;
+  handle: string;
+  url: string;
+  normalized_url: string;
+  brand_domain: string;
+  brand?: SocialBrand | null;
+}
 
 export interface SocialLink {
   id: number;
@@ -107,6 +136,11 @@ export interface SocialLink {
   handle: string;
   url: string;
   created_at: string;
+  normalized_url?: string;
+  brand_domain?: string;
+  label?: string | null;
+  sort_order?: number;
+  brand?: SocialBrand | null;
 }
 
 export interface SocialLinkSuggestion {

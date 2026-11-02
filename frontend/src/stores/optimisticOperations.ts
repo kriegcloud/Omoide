@@ -27,6 +27,8 @@ export interface OptimisticCommand<I, R> {
   patches: readonly OperationPatch[];
   request: (input: Readonly<I>, id: string) => Promise<R>;
   receipt?: (result: R) => unknown;
+  /** Replace a derived intent with authoritative fields, within locked resources. */
+  responsePatches?: (result: R) => readonly OperationPatch[];
   /** For transport errors carrying a receipt in an error body. */
   errorReceipt?: (error: unknown) => unknown;
   lookup?: (id: string) => Promise<unknown>;
@@ -182,6 +184,11 @@ export function startOperation<I, R>(command: OptimisticCommand<I, R>): Operatio
       const receipt = command.receipt ? parseMutationReceipt(command.receipt(result), id) : {
         operation_id: id, state: "succeeded" as const, applied: resources, failed: [], skipped: [], unknown: [],
       };
+      if (command.responsePatches) {
+        const responsePatches = structuredClone(command.responsePatches(result));
+        if (responsePatches.some(patch => !resources.includes(patch.key))) throw new Error("Response patch escaped operation resources");
+        update(id, { patches: responsePatches });
+      }
       return settle(id, receipt);
     } catch (error) {
       try {

@@ -22,6 +22,7 @@ interface FaceCardProps {
   face: Face;
   isProfile: boolean;
   onSetProfile?: (faceId: number) => void;
+  onChoose?: () => void;
   selected?: boolean;
   selecting?: boolean;
   keyboardReview?: boolean;
@@ -33,6 +34,7 @@ function FaceCard({
   face,
   isProfile,
   onSetProfile,
+  onChoose,
   selected = false,
   selecting = selected,
   keyboardReview = false,
@@ -67,7 +69,7 @@ function FaceCard({
       keyboardReview={keyboardReview}
       selectionEnabled={Boolean(onSelectionClick)}
       onSelectionClick={onSelectionClick ?? (() => false)}
-      onOpen={handleCardClick}
+      onOpen={onChoose ?? handleCardClick}
       aspectRatio={aspectRatio}
       sx={{ width: "100%", cursor: "pointer", boxShadow: 2, ...(isProfile && { outline: `3px solid ${theme.palette.primary.main}`, outlineOffset: -3 }) }}
       footer={footer}

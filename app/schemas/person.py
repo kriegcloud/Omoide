@@ -9,11 +9,8 @@ from sqlmodel import SQLModel
 from app.schemas.face import FaceRead
 
 
-class ProfileFace(BaseModel):
-    id: int
-    thumbnail_path: str
-    assigned_at: datetime | None = None
-    assignment_source: str | None = None
+class ProfileFace(FaceRead):
+    """Profile crop with the same parent geometry as gallery faces."""
 
 
 class TagSimple(SQLModel):
@@ -24,22 +21,56 @@ class TagSimple(SQLModel):
 
 
 SocialPlatform = Literal[
-    "instagram",
-    "tiktok",
-    "x",
-    "youtube",
-    "onlyfans",
-    "threads",
-    "facebook",
-    "snapchat",
-    "other",
+    "instagram", "tiktok", "x", "youtube", "onlyfans", "threads", "facebook",
+    "snapchat", "reddit", "twitch", "linkedin", "pinterest", "fansly", "patreon",
+    "linktree", "beacons", "imdb", "spotify", "soundcloud", "github", "bluesky",
+    "mastodon", "telegram", "discord", "vsco", "cashapp", "venmo", "other",
 ]
 
 
-class SocialLinkCreate(BaseModel):
+class SocialBrandRead(BaseModel):
+    domain: str
+    display_name: str
+    simple_icons_slug: str | None = None
+    colour: str | None = None
+    icon_path: str | None = None
+    source: str | None = None
+    fetched_at: datetime | None = None
+    status: str = "pending"
+    error: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SocialLinkPreviewRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=4096)
+
+
+class SocialLinkPreview(BaseModel):
     platform: SocialPlatform
     handle: str
-    url: str | None = None
+    url: str
+    normalized_url: str
+    brand_domain: str
+    brand: SocialBrandRead | None = None
+
+
+class SocialLinkCreate(BaseModel):
+    platform: SocialPlatform | None = None
+    handle: str | None = None
+    url: str | None = Field(default=None, max_length=4096)
+    label: str | None = Field(default=None, max_length=200)
+    sort_order: int | None = Field(default=None, ge=0)
+
+
+class SocialLinkUpdate(BaseModel):
+    url: str | None = Field(default=None, max_length=4096)
+    label: str | None = Field(default=None, max_length=200)
+    sort_order: int | None = Field(default=None, ge=0)
+
+
+class SocialLinkReorder(BaseModel):
+    link_ids: list[int]
 
 
 class SocialLinkRead(BaseModel):
@@ -47,6 +78,11 @@ class SocialLinkRead(BaseModel):
     platform: SocialPlatform
     handle: str
     url: str
+    normalized_url: str | None = None
+    brand_domain: str | None = None
+    label: str | None = None
+    sort_order: int = 0
+    brand: SocialBrandRead | None = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

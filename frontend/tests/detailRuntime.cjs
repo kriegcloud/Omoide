@@ -14,6 +14,11 @@ function hooks() {
     useMemo(fn,deps) { const i=cursor++; if (!slots[i] || !same(slots[i].deps,deps)) slots[i]={deps,value:fn()}; return slots[i].value; },
     useEffect(fn,deps) { const i=cursor++; if (!slots[i] || !same(slots[i].deps,deps)) effects.push(() => { slots[i]?.cleanup?.(); slots[i]={deps,cleanup:fn()}; }); },
   };
+  api.useSyncExternalStore = (subscribe, getSnapshot) => {
+    const [snapshot, setSnapshot] = api.useState(getSnapshot);
+    api.useEffect(() => subscribe(() => setSnapshot(getSnapshot())), [subscribe, getSnapshot]);
+    return snapshot;
+  };
   api.useLayoutEffect = api.useEffect;
   return { api, render(fn) { for(let n=0;n<30;n++) { cursor=0; dirty=false; effects=[]; const value=fn(); effects.forEach(fn=>fn()); if(!dirty) return value; } throw Error('Render did not settle'); }, unmount() { slots.forEach(slot=>slot?.cleanup?.()); } };
 }
@@ -31,6 +36,7 @@ function load(relative, runtime, modules={}) {
     '../stores/mutationBus':{mutationBus:{emit:noop,subscribe:()=>noop},runOptimistic:async ({apply,request,rollback})=>{const snapshot=apply();try{return await request();}catch(err){rollback(snapshot);throw err;}}},
     '../services/config':{getConfig:async()=>({general:{}})},
     '../services/repairs':{listRepairs:async()=>({items:[]})},
+    '../stores/optimisticOperations':{optimisticOperations:{subscribe:()=>noop,getSnapshot:()=>[]},projectEntity:(_key,base)=>base,acknowledgeQuery:noop,operationVersion:()=>0},
     '../stores/peopleCache':{patchPersonInGrids:noop,clearPeopleGrids:noop,removePeopleFromGrids:noop},
     'react-intersection-observer':{useInView:()=>({ref:noop,inView:false})},
     ...modules,

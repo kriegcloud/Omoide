@@ -740,6 +740,8 @@ app.include_router(proc_router, prefix="/api", tags=["processors"])
 app.include_router(media, prefix="/api/media", tags=["media"])
 app.include_router(merge_queue_router, prefix="/api/persons", tags=["person"])
 app.include_router(person, prefix="/api/person", tags=["person"])
+from app.api.social_brands import router as social_brands_router
+app.include_router(social_brands_router, prefix="/api/social-brands", tags=["social-brands"])
 app.include_router(tasks, prefix="/api/tasks", tags=["tasks"])
 app.include_router(face, prefix="/api/faces", tags=["faces"])
 app.include_router(tags, prefix="/api/tags", tags=["tags"])

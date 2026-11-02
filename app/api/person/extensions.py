@@ -7,6 +7,7 @@ import shutil
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Body,
     Depends,
     HTTPException,
@@ -79,6 +80,10 @@ from app.schemas.person import (
     RelationshipNode,
     SimilarPerson,
     SocialLinkCreate,
+    SocialLinkUpdate,
+    SocialLinkReorder,
+    SocialLinkPreviewRequest,
+    SocialLinkPreview,
     SocialLinkRead,
     SocialLinkSuggestion,
 )
@@ -87,7 +92,8 @@ from app.schemas.timeline import (
     TimelineEventUpdate,
     TimelinePage,
 )
-from app.services.social_links import derive_url, normalize_handle, suggest_from_paths
+from app.services.social_links import (derive_url, suggest_from_paths, preview_social_url,
+    ensure_social_brand, social_link_read, resolve_social_brand)
 from app.services.face_provenance import face_assignment_values, stamp_face_assignment
 from app.utils import (
     _distance_to_similarity,
@@ -485,73 +491,113 @@ def get_all_persons_simple(session: Session = Depends(get_session)):
     return [PersonReadSimple.model_validate(p) for p in people]
 
 
-@router.get(
-    "/{person_id}/social-links",
-    response_model=list[SocialLinkRead],
-)
-def get_social_links(
-    person_id: int,
-    session: Session = Depends(get_session),
-) -> list[PersonSocialLink]:
+@router.post("/social-links/preview", response_model=SocialLinkPreview)
+def preview_social_link(data: SocialLinkPreviewRequest):
+    try:
+        return preview_social_url(data.url)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/{person_id}/social-links", response_model=list[SocialLinkRead])
+def get_social_links(person_id: int, session: Session = Depends(get_session)):
     _require_person(person_id, session)
-    return list(
-        session.exec(
-            select(PersonSocialLink)
-            .where(PersonSocialLink.person_id == person_id)
-            .order_by(PersonSocialLink.created_at, PersonSocialLink.id)
-        ).all()
-    )
+    links = session.exec(select(PersonSocialLink).where(
+        PersonSocialLink.person_id == person_id).order_by(
+        PersonSocialLink.sort_order, PersonSocialLink.created_at, PersonSocialLink.id)).all()
+    return [social_link_read(session, link) for link in links]
 
 
-@router.post(
-    "/{person_id}/social-links",
-    response_model=SocialLinkRead,
-    status_code=status.HTTP_201_CREATED,
-)
-def add_social_link(
-    person_id: int,
-    data: SocialLinkCreate,
-    session: Session = Depends(get_session),
-) -> PersonSocialLink:
-    _require_mutations_enabled()
-    _require_person(person_id, session)
-    handle = normalize_handle(data.platform, data.handle)
-    if not handle:
-        raise HTTPException(status_code=400, detail="Handle is required")
-    explicit_url = data.url.strip() if data.url else ""
-    if data.platform == "other" and not explicit_url:
-        raise HTTPException(
-            status_code=400,
-            detail="Platform 'other' requires an explicit URL",
-        )
-    url = explicit_url or derive_url(data.platform, handle)
-    duplicate = session.exec(
-        select(PersonSocialLink.id).where(
-            PersonSocialLink.person_id == person_id,
-            PersonSocialLink.platform == data.platform,
-            PersonSocialLink.handle == handle,
-        )
-    ).first()
-    if duplicate is not None:
-        raise HTTPException(status_code=409, detail="Social link already exists")
+def _social_values(data):
+    try:
+        raw = data.url
+        if not raw:
+            if not data.platform or not data.handle:
+                raise ValueError("URL is required")
+            raw = derive_url(data.platform, data.handle)
+        return preview_social_url(raw).model_dump(exclude={"brand"})
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(400, str(exc)) from exc
 
-    link = PersonSocialLink(
-        person_id=person_id,
-        platform=data.platform,
-        handle=handle,
-        url=url,
-    )
+
+def _social_duplicate(session, person_id, normalized_url, excluding=None):
+    query = select(PersonSocialLink.id).where(
+        PersonSocialLink.person_id == person_id,
+        PersonSocialLink.normalized_url == normalized_url)
+    if excluding is not None:
+        query = query.where(PersonSocialLink.id != excluding)
+    if session.exec(query).first() is not None:
+        raise HTTPException(409, "Social link already exists")
+
+
+def _commit_social_link(session, link, background_tasks):
+    ensure_social_brand(session, link.brand_domain, link.platform)
     session.add(link)
     try:
         safe_commit(session)
     except IntegrityError as exc:
         session.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail="Social link already exists",
-        ) from exc
+        raise HTTPException(409, "Social link already exists") from exc
     session.refresh(link)
-    return link
+    result = social_link_read(session, link)
+    if background_tasks is not None and result.brand and result.brand.status == "pending":
+        background_tasks.add_task(resolve_social_brand, link.brand_domain)
+    return result
+
+
+@router.post("/{person_id}/social-links", response_model=SocialLinkRead,
+             status_code=status.HTTP_201_CREATED)
+def add_social_link(person_id: int, data: SocialLinkCreate,
+                    session: Session = Depends(get_session),
+                    background_tasks: BackgroundTasks = None):
+    _require_mutations_enabled()
+    _require_person(person_id, session)
+    values = _social_values(data)
+    _social_duplicate(session, person_id, values["normalized_url"])
+    maximum = session.exec(select(func.max(PersonSocialLink.sort_order)).where(
+        PersonSocialLink.person_id == person_id)).one()
+    link = PersonSocialLink(person_id=person_id, **values, label=data.label,
+        sort_order=data.sort_order if data.sort_order is not None else (maximum + 1 if maximum is not None else 0))
+    return _commit_social_link(session, link, background_tasks)
+
+
+@router.patch("/{person_id}/social-links/{link_id}", response_model=SocialLinkRead)
+def update_social_link(person_id: int, link_id: int, data: SocialLinkUpdate,
+                       session: Session = Depends(get_session),
+                       background_tasks: BackgroundTasks = None):
+    _require_mutations_enabled()
+    _require_person(person_id, session)
+    link = session.get(PersonSocialLink, link_id)
+    if link is None or link.person_id != person_id:
+        raise HTTPException(404, "Social link not found")
+    if "url" in data.model_fields_set:
+        if not data.url:
+            raise HTTPException(400, "URL is required")
+        values = _social_values(data)
+        _social_duplicate(session, person_id, values["normalized_url"], link_id)
+        for field, value in values.items():
+            setattr(link, field, value)
+    if "label" in data.model_fields_set:
+        link.label = data.label
+    if data.sort_order is not None:
+        link.sort_order = data.sort_order
+    return _commit_social_link(session, link, background_tasks)
+
+
+@router.put("/{person_id}/social-links/reorder", response_model=list[SocialLinkRead])
+def reorder_social_links(person_id: int, data: SocialLinkReorder,
+                         session: Session = Depends(get_session)):
+    _require_mutations_enabled()
+    _require_person(person_id, session)
+    links = session.exec(select(PersonSocialLink).where(PersonSocialLink.person_id == person_id)).all()
+    if len(data.link_ids) != len(set(data.link_ids)) or set(data.link_ids) != {link.id for link in links}:
+        raise HTTPException(400, "Reorder must contain every owned link ID exactly once")
+    by_id = {link.id: link for link in links}
+    for order, id in enumerate(data.link_ids):
+        by_id[id].sort_order = order
+        session.add(by_id[id])
+    safe_commit(session)
+    return get_social_links(person_id, session)
 
 
 @router.delete(
@@ -755,9 +801,9 @@ def _merge_person_into_target(
 
     # Move ORM relationships as well as their keys so delete-orphan cascade
     # cannot remove a transferred link from an already-loaded source collection.
-    target_links = {(link.platform, link.handle) for link in target.social_links}
+    target_links = {link.normalized_url or link.url for link in target.social_links}
     for link in list(source.social_links):
-        key = (link.platform, link.handle)
+        key = link.normalized_url or link.url
         if key in target_links:
             session.delete(link)
         else:

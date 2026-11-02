@@ -205,3 +205,16 @@ test('legacy cursor removal is idempotent for repeated explicit ids',async()=>{
  const fetcher=async()=>({items:[{id:1},{id:2}],next_cursor:null,total:10}),render=()=>runtime.render(()=>hook(fetcher));
  render();await settle();render().removeItems([1]);render().removeItems([1]);assert.equal(render().total,9);runtime.unmount();
 });
+test('response patches replace a derived pending patch before commit',async()=>{
+ const e=environment(),d=deferred();
+ const h=e.startOperation({id:'auto-avatar',label:'Auto profile',input:{},resources:['person:1'],patches:[{key:'person:1',kind:'derived',field:'profile_face'}],request:()=>d.promise,responsePatches:result=>[{key:'person:1',kind:'fields',values:{profile_face:result.face}}]});
+ assert.equal(e.projectEntity('person:1',{id:1,profile_face:{id:2}}).profile_face.id,2);
+ await tick();d.resolve({face:{id:3}});await h.done;
+ assert.equal(e.projectEntity('person:1',{id:1,profile_face:{id:2}}).profile_face.id,3);
+});
+test('response patches cannot escape resources locked by the request',async()=>{
+ const e=environment();
+ const h=e.startOperation({id:'bad-response-patch',label:'bad',input:{},resources:['person:1'],patches:[],request:async()=>({}),responsePatches:()=>[{key:'person:2',kind:'fields',values:{name:'wrong'}}]});
+ assert.equal((await h.done).state,'unknown');
+ assert.equal(e.projectEntity('person:2',{id:2,name:'original'}).name,'original');
+});
