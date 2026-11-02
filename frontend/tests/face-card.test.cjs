@@ -19,14 +19,23 @@ function card(face) {
   const props = { face, isProfile: false, selected: true, selecting: true, onSelectionClick: () => true };
   return { render: () => runtime.render(() => Card(props)), navigations };
 }
-test('video fallback keeps timestamp navigation and selection on the shared tile frame', () => {
+test('video exact frame keeps timestamp navigation and selection on the shared tile frame', () => {
   const c = card({ id: 3, media_id: 7, thumbnail_path: 'crop.jpg', timestamp: 12.5, media_thumbnail_path: 'other-frame.jpg', media_duration: 30 });
   const tile = c.render();
   assert.equal(tile.type, './SelectableTileFrame');
   assert.equal(tile.props.selected, true);
   assert.equal(tile.props.selecting, true);
-  assert.equal(find(tile, n => n.props?.component === 'img').props.src, '/api/thumbnails/crop.jpg');
+  assert.equal(find(tile, n => n.props?.component === 'img').props.src, '/api/api/faces/3/frame');
   assert.equal(find(tile, n => n.type === './FaceBoxOverlay'), undefined);
+  find(tile, n => n.props?.component === 'img').props.onLoad({ currentTarget: { naturalWidth: 1280, naturalHeight: 720 } });
+  const loaded = c.render();
+  const overlay = find(loaded, n => n.type === './FaceBoxOverlay');
+  assert.equal(overlay.props.sourceWidth, 1280);
+  assert.equal(overlay.props.sourceHeight, 720);
+  find(loaded, n => n.props?.component === 'img').props.onError();
+  const fallback = c.render();
+  assert.equal(find(fallback, n => n.props?.component === 'img').props.src, '/api/thumbnails/crop.jpg');
+  assert.equal(find(fallback, n => n.type === './FaceBoxOverlay'), undefined);
   tile.props.onOpen();
   assert.equal(c.navigations[0][0], '/medium/7');
   assert.equal(c.navigations[0][1].state.sceneStart, 12.5);
