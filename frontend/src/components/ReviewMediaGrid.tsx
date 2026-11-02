@@ -1,4 +1,4 @@
-import Gallery from "./Gallery";
+import Gallery, { type VirtualGalleryItem } from "./Gallery";
 import ListState from "./ListState";
 import React from "react";
 import { Box, CircularProgress, Paper } from "@mui/material";
@@ -6,7 +6,7 @@ import { Box, CircularProgress, Paper } from "@mui/material";
 import MarqueeSelectionBox from "./MarqueeSelectionBox";
 import type { MarqueeRect } from "../hooks/useMarqueeSelection";
 
-interface ReviewMediaGridProps {
+interface ReviewMediaGridBaseProps {
   gridRef?: React.RefObject<HTMLDivElement | null>;
   marqueeRect?: MarqueeRect | null;
   error?: string | null;
@@ -16,8 +16,20 @@ interface ReviewMediaGridProps {
   hasMore: boolean;
   loaderRef: (node?: Element | null) => void;
   empty: React.ReactNode;
-  children: React.ReactNode;
+  children?: React.ReactNode;
 }
+
+/** Virtual callers supply complete geometry, query identity and internal paging.
+ * Their selection hook must receive the same complete loaded ID order. */
+type ReviewMediaGridProps = ReviewMediaGridBaseProps & ({
+  virtualItems: VirtualGalleryItem[];
+  listKey: string;
+  onEndReached: () => void;
+} | {
+  virtualItems?: undefined;
+  listKey?: string;
+  onEndReached?: () => void;
+});
 
 const ReviewMediaGrid: React.FC<ReviewMediaGridProps> = ({
   gridRef,
@@ -30,6 +42,9 @@ const ReviewMediaGrid: React.FC<ReviewMediaGridProps> = ({
   loaderRef,
   empty,
   children,
+  virtualItems,
+  listKey,
+  onEndReached,
 }) => (
   <Paper variant="outlined" sx={{ mb: 3 }}>
     {itemCount === 0 ? (
@@ -41,12 +56,15 @@ const ReviewMediaGrid: React.FC<ReviewMediaGridProps> = ({
           position: "relative",
         }}
       >
-        <Gallery>{children}</Gallery>
+        <Gallery virtualItems={virtualItems} listKey={listKey}
+          onEndReached={() => { if (hasMore && !isLoading && !error) onEndReached?.(); }}>
+          {children}
+        </Gallery>
         <MarqueeSelectionBox container={gridRef?.current ?? null} rect={marqueeRect} />
       </Box>
     )}
     {itemCount > 0 && <ListState error={error} onRetry={onRetry} />}
-    {hasMore && !error && <Box ref={loaderRef} sx={{ height: 1 }} />}
+    {!virtualItems && hasMore && !error && <Box ref={loaderRef} sx={{ height: 1 }} />}
     {isLoading && itemCount > 0 && (
       <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
         <CircularProgress size={24} />

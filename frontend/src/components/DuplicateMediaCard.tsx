@@ -106,6 +106,8 @@ export const DuplicateMediaCard: React.FC<DuplicateMediaCardProps> = ({
       >
         <CardMedia
           component="img"
+          loading="lazy"
+          decoding="async"
           image={thumbUrl}
           alt={filename}
           width={media.width || undefined}

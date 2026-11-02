@@ -120,6 +120,7 @@ function FaceCard({
         src={thumbUrl}
         alt={showsParent ? "Parent image with detected face" : "Detected face crop"}
         loading="lazy"
+        decoding="async"
         draggable={false}
         onLoad={onLoad}
         onError={onError}
