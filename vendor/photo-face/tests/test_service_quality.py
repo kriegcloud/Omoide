@@ -188,3 +188,38 @@ def test_recorded_onnx_outputs_match_torch_adapter():
         actual = gpu.detect(np.zeros(shape,dtype=np.uint8), max_num=32)
         assert len(expected[0]) > 0
         for left,right in zip(expected,actual): np.testing.assert_array_equal(left,right)
+
+
+def test_torch_detector_conversion_writes_nothing_beside_the_model():
+    # Under systemd ProtectHome=read-only the model directory is read-only;
+    # onnx2torch writes a shape-inference temp file next to a *path* argument
+    # (2026-11-02 restart loop), so the converter must receive a loaded proto.
+    import sys
+    import types
+    from unittest.mock import MagicMock
+    from beep_photo_face.backends import service_models
+
+    proto = object()
+    seen = {}
+    fake_onnx = types.SimpleNamespace(load=lambda path: seen.setdefault('loaded', path) and proto)
+    module = MagicMock()
+    module.eval.return_value = module
+    module.to.return_value = module
+    fake_converter = types.SimpleNamespace(convert=lambda arg: seen.setdefault('converted', arg) and module)
+    detector = types.SimpleNamespace(session=MagicMock())
+    detector.session.get_outputs.return_value = []
+    detector.session.get_inputs.return_value = [types.SimpleNamespace(name='input.1')]
+    torch = MagicMock()
+    saved = {name: sys.modules.get(name) for name in ('onnx', 'onnx2torch')}
+    sys.modules['onnx'] = fake_onnx
+    sys.modules['onnx2torch'] = fake_converter
+    try:
+        service_models.enable_torch_detector(detector, '/models/det_10g.onnx', torch, 'cuda:0')
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = value
+    assert seen['loaded'] == '/models/det_10g.onnx'
+    assert seen['converted'] is proto

@@ -34,8 +34,11 @@ class TorchDetectorSession:
 
 
 def enable_torch_detector(detector, path, torch, device, fp16=False):
+    import onnx
     from onnx2torch import convert
-    module = convert(str(path)).eval().to(
+    # Pass a loaded proto: given a path, onnx2torch writes a shape-inference
+    # temp file beside the model, which is read-only under ProtectHome.
+    module = convert(onnx.load(str(path))).eval().to(
         device=device, dtype=torch.float16 if fp16 else torch.float32)
     detector.session = TorchDetectorSession(detector.session, module, torch, device, fp16)
     # InsightFace 1.0.1 supports multiple resolutions; force exactly one.
