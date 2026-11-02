@@ -1,74 +1,22 @@
-import React from "react";
-import { Box, Switch, Tooltip } from "@mui/material";
-import { styled } from "@mui/material/styles";
-import DarkModeIcon from "@mui/icons-material/DarkMode";
-import LightModeIcon from "@mui/icons-material/LightMode";
-import { useThemeContext } from "../ThemeContext"; // Make sure the path is correct
+import { IconButton, Tooltip } from "@mui/material";
+import DarkModeOutlinedIcon from "@mui/icons-material/DarkModeOutlined";
+import LightModeOutlinedIcon from "@mui/icons-material/LightModeOutlined";
+import { useThemeContext } from "../ThemeContext";
 
-const ThemeSwitch = styled(Switch)(({ theme }) => ({
-  width: 58,
-  height: 34,
-  padding: 0,
-  display: "flex",
-  "& .MuiSwitch-switchBase": {
-    padding: 4,
-    transitionDuration: "180ms",
-    "&.Mui-checked": {
-      transform: "translateX(24px)",
-      color: "#fff",
-      "& + .MuiSwitch-track": {
-        backgroundColor:
-          theme.palette.mode === "dark"
-            ? theme.palette.primary.main
-            : theme.palette.secondary.main,
-        opacity: 1,
-      },
-    },
-  },
-  "& .MuiSwitch-thumb": {
-    boxShadow: "none",
-    width: 24,
-    height: 24,
-    borderRadius: "50%",
-  },
-  "& .MuiSwitch-track": {
-    borderRadius: 4,
-    opacity: 1,
-    backgroundColor:
-      theme.palette.mode === "light"
-        ? theme.palette.grey[400]
-        : theme.palette.grey[700],
-  },
-}));
-
+/** One header icon button, sized like its neighbours; shows the mode it switches to. */
 export default function ThemeToggleButton() {
   const { mode, toggleTheme } = useThemeContext();
-
+  const next = mode === "dark" ? "light" : "dark";
   return (
-    <Tooltip
-      title={`Switch to ${mode === "dark" ? "light" : "dark"} mode`}
-      arrow
-    >
-      <Box
-        display="flex"
-        alignItems="center"
-        gap={1}
-        sx={{ color: "text.secondary" }}
+    <Tooltip title={`Switch to ${next} mode`} arrow>
+      <IconButton
+        onClick={() => toggleTheme()}
+        aria-label={`Switch to ${next} mode`}
+        size="large"
+        sx={{ p: 1, color: "text.secondary", "&:hover": { color: "text.primary" } }}
       >
-        <LightModeIcon
-          fontSize="small"
-          color={mode === "light" ? "warning" : "disabled"}
-        />
-        <ThemeSwitch
-          checked={mode === "dark"}
-          onChange={() => toggleTheme()}
-          inputProps={{ "aria-label": "Toggle light or dark theme" }}
-        />
-        <DarkModeIcon
-          fontSize="small"
-          color={mode === "dark" ? "primary" : "disabled"}
-        />
-      </Box>
+        {mode === "dark" ? <LightModeOutlinedIcon /> : <DarkModeOutlinedIcon />}
+      </IconButton>
     </Tooltip>
   );
 }

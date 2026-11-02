@@ -11,7 +11,8 @@ import {
   AppBar,
   Box,
   Toolbar,
-  TextField,
+  InputBase,
+  Divider,
   Select,
   MenuItem,
   IconButton,
@@ -35,8 +36,8 @@ import { useTheme } from "@mui/material/styles";
 import { useTaskEvents } from "../TaskEventsContext";
 import { Sidebar } from "./Sidebar";
 import { useSelection } from "../context/SelectionContext";
-import CheckBoxOutlineBlankIcon from "@mui/icons-material/CheckBoxOutlineBlank";
-import CheckBoxIcon from "@mui/icons-material/CheckBox";
+import LibraryAddCheckOutlinedIcon from "@mui/icons-material/LibraryAddCheckOutlined";
+import LibraryAddCheckIcon from "@mui/icons-material/LibraryAddCheck";
 
 type SearchCategory = "media" | "person" | "tag" | "scene";
 const SEARCH_CATEGORIES: readonly SearchCategory[] = [
@@ -103,11 +104,11 @@ function TaskStatusButton({ onClick }: { onClick: () => void }) {
         >
           <AssignmentIcon fontSize="small" />
         </Badge>
-        <Box sx={{ textAlign: "left", lineHeight: 1.1 }}>
-          <Typography variant="body2" sx={{ fontWeight: 700 }}>
+        <Box sx={{ textAlign: "left", lineHeight: 1.1, whiteSpace: "nowrap" }}>
+          <Typography variant="body2" sx={{ fontWeight: 700, whiteSpace: "nowrap" }}>
             Tasks & Processing
           </Typography>
-          <Typography variant="caption" sx={{ opacity: 0.8 }}>
+          <Typography variant="caption" sx={{ opacity: 0.8, display: { xs: "none", lg: "block" } }}>
             Run scans & jobs
           </Typography>
         </Box>
@@ -210,7 +211,7 @@ export function Header() {
               size="large"
               sx={{ p: 1 }}
             >
-              {isSelecting ? <CheckBoxIcon /> : <CheckBoxOutlineBlankIcon />}
+              {isSelecting ? <LibraryAddCheckIcon /> : <LibraryAddCheckOutlinedIcon />}
             </IconButton>
           </Tooltip>
         )}
@@ -232,50 +233,67 @@ export function Header() {
     <Box
       component="form"
       onSubmit={onSearchSubmit}
-      sx={{ display: "flex", flexGrow: 1, alignItems: "center" }}
+      sx={{ display: "flex", flexGrow: 1, alignItems: "center", gap: 1, minWidth: 0 }}
     >
-      <Select
-        variant="outlined"
-        size="small"
-        value={category}
-        onChange={(e) => setCategory(e.target.value as SearchCategory)}
-        sx={{ 
-            borderTopRightRadius: 0, 
-            borderBottomRightRadius: 0,
-            bgcolor: 'background.paper',
-            minWidth: 100
-        }}
-      >
-        <MenuItem value="media">Media</MenuItem>
-        {config.ENABLE_PEOPLE && <MenuItem value="person">People</MenuItem>}
-        <MenuItem value="tag">Tags</MenuItem>
-        <MenuItem value="scene">Scenes</MenuItem>
-      </Select>
-      <TextField
-        variant="outlined"
-        size="small"
-        fullWidth
-        inputRef={searchRef}
-        inputProps={{ "aria-label": "Search library" }}
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        placeholder="Search..."
-        sx={{
-          "& .MuiOutlinedInput-root": {
-            borderTopLeftRadius: 0,
-            borderBottomLeftRadius: 0,
-            bgcolor: 'background.paper'
+      {/* One bordered control: scope picker | divider | query. Focus rings the
+          whole group, so the two halves never draw a doubled seam. */}
+      <Box
+        sx={(theme) => ({
+          display: "flex",
+          alignItems: "center",
+          flexGrow: 1,
+          minWidth: 0,
+          height: 40,
+          border: 1,
+          borderColor: "divider",
+          borderRadius: 1,
+          bgcolor: "background.paper",
+          transition: theme.transitions.create(["border-color", "box-shadow"], { duration: 120 }),
+          "&:hover": { borderColor: "text.secondary" },
+          "&:focus-within": {
+            borderColor: "primary.main",
+            boxShadow: `0 0 0 1px ${theme.palette.primary.main}`,
           },
-        }}
-      />
-      <IconButton
-        color="primary"
-        title="Search by image"
-        onClick={() => fileInputRef.current?.click()} // Trigger the hidden input
-        sx={{ ml: 1 }}
+        })}
       >
-        <PhotoCameraIcon />
-      </IconButton>
+        <Select
+          variant="standard"
+          disableUnderline
+          value={category}
+          onChange={(e) => setCategory(e.target.value as SearchCategory)}
+          inputProps={{ "aria-label": "Search scope" }}
+          sx={{
+            flexShrink: 0,
+            pl: 1.5,
+            fontSize: "0.875rem",
+            "& .MuiSelect-select": { py: 0, pr: "28px !important", bgcolor: "transparent !important" },
+          }}
+        >
+          <MenuItem value="media">Media</MenuItem>
+          {config.ENABLE_PEOPLE && <MenuItem value="person">People</MenuItem>}
+          <MenuItem value="tag">Tags</MenuItem>
+          <MenuItem value="scene">Scenes</MenuItem>
+        </Select>
+        <Divider orientation="vertical" flexItem sx={{ my: 1 }} />
+        <InputBase
+          fullWidth
+          inputRef={searchRef}
+          inputProps={{ "aria-label": "Search library" }}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search…"
+          sx={{ px: 1.5, fontSize: "0.875rem", minWidth: 0 }}
+        />
+      </Box>
+      <Tooltip title="Search by image">
+        <IconButton
+          color="primary"
+          aria-label="Search by image"
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <PhotoCameraIcon />
+        </IconButton>
+      </Tooltip>
       <button type="submit" style={{ display: "none" }} />
     </Box>
   );
