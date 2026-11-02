@@ -93,8 +93,8 @@ class ProfileBinding:
 
 _COMFY_NODES = ArtifactBinding(
     path=Path("/home/elpresidank/ai/ComfyUI/nodes.py"),
-    bytes_expected=108_277,
-    sha256="e56fe3ce5e08c168ed9e2c34fb06131814e6b7bee2e70c290fce11f9aa7d0009",
+    bytes_expected=109_650,
+    sha256="4cfd9be3754f9dc25213febdf96b690d6e32007c2e539d37e799d82226d758c5",
     name="ComfyUI/nodes.py",
 )
 _COMFY_PREVIEW_ANY = ArtifactBinding(
@@ -105,21 +105,21 @@ _COMFY_PREVIEW_ANY = ArtifactBinding(
 )
 _COMFY_TEXTGEN = ArtifactBinding(
     path=Path("/home/elpresidank/ai/ComfyUI/comfy_extras/nodes_textgen.py"),
-    bytes_expected=23_350,
-    sha256="1813182f0b50545adfb51a4aace23d3cd86de312a287edf3aebc8ec84df1fde7",
+    bytes_expected=24_929,
+    sha256="c270d0954db9f43665abc223427b310fcbe8fdf452a8e3781477395074f12945",
     name="ComfyUI/comfy_extras/nodes_textgen.py",
 )
 _COMFY_QWEN35 = ArtifactBinding(
     path=Path("/home/elpresidank/ai/ComfyUI/comfy/text_encoders/qwen35.py"),
-    bytes_expected=41_530,
-    sha256="570fbf8b80a61e3238f8485a79487f4df066d13e14fba0a7493ae75b436f9dc5",
+    bytes_expected=67_009,
+    sha256="c3e679f6c8e9a21c866ec7ade4f5a1a35484d0fa2299044e494bca6e9dc21219",
     name="ComfyUI/comfy/text_encoders/qwen35.py with PR 15685 offload fix",
 )
 _COMFY_GIT_HEAD = ArtifactBinding(
     path=Path("/home/elpresidank/ai/ComfyUI/.git/refs/heads/master"),
     bytes_expected=41,
-    sha256="e39f9057f5c90805c97710c4215b9b0aee775a763233dda4300050343ba4884c",
-    name="ComfyUI git revision 250b2e95",
+    sha256="e8c1e980896798016ed12dbb3ec0a9e2f1fcb33677c185cd1c457a4ed6461a3d",
+    name="ComfyUI git revision 7c4390a6",
 )
 _OMOIDE_NODE_INIT = ArtifactBinding(
     path=Path(
@@ -197,8 +197,8 @@ PROFILE_BINDINGS: Mapping[str, ProfileBinding] = MappingProxyType(
             model_repo_id="Comfy-Org/SeedVR2",
             model_revision="673340c8a66db62b84e4099def7d01d337ae12dc",
             model_license="host-managed",
-            comfy_version="0.34.0",
-            comfy_core_commit="250b2e9551a7bc7a8ebb5beb07e0fecd2983e04a",
+            comfy_version="0.43.0",
+            comfy_core_commit="7c4390a6f70cd8eb41014d6af52969397a752fc4",
         ),
         "omoide-caption-v1": ProfileBinding(
             workflow_path=Path(
@@ -255,8 +255,8 @@ PROFILE_BINDINGS: Mapping[str, ProfileBinding] = MappingProxyType(
             model_repo_id="Comfy-Org/Qwen3.5",
             model_revision="5d50a2252bf1bcd49e5fee9b5f296986d442682b",
             model_license="Apache-2.0",
-            comfy_version="0.34.0",
-            comfy_core_commit="250b2e9551a7bc7a8ebb5beb07e0fecd2983e04a",
+            comfy_version="0.43.0",
+            comfy_core_commit="7c4390a6f70cd8eb41014d6af52969397a752fc4",
         ),
         "omoide-tags-v1": ProfileBinding(
             workflow_path=Path(
@@ -322,8 +322,8 @@ PROFILE_BINDINGS: Mapping[str, ProfileBinding] = MappingProxyType(
             model_repo_id="SmilingWolf/wd-eva02-large-tagger-v3",
             model_revision="c5303bb7139430db980e4c680a778fe79d72b541",
             model_license="Apache-2.0",
-            comfy_version="0.34.0",
-            comfy_core_commit="250b2e9551a7bc7a8ebb5beb07e0fecd2983e04a",
+            comfy_version="0.43.0",
+            comfy_core_commit="7c4390a6f70cd8eb41014d6af52969397a752fc4",
             general_threshold=0.5296000242233276,
             character_threshold=0.8500000238418579,
         ),
@@ -641,8 +641,8 @@ def _load_profile(profile_id: str, value: object) -> Profile:
             model_repo_id=("host-managed-repair-workflow" if input_kind == "image" else "host-managed-generate-workflow"),
             model_revision=digest,
             model_license="host-managed",
-            comfy_version="0.34.0",
-            comfy_core_commit="250b2e9551a7bc7a8ebb5beb07e0fecd2983e04a",
+            comfy_version="0.43.0",
+            comfy_core_commit="7c4390a6f70cd8eb41014d6af52969397a752fc4",
             input_json_node_id=input_json_node_id,
             input_json_input=input_json_input,
             input_kind=input_kind,

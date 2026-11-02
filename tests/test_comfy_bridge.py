@@ -888,13 +888,13 @@ class BridgeConfigurationTests(unittest.TestCase):
         self.assertEqual(
             provenance["selection"]["character_threshold"], TAG_CHARACTER_THRESHOLD
         )
-        self.assertEqual(provenance["runtime"]["comfy_version"], "0.34.0")
+        self.assertEqual(provenance["runtime"]["comfy_version"], "0.43.0")
 
     def test_readiness_fails_closed_when_executor_source_changes(self) -> None:
         class ReadyCatalog:
             @staticmethod
             def system_stats() -> dict:
-                return {"system": {"comfyui_version": "0.34.0"}}
+                return {"system": {"comfyui_version": "0.43.0"}}
 
             @staticmethod
             def object_info(node_class: str) -> dict:
