@@ -681,11 +681,13 @@ class AdaFaceAnalysis:
     torch: Any
     device: Any
     batch_size: int
+    mirror_tta: bool = True
 
     @dataclass(frozen=True)
     class EmbeddingResult:
         embedding: np.ndarray | None
         aligner_confidence: float
+        embedding_norm: float | None = None
 
     @staticmethod
     def _square_face_crop(image: np.ndarray, box: Any) -> np.ndarray:
@@ -754,20 +756,36 @@ class AdaFaceAnalysis:
                     .flatten()
                 )
                 accepted_embeddings: dict[int, np.ndarray] = {}
+                accepted_norms: dict[int, float] = {}
                 if int(accepted_indices.numel()) > 0:
                     embeddings = self.recognizer(
                         images.index_select(0, accepted_indices),
                         original_landmarks.index_select(0, accepted_indices),
                     )
-                    embeddings = functional.normalize(embeddings.float(), p=2, dim=1)
+                    embeddings = embeddings.float()
+                    raw_norms = embeddings.norm(p=2, dim=1)
+                    if self.mirror_tta:
+                        mirrored = images.index_select(0, accepted_indices).flip(3)
+                        # The aligner expects BGR (flip(1)); spatial mirroring is
+                        # flip(3). Re-run DFA so KP-RPE gets its own landmarks.
+                        mirror_input = functional.interpolate(
+                            mirrored, size=(160, 160), mode="bilinear", align_corners=True
+                        ).flip(1)
+                        _, _, _, mirror_merged, _ = self.aligner(mirror_input, self.priors)
+                        embeddings += self.recognizer(
+                            mirrored, mirror_merged[:, 6:16].view(-1, 5, 2)
+                        ).float()
+                    embeddings = functional.normalize(embeddings, p=2, dim=1)
                     indices = accepted_indices.to("cpu").tolist()
                     values = embeddings.to("cpu").numpy().astype(np.float32)
                     accepted_embeddings.update(zip(indices, values))
+                    accepted_norms.update(zip(indices, raw_norms.to("cpu").tolist()))
             for index, score in enumerate(confidence.to("cpu").tolist()):
                 results.append(
                     self.EmbeddingResult(
                         embedding=accepted_embeddings.get(index),
                         aligner_confidence=float(score),
+                        embedding_norm=accepted_norms.get(index),
                     )
                 )
         return results
@@ -799,6 +817,7 @@ class AdaFaceAnalysis:
                 det_score=float(box[4]),
                 kps=np.asarray(points, dtype=np.float32),
                 embedding=result.embedding,
+                embedding_norm=result.embedding_norm,
                 embedding_reason=(
                     "aligner-confidence-failed" if result.embedding is None else None
                 ),
@@ -843,6 +862,7 @@ def load_backend(
     det_size: tuple[int, int] = (640, 640),
 ) -> LoadedBackend:
     torch, safetensors_torch = _import_adaface_dependencies()
+    torch.set_num_threads(8)
     selection = resolve_compute(torch, arguments)
     detector_path, aligner_path, recognizer_path = _resolve_artifact_paths(
         arguments, detector_fallback
@@ -865,9 +885,15 @@ def load_backend(
         if selection.actual_compute == "rocm"
         else "cpu"
     )
-    detector = model_zoo.get_model(
-        str(detector_path), providers=["CPUExecutionProvider"]
+    import onnxruntime as ort
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = 8
+    # model_zoo.get_model in InsightFace 1.0.1 drops sess_options.
+    # Build the session explicitly so the thread cap actually reaches ORT.
+    detector_session = ort.InferenceSession(
+        str(detector_path), providers=["CPUExecutionProvider"], sess_options=options
     )
+    detector = model_zoo.SCRFD(str(detector_path), session=detector_session)
     detector.prepare(
         ctx_id=-1, input_size=det_size, det_thresh=arguments.detection_threshold
     )
@@ -887,6 +913,12 @@ def load_backend(
             "det_10g did not accept the requested detector input size",
         )
 
+    if getattr(arguments, "detector_device", "cpu") == "gpu":
+        if det_size != (640, 640) or device.type != "cuda":
+            raise WorkerError("invalid-arguments", "GPU detector requires CUDA/ROCm and det-size 640")
+        from .service_models import enable_torch_detector
+        enable_torch_detector(detector, detector_path, torch, device, arguments.detector_fp16)
+
     aligner, priors = _build_aligner(torch)
     recognizer = _build_recognizer(torch)
     _load_strict_safetensors(aligner, aligner_path, safetensors_torch, "aligner")
@@ -903,6 +935,7 @@ def load_backend(
         torch=torch,
         device=device,
         batch_size=arguments.batch_size,
+        mirror_tta=arguments.mirror_tta,
     )
     hip_version = getattr(getattr(torch, "version", None), "hip", None)
     runtime: dict[str, Any] = {

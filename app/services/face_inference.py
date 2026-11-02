@@ -130,6 +130,11 @@ class AdaFaceSocketAnalysis:
                         if embedding is not None
                         else None
                     ),
+                    embedding_norm=face.get("embeddingNorm"),
+                    sex=face.get("sex"),
+                    age=face.get("age"),
+                    sex_score=face.get("sexScore"),
+                    service_demographics=all(key in face for key in ("sex", "age", "sexScore")),
                     embedding_reason=face.get("embeddingReason"),
                     aligner_confidence=float(face.get("alignerConfidence", 0.0)),
                 )

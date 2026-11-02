@@ -240,6 +240,7 @@ class Face(SQLModel, table=True):
     pitch: float | None = Field(default=None, nullable=True)
     sex: str | None = Field(default=None, nullable=True)
     sex_score: float | None = Field(default=None, nullable=True)
+    embedding_norm: float | None = Field(default=None, nullable=True)
     age: int | None = Field(default=None, nullable=True)
 
     media: "Media" = Relationship(back_populates="faces")

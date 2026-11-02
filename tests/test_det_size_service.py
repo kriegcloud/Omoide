@@ -3,6 +3,7 @@ import io
 from pathlib import Path
 import sys
 import unittest
+import onnxruntime as ort
 from unittest.mock import MagicMock, patch
 from types import SimpleNamespace
 
@@ -42,6 +43,9 @@ class DetectorSizeServiceTests(unittest.TestCase):
                 self.assertEqual(loader.call_args.args[0].detection_threshold, .5)
                 health = instance.handle({"protocol": service.PROTOCOL_VERSION, "action": "health"})
                 self.assertEqual(health["detSize"], size)
+                self.assertTrue(health["mirrorTta"])
+                self.assertFalse(health["demographics"])
+                self.assertEqual(health["detectorDevice"], "cpu")
                 self.assertEqual(health["runtime"]["actualCompute"], "rocm")
 
     def test_backend_prepares_requested_size_and_keeps_cpu_provider_assertion(self):
@@ -51,27 +55,32 @@ class DetectorSizeServiceTests(unittest.TestCase):
         for size in ((640, 640), (1280, 1280)):
             detector = MagicMock()
             detector.session.get_providers.return_value = ["CUDAExecutionProvider"]
-            zoo = SimpleNamespace(get_model=MagicMock(return_value=detector))
+            zoo = SimpleNamespace(SCRFD=MagicMock(return_value=detector))
             selection = SimpleNamespace(actual_compute="cpu", device_ordinals=())
             with self.subTest(size=size), \
                  patch.object(backend, "_import_adaface_dependencies", return_value=(MagicMock(), MagicMock())), \
                  patch.object(backend, "resolve_compute", return_value=selection), \
                  patch.object(backend, "_resolve_artifact_paths", return_value=(Path("d"), Path("a"), Path("r"))), \
-                 patch.object(backend.importlib, "import_module", return_value=zoo):
+                 patch.object(backend.importlib, "import_module", return_value=zoo), \
+                 patch.object(ort, "InferenceSession") as session:
                 with self.assertRaises(WorkerError) as raised:
                     backend.load_backend(args, None, det_size=size)
                 self.assertEqual(raised.exception.code, "unexpected-execution-provider")
-                zoo.get_model.assert_called_once_with("d", providers=["CPUExecutionProvider"])
+                zoo.SCRFD.assert_called_once_with("d", session=session.return_value)
+                self.assertEqual(session.call_args.args, ("d",))
+                self.assertEqual(session.call_args.kwargs["providers"], ["CPUExecutionProvider"])
+                self.assertEqual(session.call_args.kwargs["sess_options"].intra_op_num_threads, 8)
                 detector.prepare.assert_called_once_with(ctx_id=-1, input_size=size, det_thresh=.5)
 
     def test_backend_rejects_detector_that_silently_ignores_requested_size(self):
         detector = MagicMock(input_size=(640, 640))
         detector.session.get_providers.return_value = ["CPUExecutionProvider"]
-        zoo = SimpleNamespace(get_model=MagicMock(return_value=detector))
+        zoo = SimpleNamespace(SCRFD=MagicMock(return_value=detector))
         with patch.object(backend, "_import_adaface_dependencies", return_value=(MagicMock(), MagicMock())), \
              patch.object(backend, "resolve_compute", return_value=SimpleNamespace(actual_compute="cpu")), \
              patch.object(backend, "_resolve_artifact_paths", return_value=(Path("d"), Path("a"), Path("r"))), \
              patch.object(backend.importlib, "import_module", return_value=zoo), \
+             patch.object(ort, "InferenceSession"), \
              patch.object(backend, "_build_aligner", side_effect=AssertionError("must reject before GPU model loading")):
             with self.assertRaises(WorkerError) as raised:
                 backend.load_backend(SimpleNamespace(detection_threshold=.5), None, det_size=(1280, 1280))

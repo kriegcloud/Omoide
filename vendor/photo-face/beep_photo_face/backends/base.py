@@ -34,6 +34,9 @@ class WorkerArguments:
     detector_path: Path | None = None
     aligner_path: Path | None = None
     recognizer_path: Path | None = None
+    mirror_tta: bool = True
+    detector_device: str = "cpu"
+    detector_fp16: bool = False
 
 
 @dataclass(frozen=True)

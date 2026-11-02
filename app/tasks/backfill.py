@@ -203,9 +203,12 @@ def run_backfill_demographics(task_id: str) -> None:
         logger.error("FaceProcessor not found; cannot backfill demographics.")
         return
     face_proc.load_model()
-    analysis = getattr(face_proc, "demographics_model", face_proc.model)
+    from app.services.face_inference import AdaFaceSocketAnalysis
+
+    analysis = getattr(face_proc, "demographics_model", None) or face_proc.model
+    service_attributes = isinstance(analysis, AdaFaceSocketAnalysis)
     attribute_model = getattr(analysis, "models", {}).get("genderage")
-    if attribute_model is None:
+    if attribute_model is None and not service_attributes:
         logger.error("InsightFace genderage model is unavailable.")
         return
 
@@ -246,16 +249,18 @@ def run_backfill_demographics(task_id: str) -> None:
                 media = session.get(Media, face.media_id)
                 crop = _load_face_source(media, face) if media else None
                 if crop is not None:
-                    from insightface.app.common import Face as InsightFace
-
-                    sample = InsightFace(
-                        bbox=np.array(
-                            [0, 0, crop.shape[1], crop.shape[0]],
-                            dtype=np.float32,
-                        )
-                    )
                     try:
-                        attribute_model.get(crop, sample)
+                        if service_attributes:
+                            detected = analysis.get(crop)
+                            if len(detected) != 1:
+                                continue
+                            sample = detected[0]
+                        else:
+                            from insightface.app.common import Face as InsightFace
+
+                            sample = InsightFace(bbox=np.array(
+                                [0, 0, crop.shape[1], crop.shape[0]], dtype=np.float32))
+                            attribute_model.get(crop, sample)
                     except Exception as exc:
                         logger.debug(
                             "Demographics inference failed for face %s: %s",
@@ -316,7 +321,7 @@ def run_backfill_face_quality(task_id: str) -> None:
     face_proc.load_model()
     detector = getattr(face_proc.model, "det_model", None)
     if detector is None:
-        detector = face_proc.demographics_model.det_model
+        detector = getattr(getattr(face_proc, "demographics_model", None), "det_model", None)
 
     with Session(db.engine) as session:
         task = session.get(ProcessingTask, task_id)
@@ -407,9 +412,12 @@ def run_backfill_face_quality(task_id: str) -> None:
                                 value=(114, 114, 114),
                             )
                             try:
-                                bboxes, kpss = detector.detect(
-                                    img, metric="default"
-                                )
+                                if detector is not None:
+                                    bboxes, kpss = detector.detect(img, metric="default")
+                                else:
+                                    detected = face_proc.model.get(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+                                    bboxes = np.asarray([list(f.bbox) + [f.det_score] for f in detected], dtype=np.float32).reshape(-1, 5)
+                                    kpss = [f.kps for f in detected]
                             except Exception as exc:
                                 logger.debug(
                                     "Quality re-detection failed for face %s: %s",

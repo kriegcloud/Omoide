@@ -81,7 +81,8 @@ def _decode_image(payload: dict[str, Any]) -> np.ndarray:
 
 def _face_payload(face: Any) -> dict[str, Any]:
     embedding = getattr(face, "embedding", None)
-    return {
+    payload = {
+        "embeddingNorm": getattr(face, "embedding_norm", None),
         "bbox": np.asarray(face.bbox, dtype=np.float32).tolist(),
         "detScore": float(face.det_score),
         "keypoints": np.asarray(face.kps, dtype=np.float32).tolist(),
@@ -93,6 +94,10 @@ def _face_payload(face: Any) -> dict[str, Any]:
         "embeddingReason": getattr(face, "embedding_reason", None),
         "alignerConfidence": float(getattr(face, "aligner_confidence", 0.0)),
     }
+
+    if hasattr(face, "sex_score"):
+        payload.update(sex=face.sex, age=face.age, sexScore=face.sex_score)
+    return payload
 
 
 class AdaFaceService:
@@ -114,6 +119,9 @@ class AdaFaceService:
             detector_path=arguments.detector,
             aligner_path=arguments.aligner,
             recognizer_path=arguments.recognizer,
+            mirror_tta=arguments.mirror_tta,
+            detector_device=arguments.detector_device,
+            detector_fp16=arguments.detector_fp16,
         )
         self.backend = load_backend(
             worker_arguments,
@@ -123,6 +131,10 @@ class AdaFaceService:
             det_size=(arguments.det_size, arguments.det_size),
         )
         self.det_size = arguments.det_size
+        self.mirror_tta = arguments.mirror_tta
+        self.detector_device = arguments.detector_device
+        from .backends.service_models import GenderAge
+        self.genderage = GenderAge.load(arguments.genderage) if arguments.genderage else None
 
     def handle(self, request: dict[str, Any]) -> dict[str, Any]:
         if request.get("protocol") != PROTOCOL_VERSION:
@@ -134,11 +146,17 @@ class AdaFaceService:
                 "protocol": PROTOCOL_VERSION,
                 "model": MODEL_NAME,
                 "detSize": self.det_size,
+                "mirrorTta": self.mirror_tta,
+                "demographics": self.genderage is not None,
+                "detectorDevice": self.detector_device,
                 "runtime": self.backend.model["runtime"],
             }
         if action != "faces":
             raise WorkerError("protocol-error", f"unsupported action: {action!r}")
-        faces = self.backend.analysis.get(_decode_image(request))
+        image = _decode_image(request)
+        faces = self.backend.analysis.get(image)
+        if self.genderage is not None:
+            self.genderage.apply(image, faces)
         if len(faces) > MAX_FACES:
             raise WorkerError("input-limit-exceeded", "model returned too many faces")
         return {
@@ -203,6 +221,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--detector", type=Path, required=True)
     parser.add_argument("--aligner", type=Path, required=True)
     parser.add_argument("--recognizer", type=Path, required=True)
+    parser.add_argument("--genderage", type=Path)
+    parser.add_argument("--mirror-tta", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--detector-device", choices=("cpu", "gpu"), default="cpu")
+    parser.add_argument("--detector-fp16", action="store_true")
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--det-size", type=_det_size, default=640)

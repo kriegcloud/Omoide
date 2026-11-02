@@ -30,6 +30,12 @@ class FaceModelBootstrapTests(unittest.TestCase):
         self.enterContext(patch.dict("sys.modules", {"insightface.app": SimpleNamespace(FaceAnalysis=self.demographics_factory)}))
         self.processor = FaceProcessor()
 
+    def test_service_demographics_skips_cpu_model_loading(self):
+        self.client.health.return_value["demographics"] = True
+        self.processor.load_model()
+        self.demographics_factory.assert_not_called()
+        self.assertIsNone(self.processor.demographics_model)
+
     def marker(self):
         with self.engine.connect() as connection:
             return connection.exec_driver_sql("SELECT fingerprint, status FROM model_fingerprints WHERE component = 'face_embeddings'").first()

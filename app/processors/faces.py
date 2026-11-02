@@ -76,14 +76,20 @@ class FaceProcessor(MediaProcessor):
             sex = None
         raw_age = getattr(face, "age", None)
         age = int(raw_age) if raw_age is not None else None
-        # insightface.model_zoo.attribute.Attribute.get discards the two
-        # gender logits after argmax, so this version exposes no honest score.
-        return sex, age, None
+        return sex, age, getattr(face, "sex_score", None)
 
     def _apply_cpu_demographics(self, image: np.ndarray, faces: list) -> None:
         """Attach CPU InsightFace gender/age results to AdaFace detections."""
+        faces = [face for face in faces if not getattr(face, "service_demographics", False)]
+        if not faces:
+            return
         model = getattr(self, "demographics_model", None)
-        if model is None or not faces:
+        from app.services.face_inference import AdaFaceSocketAnalysis
+
+        if model is None and isinstance(self.model, AdaFaceSocketAnalysis):
+            model = self._load_cpu_demographics()
+            self.demographics_model = model
+        if model is None:
             return
         try:
             demographic_faces = model.get(image)
@@ -357,6 +363,7 @@ class FaceProcessor(MediaProcessor):
                 sex=sex,
                 age=age,
                 sex_score=sex_score,
+                embedding_norm=getattr(f, "embedding_norm", None),
             )
             face_entries.append((face, vec))
         return face_entries
@@ -586,23 +593,8 @@ class FaceProcessor(MediaProcessor):
             health = model.health()
             if health.get("model") != ADA_FACE_MODEL_NAME:
                 raise RuntimeError("The face service reported an unexpected AdaFace model.")
-            # The service's vendored backend verifies its pinned artifacts;
-            # health identifies that model but does not expose a fingerprint.
-            # Keep InsightFace's CPU detector and genderage model for attributes.
-            from insightface.app import FaceAnalysis
-
-            demographics_model = FaceAnalysis(
-                "buffalo_l",
-                root=str(settings.general.models_dir),
-                allowed_modules=["detection", "genderage"],
-                providers=["CPUExecutionProvider"],
-            )
-            demographics_model.prepare(
-                ctx_id=-1,
-                det_size=(640, 640),
-                det_thresh=float(
-                    settings.face_recognition.face_recognition_min_confidence
-                ),
+            demographics_model = (
+                None if health.get("demographics") is True else self._load_cpu_demographics()
             )
             ensure_pinned_face_model(engine, bootstrap_empty=True)
             self._ctx_id = -1
@@ -634,6 +626,22 @@ class FaceProcessor(MediaProcessor):
             det_size=(640, 640),
             det_thresh=float(settings.face_recognition.face_recognition_min_confidence),
         )
+
+    @staticmethod
+    def _load_cpu_demographics():
+        """Compatibility path for older services without per-face attributes."""
+        from insightface.app import FaceAnalysis
+
+        model = FaceAnalysis(
+            "buffalo_l", root=str(settings.general.models_dir),
+            allowed_modules=["detection", "genderage"],
+            providers=["CPUExecutionProvider"],
+        )
+        model.prepare(
+            ctx_id=-1, det_size=(640, 640),
+            det_thresh=float(settings.face_recognition.face_recognition_min_confidence),
+        )
+        return model
 
     @staticmethod
     def _build_face_analysis(providers: list[str]):
