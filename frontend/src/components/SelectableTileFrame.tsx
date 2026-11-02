@@ -258,6 +258,10 @@ export default function SelectableTileFrame({
             }}
             sx={{
               ...scrim,
+              // No dark square behind the box: the icon carries its own outline so it
+              // reads on light and dark photos; hover gets a soft round backing.
+              bgcolor: "transparent",
+              borderRadius: "50%",
               left: inset,
               width: CONTROL_SIZE,
               height: CONTROL_SIZE,
@@ -265,8 +269,13 @@ export default function SelectableTileFrame({
               color: "common.white",
               opacity: isSelecting || selected ? 1 : 0,
               pointerEvents: isSelecting || selected ? "auto" : "none",
+              "& .MuiSvgIcon-root": { filter: "drop-shadow(0 0 1.5px rgba(0,0,0,0.85)) drop-shadow(0 1px 2px rgba(0,0,0,0.5))" },
               "&.Mui-checked, &.MuiCheckbox-indeterminate": { color: "primary.main" },
-              "&:hover": { bgcolor: "rgba(0,0,0,.65)" },
+              "&.Mui-checked .MuiSvgIcon-root, &.MuiCheckbox-indeterminate .MuiSvgIcon-root": {
+                // White behind the cut-out tick only (icon square is inset 3/24).
+                bgcolor: "common.white", clipPath: "inset(12.5% round 2px)",
+              },
+              "&:hover": { bgcolor: "rgba(0,0,0,.35)" },
             }}
           />
         )}

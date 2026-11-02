@@ -207,8 +207,15 @@ export default function MediaCardMenu({
           }}
           sx={{
             color: "common.white",
-            bgcolor: "rgba(0,0,0,0.48)",
-            "&:hover": { bgcolor: "rgba(0,0,0,0.68)" },
+            bgcolor: "rgba(0,0,0,0.55)",
+            "&:hover": { bgcolor: "rgba(0,0,0,0.72)" },
+            // The three 2-unit dots fall below two device pixels when the page is
+            // zoomed out and antialias into the backing circle; thicken them and
+            // outline them so they survive any zoom level.
+            "& .MuiSvgIcon-root": {
+              filter: "drop-shadow(0 0 1px rgba(0,0,0,0.9))",
+            },
+            "& .MuiSvgIcon-root path": { stroke: "currentColor", strokeWidth: 1.25 },
           }}
         >
           <MoreVertIcon fontSize="small" />
