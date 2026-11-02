@@ -4,7 +4,7 @@ import { ListRevision, mergeUnique } from "../stores/listReconciliation";
 import ListState from "./ListState";
 import { useUndoRefresh } from "../context/UndoContext";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Masonry from "react-masonry-css";
+import Gallery from "./Gallery";
 import { Box, CircularProgress } from "@mui/material";
 import { useInView } from "react-intersection-observer";
 import MediaCard from "./MediaCard";
@@ -13,13 +13,6 @@ import { useSelection } from "../context/SelectionContext";
 import { useGridSelection } from "../hooks/useMarqueeSelection";
 import MarqueeSelectionBox from "./MarqueeSelectionBox";
 
-const breakpointColumnsObj = {
-  default: 5,
-  1600: 4,
-  1200: 3,
-  900: 3,
-  600: 2,
-};
 
 interface Props {
   listKey: string;
@@ -180,11 +173,7 @@ export function CursorMediaGrid({
     <Box ref={gridRef} sx={{ position: "relative" }}>
       <ListState loading={isLoading && visibleItems.length === 0} error={error} empty={!isLoading && visibleItems.length === 0} action={empty} onRetry={() => { void loadPage(cursor, visibleItems.length === 0); }} />
       {visibleItems.length > 0 && (renderItems ? renderItems(visibleItems, onItemClick) : (
-        <Masonry
-          breakpointCols={breakpointColumnsObj}
-          className="my-masonry-grid"
-          columnClassName="my-masonry-grid_column"
-        >
+        <Gallery>
           {visibleItems.map((media) => (
             <div key={media.id}>
               <MediaCard
@@ -194,7 +183,7 @@ export function CursorMediaGrid({
               />
             </div>
           ))}
-        </Masonry>
+        </Gallery>
       ))}
       {isLoading && (
         <Box textAlign="center" py={3}>

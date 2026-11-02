@@ -1,3 +1,4 @@
+import GalleryPage from "./GalleryPage";
 import { readCachedList } from "../stores/useListStore";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -6,7 +7,6 @@ import {
   Button,
   Chip,
   CircularProgress,
-  Container,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -46,7 +46,8 @@ const skippedReasons = {
   unknown_person: "suggested person no longer exists",
 };
 
-export default function OrphanFaceSuggestions({ minScore, onMinScoreChange }: {
+export default function OrphanFaceSuggestions({ minScore, onMinScoreChange, tabs }: {
+  tabs?: React.ReactNode;
   minScore: number;
   onMinScoreChange: (value: number) => void;
 }) {
@@ -229,8 +230,8 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange }: {
     suggestions.map((item) => ({ face_id: item.id, person_id: item.person_id }));
 
   return (
-    <Container id="unassigned-faces" maxWidth={false} sx={{ pt: 1.5, pb: 3 }}>
-      <Typography variant="h4" sx={{ mb: 2 }}>Suggested Matches</Typography>
+    <GalleryPage id="unassigned-faces" title="Suggested Matches" tabs={tabs} count={items.length} countLabel="faces">
+
       <Box sx={{ maxWidth: 400, px: 1, mb: 2 }}>
         <Typography id="suggestions-min-score">Minimum score: {sliderScore.toFixed(2)}</Typography>
         <Slider
@@ -355,6 +356,6 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange }: {
           {snackbar?.message}
         </Alert>
       </Snackbar>
-    </Container>
+    </GalleryPage>
   );
 }

@@ -1,3 +1,4 @@
+import Gallery from "./Gallery";
 import { useMutationRefresh } from "../context/UndoContext";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -540,7 +541,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
                         sx={step === run.likeness_best_step ? { p: 1.5, mx: -1.5, border: 2, borderColor: "success.main", borderRadius: 1 } : undefined}
                       >
                         <Typography variant="body2" fontWeight={700} sx={{ mb: 1 }}>Step {step.toLocaleString()}</Typography>
-                        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "repeat(2, minmax(0, 1fr))", sm: "repeat(3, minmax(0, 1fr))", lg: "repeat(4, minmax(0, 1fr))" }, gap: 1.5 }}>
+                        <Gallery>
                           {stepSamples.map((sample) => (
                             <Box key={sample.id} sx={{ position: "relative" }}>
                               <Box
@@ -548,7 +549,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
                                 src={trainingSampleImageUrl(run.id, sample.id)}
                                 alt={`Training sample from step ${step}`}
                                 loading="lazy"
-                                sx={{ display: "block", width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 1, bgcolor: "action.hover" }}
+                                sx={{ display: "block", width: "100%", height: "auto", borderRadius: 1, bgcolor: "action.hover" }}
                               />
                               <Chip
                                 size="small"
@@ -558,7 +559,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
                               />
                             </Box>
                           ))}
-                        </Box>
+                        </Gallery>
                       </Box>
                     ))}
                   </Stack>

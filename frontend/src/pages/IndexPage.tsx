@@ -1,3 +1,4 @@
+import GalleryPage from "../components/GalleryPage";
 import { useMutationRefresh } from "../context/UndoContext";
 import { readCachedList } from "../stores/useListStore";
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
@@ -10,7 +11,6 @@ import {
   Button,
   Chip,
   CircularProgress,
-  Container,
   Link as MuiLink,
   Menu,
   MenuItem,
@@ -20,9 +20,7 @@ import {
   Fab,
   Typography,
 } from "@mui/material";
-import { FixedSizeGrid, type GridChildComponentProps } from "react-window";
-import { useWindowedGrid } from "../hooks/useWindowedGrid";
-import type { SelectionClickEvent } from "../hooks/useMarqueeSelection";
+import Gallery from "../components/Gallery";
 import SortIcon from "@mui/icons-material/Sort";
 import GridViewIcon from "@mui/icons-material/GridView";
 import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
@@ -50,19 +48,6 @@ import { CameraCount, MediaFolderListing, MediaPreview } from "../types";
 import { useSelection } from "../context/SelectionContext";
 import { useGridSelection } from "../hooks/useMarqueeSelection";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
-
-interface GridData {
-  items: MediaPreview[];
-  listKey: string;
-  onSelectionClick: (id: number, event: SelectionClickEvent) => boolean;
-}
-function MediaCell({ rowIndex, columnIndex, style, data }: GridChildComponentProps<GridData & { columns: number }>) {
-  const media = data.items[rowIndex * data.columns + columnIndex];
-  if (!media) return null;
-  return <div style={{ ...style, padding: 8, boxSizing: "border-box" }}>
-    <MediaCard media={media} mediaListKey={data.listKey} onSelectionClick={data.onSelectionClick} />
-  </div>;
-}
 
 export default function IndexPage() {
   const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
@@ -219,10 +204,12 @@ export default function IndexPage() {
   useEffect(() => {
     if (items.length === 0 && inView) loadNextPage();
   }, [items.length, inView, loadNextPage]);
-  const windowed = useWindowedGrid({ ids: orderedIds, containerRef: mediaGridRef,
-    loadMore: loadNextPage, hasMore, loading: isLoading, error: listError, listKey: mediaListKey });
-  const gridData = useMemo(() => ({ items, listKey: mediaListKey, onSelectionClick: onItemClick, columns: windowed.columns }),
-    [items, mediaListKey, onItemClick, windowed.columns]);
+  const virtualItems = useMemo(() => items.map(media => ({
+    id: media.id,
+    // MediaCard clamps extreme aspect ratios to this range as well.
+    aspectRatio: media.width && media.height ? 1 / Math.min(1.5, Math.max(0.65, media.height / media.width)) : 1,
+    content: <MediaCard media={media} mediaListKey={mediaListKey} onSelectionClick={onItemClick} />,
+  })), [items, mediaListKey, onItemClick]);
 
   const folderGeneration = useRef(0);
   const loadFolders = useCallback(async () => {
@@ -679,23 +666,8 @@ export default function IndexPage() {
 
       {/* Media Grid */}
       {items.length > 0 && (
-        <Box ref={windowed.hostRef} sx={{ position: "relative" }}>
-          <FixedSizeGrid
-            ref={windowed.gridRef}
-            outerRef={mediaGridRef}
-            width={windowed.width}
-            height={windowed.height}
-            columnCount={windowed.columns}
-            columnWidth={windowed.cellSize}
-            rowCount={windowed.rows}
-            rowHeight={windowed.cellSize}
-            overscanRowCount={2}
-            itemData={gridData}
-            itemKey={({ rowIndex, columnIndex, data }) => data.items[rowIndex * data.columns + columnIndex]?.id ?? `empty-${rowIndex}-${columnIndex}`}
-            onItemsRendered={windowed.onItemsRendered}
-          >
-            {MediaCell}
-          </FixedSizeGrid>
+        <Box sx={{ position: "relative" }}>
+          <Gallery virtualItems={virtualItems} scrollRef={mediaGridRef} listKey={mediaListKey} onEndReached={loadNextPage} />
           <MarqueeSelectionBox
             container={mediaGridRef.current}
             rect={marqueeRect}
@@ -723,14 +695,7 @@ export default function IndexPage() {
   };
 
   return (
-    <Container
-      maxWidth={false}
-      sx={{
-        minHeight: "100vh",
-        py: 1.5,
-        px: { xs: 1, sm: 1.5 },
-      }}
-    >
+    <GalleryPage title={"Library"}>
       {widgets
         .filter((w) => w.enabled)
         .map((w) => (
@@ -748,6 +713,6 @@ export default function IndexPage() {
           </Fab>
         </Box>
       </Fade>
-    </Container>
+    </GalleryPage>
   );
 }

@@ -1,3 +1,4 @@
+import Gallery from "./Gallery";
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -163,7 +164,7 @@ export default function BatchCropDialog({
               <Typography variant="subtitle2">Preview · first {previewItems.length} items</Typography>
               {previewing && <CircularProgress size={16} />}
             </Stack>
-            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(3, 1fr)", md: "repeat(4, 1fr)" }, gap: 1.5 }}>
+            <Gallery>
               {previewItems.map((item) => {
                 const suggestion = suggestions[item.id];
                 const width = item.media.width ?? 1;
@@ -185,7 +186,7 @@ export default function BatchCropDialog({
                   </Box>
                 );
               })}
-            </Box>
+            </Gallery>
           </Box>
         </Stack>
       </DialogContent>

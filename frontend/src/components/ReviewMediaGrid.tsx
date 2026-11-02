@@ -1,3 +1,4 @@
+import Gallery from "./Gallery";
 import ListState from "./ListState";
 import React from "react";
 import { Box, CircularProgress, Paper } from "@mui/material";
@@ -38,13 +39,9 @@ const ReviewMediaGrid: React.FC<ReviewMediaGridProps> = ({
         ref={gridRef}
         sx={{
           position: "relative",
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
-          gap: 0.5,
-          p: 0.5,
         }}
       >
-        {children}
+        <Gallery>{children}</Gallery>
         <MarqueeSelectionBox container={gridRef?.current ?? null} rect={marqueeRect} />
       </Box>
     )}

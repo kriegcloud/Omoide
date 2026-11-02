@@ -1,3 +1,4 @@
+import Gallery from "./Gallery";
 import { useListStore } from "../stores/useListStore";
 import React, { useRef } from "react";
 import { Box } from "@mui/material";
@@ -37,12 +38,10 @@ export const MediaGrid: React.FC<MediaGridProps> = ({
     <Box
       ref={gridRef}
       sx={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(min(180px, 100%), 1fr))",
-        gap: 0.5,
         position: "relative",
       }}
     >
+      <Gallery>
       {mediaItems.map((media) => (
         <Box
           key={media.id}
@@ -57,6 +56,7 @@ export const MediaGrid: React.FC<MediaGridProps> = ({
           />
         </Box>
       ))}
+      </Gallery>
       <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
     </Box>
   );

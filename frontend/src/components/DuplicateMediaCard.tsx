@@ -61,7 +61,7 @@ export const DuplicateMediaCard: React.FC<DuplicateMediaCardProps> = ({
         onSelectionClick={onSelectionClick}
         href={`/medium/${media.id}`}
         linkState={{ backgroundLocation: location }}
-        aspectRatio="4 / 3"
+        aspectRatio={media.width && media.height ? media.width / media.height : 4 / 3}
         menu={<MediaCardMenu media={media} />}
         sx={{
           height: "100%",
@@ -111,7 +111,7 @@ export const DuplicateMediaCard: React.FC<DuplicateMediaCardProps> = ({
           width={media.width || undefined}
           height={media.height || undefined}
           draggable={!selecting}
-          sx={{ width: "100%", height: "100%", objectFit: "cover" }}
+          sx={{ width: "100%", height: "100%", objectFit: "contain" }}
         />
       </SelectableTileFrame>
     )

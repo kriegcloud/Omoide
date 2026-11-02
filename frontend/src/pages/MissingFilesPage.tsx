@@ -1,3 +1,4 @@
+import GalleryPage from "../components/GalleryPage";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -274,10 +275,8 @@ const MissingFilesPage: React.FC = () => {
   };
 
   return (
-    <Box sx={{ p: 3, maxWidth: "1400px", mx: "auto" }}>
-      <Typography variant="h4" gutterBottom>
-        Missing Media Review
-      </Typography>
+    <GalleryPage title="Missing Media Review" count={items.length}>
+
       <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
         Review items whose files are currently missing before removing them from
         your library. Use bulk actions to confirm deletions or clear items once
@@ -559,7 +558,7 @@ const MissingFilesPage: React.FC = () => {
           {snackbar.message}
         </Alert>
       </Snackbar>
-    </Box>
+    </GalleryPage>
   );
 };
 

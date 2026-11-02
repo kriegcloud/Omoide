@@ -1,3 +1,4 @@
+import GalleryPage from "../components/GalleryPage";
 import React, { useCallback, useRef, useState } from "react";
 import {
   Alert,
@@ -127,10 +128,35 @@ const NopersonsPage: React.FC = () => {
   const selectedCount = selectedIds.size;
 
   return (
-    <Box sx={{ p: { xs: 1, sm: 1.5 } }}>
-      <Typography variant="h4" gutterBottom>
-        No Persons Detected
-      </Typography>
+    <GalleryPage title="No Persons Detected" count={total} selection={<BulkResolveToolbar
+        statsText={`${total.toLocaleString()} item${total !== 1 ? "s" : ""}`}
+        shownCount={items.length}
+        shownSize={totalSize}
+        total={total}
+        selectedIds={selectedIds}
+        onSelectVisible={selectVisible}
+        onClearSelection={clearSelection}
+        resolve={resolveSelection}
+        onResolved={handleResolved}
+        onAssigned={handleAssigned}
+        onFeedback={showFeedback}
+        extraActions={
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<ReplayIcon />}
+            onClick={() => {
+              const ids = selectedCount > 0 ? Array.from(selectedIds) : items.map((i) => i.id);
+              setRerunIds(ids);
+              setRerunDialogOpen(true);
+            }}
+            disabled={items.length === 0}
+          >
+            {selectedCount > 0 ? `Rerun (${selectedCount} selected)` : `Rerun all visible (${items.length})`}
+          </Button>
+        }
+      />}>
+
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Media where face detection was run but no persons were identified.
         Use this view to review and tidy up unrecognized content, or switch to{" "}
@@ -180,36 +206,6 @@ const NopersonsPage: React.FC = () => {
           }}
         />
       </Box>
-
-      {/* Stats + bulk actions */}
-      <BulkResolveToolbar
-        statsText={`${total.toLocaleString()} item${total !== 1 ? "s" : ""}`}
-        shownCount={items.length}
-        shownSize={totalSize}
-        total={total}
-        selectedIds={selectedIds}
-        onSelectVisible={selectVisible}
-        onClearSelection={clearSelection}
-        resolve={resolveSelection}
-        onResolved={handleResolved}
-        onAssigned={handleAssigned}
-        onFeedback={showFeedback}
-        extraActions={
-          <Button
-            size="small"
-            variant="outlined"
-            startIcon={<ReplayIcon />}
-            onClick={() => {
-              const ids = selectedCount > 0 ? Array.from(selectedIds) : items.map((i) => i.id);
-              setRerunIds(ids);
-              setRerunDialogOpen(true);
-            }}
-            disabled={items.length === 0}
-          >
-            {selectedCount > 0 ? `Rerun (${selectedCount} selected)` : `Rerun all visible (${items.length})`}
-          </Button>
-        }
-      />
 
       <ReviewMediaGrid
         gridRef={gridRef}
@@ -263,7 +259,7 @@ const NopersonsPage: React.FC = () => {
           {snackbar.message}
         </Alert>
       </Snackbar>
-    </Box>
+    </GalleryPage>
   );
 };
 

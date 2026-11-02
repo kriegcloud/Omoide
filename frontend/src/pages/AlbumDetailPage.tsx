@@ -1,3 +1,4 @@
+import GalleryPage from "../components/GalleryPage";
 import { useMutationRefresh } from "../context/UndoContext";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { useUndo, useUndoRefresh } from "../context/UndoContext";
@@ -6,7 +7,6 @@ import {
   Alert,
   Box,
   Button,
-  Container,
   Dialog,
   DialogActions,
   DialogContent,
@@ -15,7 +15,6 @@ import {
   Snackbar,
   TextField,
   Tooltip,
-  Typography,
 } from "@mui/material";
 import PhotoAlbumIcon from "@mui/icons-material/PhotoAlbum";
 import AddPhotoAlternateIcon from "@mui/icons-material/AddPhotoAlternate";
@@ -160,24 +159,16 @@ export default function AlbumDetailPage() {
   };
 
   return (
-    <Container maxWidth={false} sx={{ minHeight: "100vh", py: 1.5 }}>
-      <Box
+    <GalleryPage title={album?.name ?? "Album"} count={album?.media_count}
+      actions={      <Box
         display="flex"
         justifyContent="space-between"
         alignItems="center"
         flexWrap="wrap"
         gap={1}
-        mb={3}
+
       >
-        <Box display="flex" alignItems="center" gap={1}>
-          <PhotoAlbumIcon color="primary" />
-          <Typography variant="h5" fontWeight={700}>
-            {album?.name ?? "Album"}
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {album ? `${album.media_count} items` : ""}
-          </Typography>
-        </Box>
+
         {!config.PRESENTATION_MODE && (
         <Box display="flex" gap={1}>
           <Button
@@ -212,7 +203,7 @@ export default function AlbumDetailPage() {
           </Tooltip>
         </Box>
         )}
-      </Box>
+      </Box>}>
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
@@ -281,6 +272,6 @@ export default function AlbumDetailPage() {
         message={snackbar}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       />
-    </Container>
+    </GalleryPage>
   );
 }

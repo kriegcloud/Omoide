@@ -1,5 +1,5 @@
-import React, { useCallback } from "react";
-import { Box, Container, Typography } from "@mui/material";
+import GalleryPage from "../components/GalleryPage";
+import React, { useCallback, useState } from "react";
 import PublicIcon from "@mui/icons-material/Public";
 import { useSearchParams } from "react-router-dom";
 import { CursorMediaGrid } from "../components/CursorMediaGrid";
@@ -8,6 +8,7 @@ import { getPlaceMedia } from "../services/features";
 
 export default function PlaceMediaPage() {
   const [searchParams] = useSearchParams();
+  const [loadedCount, setLoadedCount] = useState(0);
   const city = searchParams.get("city") ?? "";
   const country = searchParams.get("country");
 
@@ -18,17 +19,11 @@ export default function PlaceMediaPage() {
   );
 
   return (
-    <Container maxWidth={false} sx={{ minHeight: "100vh", py: 4 }}>
-      <Box display="flex" alignItems="center" gap={1} mb={3}>
-        <PublicIcon color="primary" />
-        <Typography variant="h5" fontWeight={700}>
-          {city}
-          {country ? `, ${country}` : ""}
-        </Typography>
-      </Box>
+    <GalleryPage title={`${city}${country ? `, ${country}` : ""}`} count={loadedCount} countLabel="loaded">
       <CursorMediaGrid
         listKey={`place-${country ?? ""}-${city}`}
         fetcher={fetcher}
+        onItemsChange={items => setLoadedCount(items.length)}
         empty={
           <EmptyState
             icon={<PublicIcon />}
@@ -37,6 +32,6 @@ export default function PlaceMediaPage() {
           />
         }
       />
-    </Container>
+    </GalleryPage>
   );
 }

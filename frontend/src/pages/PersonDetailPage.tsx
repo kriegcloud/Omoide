@@ -1,3 +1,4 @@
+import GalleryPage from "../components/GalleryPage";
 import {
   Box,
   Button,
@@ -223,7 +224,7 @@ export default function PersonDetailPage() {
   }
 
   return (
-    <Container maxWidth={false} sx={{ pt: 2, pb: 6 }}>
+    <GalleryPage title={person.name || "Person"} count={person.appearance_count}>
       <PersonHero
         person={person}
         onSave={onSave}
@@ -382,6 +383,6 @@ export default function PersonDetailPage() {
           <Button onClick={() => setMergeOpen(false)}>Cancel</Button>
         </DialogActions>
       </Dialog>
-    </Container>
+    </GalleryPage>
   );
 }

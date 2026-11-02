@@ -1,3 +1,5 @@
+import Gallery from "../components/Gallery";
+import GalleryPage from "../components/GalleryPage";
 import { useMutationRefresh } from "../context/UndoContext";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -9,7 +11,6 @@ import {
   CardContent,
   Chip,
   CircularProgress,
-  Container,
   Typography,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
@@ -45,11 +46,11 @@ export default function DatasetsPage() {
   }, [revision]);
 
   return (
-    <Container maxWidth="xl" sx={{ minHeight: "100vh", py: 4 }}>
+    <GalleryPage title={"Training datasets"} count={datasets.length}>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Box display="flex" alignItems="center" gap={1}>
           <DatasetIcon color="primary" />
-          <Typography variant="h5" component="h1" fontWeight={700}>Training datasets</Typography>
+
         </Box>
         <Box display="flex" gap={1} flexWrap="wrap"><CurationEntryLink /><Button variant="contained" startIcon={<AddIcon />} onClick={() => setNewOpen(true)}>New dataset</Button></Box>
       </Box>
@@ -59,7 +60,7 @@ export default function DatasetsPage() {
       ) : datasets.length === 0 ? (
         <EmptyState icon={<DatasetIcon />} title="No training datasets" description="Create a dataset from a person or start one here, then add images from any media grid." />
       ) : (
-        <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)", md: "repeat(3, 1fr)", lg: "repeat(4, 1fr)" } }}>
+        <Box><Gallery>
           {datasets.map((dataset) => (
             <Card key={dataset.id} elevation={0} sx={{ borderRadius: 1, border: 1, borderColor: "divider", overflow: "hidden" }}>
               <CardActionArea component={Link} to={`/dataset/${dataset.id}`}>
@@ -79,9 +80,9 @@ export default function DatasetsPage() {
               </CardActionArea>
             </Card>
           ))}
-        </Box>
+        </Gallery></Box>
       )}
       <NewDatasetDialog open={newOpen} onClose={() => setNewOpen(false)} onCreated={(dataset) => { setDatasets((current) => [dataset, ...current]); setNewOpen(false); }} />
-    </Container>
+    </GalleryPage>
   );
 }

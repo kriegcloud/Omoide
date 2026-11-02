@@ -1,3 +1,5 @@
+import GalleryPage from "../components/GalleryPage";
+import Gallery from "../components/Gallery";
 import { useMutationRefresh } from "../context/UndoContext";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -6,7 +8,6 @@ import {
   Button,
   CardContent,
   CircularProgress,
-  Container,
   Snackbar,
   Typography,
 } from "@mui/material";
@@ -141,7 +142,7 @@ export default function EventsPage() {
   }
 
   return (
-    <Container maxWidth={false} sx={{ minHeight: "100vh", py: 1.5 }}>
+    <GalleryPage title="Events" count={items.length}>
       <Box
         display="flex"
         justifyContent="space-between"
@@ -152,9 +153,7 @@ export default function EventsPage() {
       >
         <Box display="flex" alignItems="center" gap={1}>
           <TheatersIcon color="primary" />
-          <Typography variant="h5" fontWeight={700}>
-            Events
-          </Typography>
+
         </Box>
         <Box display="flex" gap={1} alignItems="center">
           {selection.selectionMode && (
@@ -200,20 +199,7 @@ export default function EventsPage() {
         />
       )}
 
-      <Box
-        ref={gridRef}
-        sx={{
-          display: "grid",
-          gap: 0.5,
-          gridTemplateColumns: {
-            xs: "repeat(1, 1fr)",
-            sm: "repeat(2, 1fr)",
-            md: "repeat(3, 1fr)",
-            lg: "repeat(4, 1fr)",
-          },
-          position: "relative",
-        }}
-      >
+      <Box ref={gridRef} sx={{ position: "relative" }}><Gallery>
         {items.map((event) => (
           <SelectableTileFrame
             key={event.id}
@@ -251,8 +237,8 @@ export default function EventsPage() {
             </Box>
           </SelectableTileFrame>
         ))}
-        <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
-      </Box>
+
+      </Gallery><MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} /></Box>
 
       {isLoading && (
         <Box textAlign="center" py={3}>
@@ -278,6 +264,6 @@ export default function EventsPage() {
         message={snackbar}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       />
-    </Container>
+    </GalleryPage>
   );
 }

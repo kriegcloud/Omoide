@@ -11,21 +11,17 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  IconButton,
   Paper,
   Stack,
   TextField,
-  Tooltip,
   Typography,
   useTheme,
 } from "@mui/material";
-import VideoLibraryIcon from "@mui/icons-material/VideoLibrary";
-import ViewModuleIcon from "@mui/icons-material/ViewModule";
 import { FaceRead, Person } from "../types";
 import FaceCard from "./FaceCard";
-import FaceMediaGroup from "./FaceMediaGroup";
+import Gallery from "./Gallery";
 import MarqueeSelectionBox from "./MarqueeSelectionBox";
-import { useGridSelection, type SelectionClickEvent } from "../hooks/useMarqueeSelection";
+import { useGridSelection } from "../hooks/useMarqueeSelection";
 import ConfirmDialog from "./ConfirmDialog";
 import { useFaceSelection } from "../hooks/useFaceSelection";
 import PersonPicker, { PERSON_PICKER_DIALOG_CONTENT_SX } from "./PersonPicker";
@@ -84,17 +80,6 @@ export default function DetectedFaces({
     setSelectedFaceIds,
   } = useFaceSelection();
 
-  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<number>>(new Set());
-
-  const toggleGroupExpand = useCallback((mediaId: number) => {
-    setExpandedGroupIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(mediaId)) next.delete(mediaId);
-      else next.add(mediaId);
-      return next;
-    });
-  }, []);
-
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
   const [assignTargetPerson, setAssignTargetPerson] = useState<Person | null>(null);
   const [openCreateDialog, setOpenCreateDialog] = useState(false);
@@ -104,47 +89,16 @@ export default function DetectedFaces({
 
   const { refreshVisible } = useUndo();
   const canMutate = !config.PRESENTATION_MODE;
-  const [groupByVideo, setGroupByVideo] = useState(config.GROUP_FACES_BY_VIDEO);
   const isAnythingSelected = selectedFaceIds.length > 0;
-
-  // Group faces by media_id; preserve iteration order
-  const groupedItems = useMemo(() => {
-    const map = new Map<number, FaceRead[]>();
-    for (const face of faces) {
-      const existing = map.get(face.media_id);
-      if (existing) {
-        existing.push(face);
-      } else {
-        map.set(face.media_id, [face]);
-      }
-    }
-    return Array.from(map.entries()).map(([mediaId, fs]) => ({ mediaId, faces: fs }));
-  }, [faces]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const reviewBusy = useRef(false);
   const [isReviewing, setIsReviewing] = useState(false);
   useRovingGridFocus(containerRef);
-  const clickedGroupRef = useRef<number[] | null>(null);
   const selectedIdSet = useMemo(() => new Set(selectedFaceIds), [selectedFaceIds]);
   const handleSelectionChange = useCallback((ids: Set<number>) => {
-    const next = new Set(ids);
-    // Collapsed cards are one visual target containing several real face IDs.
-    // Complete endpoint groups in a range and preserve group checkbox toggles.
-    const groups = clickedGroupRef.current
-      ? [clickedGroupRef.current]
-      : groupByVideo
-        ? groupedItems.filter((group) => !expandedGroupIds.has(group.mediaId))
-            .map((group) => group.faces.map((face) => face.id))
-        : [];
-    for (const group of groups) {
-      const added = group.some((id) => next.has(id) && !selectedIdSet.has(id));
-      const removed = group.some((id) => !next.has(id) && selectedIdSet.has(id));
-      if (added) group.forEach((id) => next.add(id));
-      else if (removed) group.forEach((id) => next.delete(id));
-    }
-    setSelectedFaceIds(Array.from(next));
-  }, [groupByVideo, groupedItems, expandedGroupIds, selectedIdSet, setSelectedFaceIds]);
+    setSelectedFaceIds(Array.from(ids));
+  }, [setSelectedFaceIds]);
   const { marqueeRect, onItemClick } = useGridSelection({
     containerRef,
     itemSelector: "[data-selectable-id]:not([data-selection-group])",
@@ -152,18 +106,8 @@ export default function DetectedFaces({
     onSelectionChange: handleSelectionChange,
     selecting: isAnythingSelected,
     disabled: !canMutate,
+    orderedIds: [...(pinnedFaces ?? []), ...faces].map((face) => face.id),
   });
-  const handleGroupSelectionClick = (faceIds: number[], event: SelectionClickEvent) => {
-    // A partially selected group adds its remaining faces on a normal toggle.
-    const targetId = faceIds.find((id) => !selectedIdSet.has(id)) ?? faceIds[0];
-    clickedGroupRef.current = faceIds;
-    try {
-      return onItemClick(targetId, event);
-    } finally {
-      clickedGroupRef.current = null;
-    }
-  };
-
   const [lastCardNode, setLastCardNode] = useState<HTMLDivElement | null>(
     null,
   );
@@ -235,8 +179,6 @@ export default function DetectedFaces({
       const key = event.key.toLowerCase();
       const target = event.target;
       if (!(target instanceof HTMLElement)) return false;
-      // A collapsed video group is not a single face. Space selects its faces;
-      // expand it (or use the flat grid) before acting on a focused single face.
       const tile = target.closest<HTMLElement>("[data-roving-tile]:not([data-selection-group])");
       const focusedId = tile && containerRef.current?.contains(tile)
         ? Number(tile.dataset.selectableId) : undefined;
@@ -318,74 +260,7 @@ export default function DetectedFaces({
       }
     : {};
 
-  const faceItems: React.ReactNode[] = groupByVideo
-    ? groupedItems.flatMap<React.ReactNode>((item, groupIndex) => {
-        const isLastGroup = groupIndex === groupedItems.length - 1;
-        if (item.faces.length > 1) {
-          const isExpanded = expandedGroupIds.has(item.mediaId);
-          return [
-            <div
-              key={`group-${item.mediaId}`}
-              ref={!disableInternalScroll && isLastGroup && !isExpanded ? lastCardRef : null}
-            >
-              <FaceMediaGroup
-                faces={item.faces}
-                selectedFaceIds={selectedFaceIds}
-                selecting={isAnythingSelected}
-                expanded={isExpanded}
-                onSelectionClick={handleGroupSelectionClick}
-                canMutate={canMutate}
-                onToggleExpand={() => toggleGroupExpand(item.mediaId)}
-              />
-            </div>,
-            isExpanded && (
-              <Box
-                key={`expanded-${item.mediaId}`}
-                ref={!disableInternalScroll && isLastGroup ? lastCardRef : null}
-                sx={{
-                  flexBasis: "100%",
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 1,
-                  p: 1,
-                  borderRadius: 1,
-                  bgcolor: "action.hover",
-                }}
-              >
-                {item.faces.map((face) => (
-                  <FaceCard
-                    keyboardReview
-                    key={face.id}
-                    face={face}
-                    isProfile={face.id === profileFaceId}
-                    onSetProfile={canMutate && onSetProfile ? handleSetProfile : undefined}
-                    selected={canMutate && selectedFaceIds.includes(face.id)}
-                    selecting={isAnythingSelected}
-                    onSelectionClick={canMutate ? onItemClick : undefined}
-                  />
-                ))}
-              </Box>
-            ),
-          ].filter(Boolean) as React.ReactNode[];
-        }
-        return [
-          <div
-            key={item.faces[0].id}
-            ref={!disableInternalScroll && isLastGroup ? lastCardRef : null}
-          >
-            <FaceCard
-              keyboardReview
-              face={item.faces[0]}
-              isProfile={item.faces[0].id === profileFaceId}
-              onSetProfile={canMutate && onSetProfile ? handleSetProfile : undefined}
-              selected={canMutate && selectedFaceIds.includes(item.faces[0].id)}
-              selecting={isAnythingSelected}
-              onSelectionClick={canMutate ? onItemClick : undefined}
-            />
-          </div>,
-        ];
-      })
-    : faces.map((face, index) => {
+  const faceItems = faces.map((face, index) => {
         const isLast = index === faces.length - 1;
         return (
           <div
@@ -415,11 +290,6 @@ export default function DetectedFaces({
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
             {title}
           </Typography>
-          <Tooltip title={groupByVideo ? "Show as flat grid" : "Group by video"}>
-            <IconButton size="small" onClick={() => setGroupByVideo((v) => !v)}>
-              {groupByVideo ? <ViewModuleIcon fontSize="small" /> : <VideoLibraryIcon fontSize="small" />}
-            </IconButton>
-          </Tooltip>
         </Stack>
         {isAnythingSelected && canMutate && (
           <Stack direction="row" spacing={1} alignItems="center">
@@ -492,7 +362,6 @@ export default function DetectedFaces({
           <Typography variant="caption" color="text.secondary" display="block">
             D: detach selected faces or the focused face
             {onSetProfile ? " · P: set as profile (one face only)" : ""}.
-            {" "}Expand grouped tiles to focus a single face.
           </Typography>
         )}
       </Box>
@@ -601,7 +470,7 @@ export default function DetectedFaces({
                 Clear
               </Button>
             </Box>
-            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
+            <Gallery>
               {pinnedFaces.map((face) => (
                 <FaceCard
                   keyboardReview
@@ -614,20 +483,20 @@ export default function DetectedFaces({
                   onSelectionClick={canMutate ? onItemClick : undefined}
                 />
               ))}
-            </Box>
+            </Gallery>
           </Paper>
         )}
 
-        {/* Faces grid — grouped by media */}
+        {/* Each detection remains a separate selectable tile. */}
         <Box sx={scrollContainerSx}>
           {faces.length === 0 && !isLoadingMore ? (
             <Typography sx={{ textAlign: "center", p: 4, color: "text.secondary" }}>
               No faces to display.
             </Typography>
           ) : (
-            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, alignItems: "flex-start" }}>
+            <Gallery>
               {faceItems}
-            </Box>
+            </Gallery>
           )}
           {isLoadingMore && (
             <Box sx={{ display: "flex", justifyContent: "center", p: 2 }}>

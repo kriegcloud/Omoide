@@ -21,6 +21,7 @@ from fastapi import (
     status,
 )
 from sqlalchemy import func, union_all
+from sqlalchemy.orm import selectinload
 from sqlmodel import Session, delete, select, text
 
 from app.api.media.desktop import is_local_request
@@ -73,7 +74,7 @@ def suggest_faces(
     face_ids = [r[0] for r in rows]
     distance_map = {int(row[0]): float(row[1]) for row in rows if row[1] is not None}
 
-    faces = session.exec(select(Face).where(Face.id.in_(face_ids), Face.person_id.is_(None), Face.ignored_at.is_(None))).all()
+    faces = session.exec(select(Face).options(selectinload(Face.media)).where(Face.id.in_(face_ids), Face.person_id.is_(None), Face.ignored_at.is_(None))).all()
     id_map = {f.id: f for f in faces}
     ordered = [id_map[f] for f in face_ids if f in id_map]
 
@@ -82,14 +83,7 @@ def suggest_faces(
         if dist := distance_map.get(f.id):
             similarity = distance_to_similarity(dist)
             face_return.append(
-                FaceRead(
-                    id=f.id,
-                    media_id=f.media_id,
-                    thumbnail_path=f.thumbnail_path,
-                    similarity=similarity,
-                    assigned_at=f.assigned_at,
-                    assignment_source=f.assignment_source,
-                )
+                FaceRead.model_validate(f).model_copy(update={"similarity": similarity})
             )
     return face_return
 
@@ -142,20 +136,20 @@ def get_faces(
 
     if media_id is not None:
         faces = session.exec(
-            select(Face).where(Face.person_id == person_id, Face.media_id == media_id)
+            select(Face).options(selectinload(Face.media)).where(Face.person_id == person_id, Face.media_id == media_id)
         ).all()
         return FaceCursorPage(next_cursor=None, items=faces)
 
     if sort_by in ("date_desc", "date_asc"):
         ascending = sort_by == "date_asc"
         q = (
-            select(Face)
+            select(Face).options(selectinload(Face.media))
             .join(Media, Face.media_id == Media.id)
             .where(Face.person_id == person_id)
         )
         keys = [(Media.created_at, ascending), (Face.id, ascending)]
     else:
-        q = select(Face).where(Face.person_id == person_id)
+        q = select(Face).options(selectinload(Face.media)).where(Face.person_id == person_id)
         keys = [(Face.id, False)]
     faces, next_cursor = paginate(
         session, q, keys, cursor=cursor, limit=limit, tag=sort_by

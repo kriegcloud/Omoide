@@ -2,7 +2,6 @@
 
 import React from "react";
 import {
-  Avatar,
   Box,
   IconButton,
   Tooltip,
@@ -13,10 +12,10 @@ import { alpha } from "@mui/material/styles";
 import { useNavigate, useLocation } from "react-router-dom";
 import StarIcon from "@mui/icons-material/Star";
 import AccessTimeIcon from "@mui/icons-material/AccessTime";
-import { API } from "../config";
 import { Face } from "../types";
-import { encodeFilePath } from "../urlUtils";
 import SelectableTileFrame from "./SelectableTileFrame";
+import FaceBoxOverlay from "./FaceBoxOverlay";
+import { useFaceThumbnail } from "../hooks/useFaceThumbnail";
 import type { SelectionClickEvent } from "../hooks/useMarqueeSelection";
 
 interface FaceCardProps {
@@ -43,7 +42,7 @@ function FaceCard({
   const theme = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
-  const thumbUrl = `${API}/thumbnails/${encodeFilePath(face.thumbnail_path)}`;
+  const { src: thumbUrl, showsParent, dimensions, aspectRatio, onLoad, onError } = useFaceThumbnail(face);
 
   const handleCardClick = () => {
     navigate(`/medium/${face.media_id}`, {
@@ -67,8 +66,8 @@ function FaceCard({
       selectionEnabled={Boolean(onSelectionClick)}
       onSelectionClick={onSelectionClick ?? (() => false)}
       onOpen={handleCardClick}
-      aspectRatio={1}
-      sx={{ width: 140, height: footer ? "auto" : 140, flexShrink: 0, cursor: "pointer", boxShadow: 2 }}
+      aspectRatio={aspectRatio}
+      sx={{ width: "100%", cursor: "pointer", boxShadow: 2, ...(isProfile && { outline: `3px solid ${theme.palette.primary.main}`, outlineOffset: -3 }) }}
       footer={footer}
       menu={!isProfile && onSetProfile && (
         <Tooltip title="Set as profile">
@@ -84,13 +83,17 @@ function FaceCard({
           </IconButton>
         </Tooltip>
       )}
-      bottomLeft={typeof face.similarity === "number" && (
+      bottomLeft={typeof face.similarity === "number" ? (
         <Box sx={{ bgcolor: (theme) => alpha(theme.palette.common.black, 0.6), borderRadius: 1, px: 0.5, py: 0.25 }}>
           <Typography variant="caption" sx={{ color: "common.white", fontWeight: 600 }}>
             {`${face.similarity.toFixed(1)}%`}
           </Typography>
         </Box>
-      )}
+      ) : !showsParent ? (
+        <Box sx={{ bgcolor: "rgba(0,0,0,.65)", borderRadius: 1, px: 0.5 }}>
+          <Typography variant="caption" color="common.white">{face.timestamp != null ? "Video face crop" : "Face crop"}</Typography>
+        </Box>
+      ) : undefined}
       bottomRight={(face.timestamp != null || face.assigned_at) && (
         <Tooltip title={(
           <>
@@ -108,18 +111,17 @@ function FaceCard({
         </Tooltip>
       )}
     >
-      <Avatar
+      <Box
+        component="img"
         src={thumbUrl}
-        variant="rounded"
-        slotProps={{ img: { loading: "lazy", draggable: false } }}
-        sx={{
-          width: "100%",
-          height: "100%",
-          boxSizing: "border-box",
-          borderRadius: 1,
-          border: isProfile ? `3px solid ${theme.palette.primary.main}` : "none",
-        }}
+        alt={showsParent ? "Parent image with detected face" : "Detected face crop"}
+        loading="lazy"
+        draggable={false}
+        onLoad={onLoad}
+        onError={onError}
+        sx={{ display: "block", width: "100%", height: "100%", objectFit: "contain", boxSizing: "border-box" }}
       />
+      {showsParent && dimensions && <FaceBoxOverlay bbox={face.bbox} sourceWidth={dimensions[0]} sourceHeight={dimensions[1]} space="detector" />}
     </SelectableTileFrame>
   );
 }

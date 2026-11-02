@@ -11,7 +11,7 @@ import {
   Checkbox,
   FormControlLabel,
 } from "@mui/material";
-import Grid from "@mui/material/Grid";
+import Gallery from "./Gallery";
 import { DuplicateGroup as GroupType } from "../types";
 import { DuplicateMediaCard } from "./DuplicateMediaCard";
 import type { DuplicateResolveSnapshot } from "../services/duplicateResolver";
@@ -185,9 +185,9 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
           </Button>
         </Box>
       </Box>
-      <Grid container spacing={0.5} sx={{ p: 0.5 }}>
+      <Box sx={{ p: 0.5 }}><Gallery>
         {group.items.map((media) => (
-          <Grid key={media.id} size={{ xs: 6, sm: 4, md: 3, lg: 2 }}>
+          <Box key={media.id}>
             <DuplicateMediaCard
               media={media}
               groupId={group.group_id}
@@ -197,9 +197,9 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
               selected={selectedIds.has(media.id)}
               onSelectionClick={onSelectionClick}
             />
-          </Grid>
+          </Box>
         ))}
-      </Grid>
+      </Gallery></Box>
 
       {/* Confirmation Dialog */}
       <ConfirmDialog open={!!confirmAction} onClose={() => setConfirmAction(null)}

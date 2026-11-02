@@ -73,8 +73,8 @@ test('orphan sentinel waits for loading and then resumes while still visible',()
     '../services/face':{getOrphanFaceCount:async()=>1},
     'react-intersection-observer':{useInView:()=>({ref:noop,inView:true})},
   }).default;
-  const shell=runtime.render(()=>Page());const All=shell.props.children[1].type;
-  const render=()=>runtime.render(()=>All());render();assert.equal(calls,0);loading=false;render();assert.equal(calls,1);
+  const shell=runtime.render(()=>Page());const All=shell.type;
+  const render=()=>runtime.render(()=>All({}));render();assert.equal(calls,0);loading=false;render();assert.equal(calls,1);
 });
 test('timeline registers a cache refresher for undo',()=>{
   const runtime=hooks();const registry=[];const store=listStore();

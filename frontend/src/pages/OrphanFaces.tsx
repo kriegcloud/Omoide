@@ -1,3 +1,4 @@
+import GalleryPage from "../components/GalleryPage";
 import { readCachedList } from "../stores/useListStore";
 import config from "../config";
 import { useHotkey } from "../hotkeys/useHotkey";
@@ -9,7 +10,6 @@ import { refreshCachedList } from "../stores/useListStore";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   Chip,
-  Container,
   Box,
   Typography,
   CircularProgress,
@@ -52,9 +52,7 @@ export default function OrphanFacesPage() {
     ? Math.round(Math.min(0.8, Math.max(0.4, parsedMin)) * 100) / 100
     : 0.5;
 
-  return (
-    <>
-      <Container maxWidth={false} sx={{ pt: 4 }}>
+  const tabs = (
         <ToggleButtonGroup
           exclusive
           value={view}
@@ -69,9 +67,10 @@ export default function OrphanFacesPage() {
           <ToggleButton value="all">All</ToggleButton>
           <ToggleButton value="suggestions">Suggestions</ToggleButton>
         </ToggleButtonGroup>
-      </Container>
-      {view === "suggestions" ? (
+  );
+  return (view === "suggestions" ? (
         <OrphanFaceSuggestions
+          tabs={tabs}
           minScore={minScore}
           onMinScoreChange={(value) => {
             const next = new URLSearchParams(searchParams);
@@ -79,12 +78,11 @@ export default function OrphanFacesPage() {
             setSearchParams(next);
           }}
         />
-      ) : <AllOrphanFaces />}
-    </>
+      ) : <AllOrphanFaces tabs={tabs} />
   );
 }
 
-function AllOrphanFaces() {
+function AllOrphanFaces({ tabs }: { tabs: React.ReactNode }) {
   const navigate = useNavigate();
   const listKey = "orphan-faces";
   useListInvalidation(listKey);
@@ -276,18 +274,8 @@ function AllOrphanFaces() {
   useHotkey({ key: "a" }, openAssignDialog, { scope: "page", enabled: selectedFaceIds.length > 0 && !isProcessing && !config.PRESENTATION_MODE, description: "Assign selected faces…" });
   useHotkey({ key: "Escape" }, () => setSelectedFaceIds([]), { scope: "page", enabled: selectedFaceIds.length > 0, description: "Clear face selection" });
 
-
   return (
-    <Container id="unassigned-faces" maxWidth={false} sx={{ pt: 1.5, pb: 3 }}>
-      <Box sx={{ display: "flex", alignItems: "center", flexWrap: "wrap", mb: 2, gap: 2 }}>
-        <Typography variant="h4" sx={{ flexGrow: 1 }}>
-          Unassigned Faces
-        </Typography>
-      </Box>
-
-      {countError && <Alert severity="error" sx={{ mb: 2 }}>{countError}</Alert>}
-
-      <StickySelectionToolbar sx={{ p: 1, mb: 2 }}>
+    <GalleryPage id="unassigned-faces" title="Unassigned Faces" tabs={tabs} count={orphanCount ?? storedOrphans.length} countLabel="faces" selection={<StickySelectionToolbar sx={{ p: 1, mb: 2 }}>
         <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
           <Typography sx={{ ml: 1 }} variant="subtitle1">
             {selectedFaceIds.length} selected · {orphans.length} loaded
@@ -341,7 +329,9 @@ function AllOrphanFaces() {
           </Button>
           {isProcessing && <CircularProgress size={20} />}
         </Stack>
-      </StickySelectionToolbar>
+      </StickySelectionToolbar>}>
+
+      {countError && <Alert severity="error" sx={{ mb: 2 }}>{countError}</Alert>}
 
       <ListState
         loading={isLoading && orphans.length === 0}
@@ -453,6 +443,6 @@ function AllOrphanFaces() {
           {snackbar.message}
         </Alert>
       </Snackbar>
-    </Container>
+    </GalleryPage>
   );
 }

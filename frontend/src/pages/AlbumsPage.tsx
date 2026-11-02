@@ -1,3 +1,5 @@
+import GalleryPage from "../components/GalleryPage";
+import Gallery from "../components/Gallery";
 import { useMutationRefresh } from "../context/UndoContext";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -5,7 +7,6 @@ import {
   Box,
   Button,
   CircularProgress,
-  Container,
   Dialog,
   DialogActions,
   DialogContent,
@@ -100,7 +101,7 @@ export default function AlbumsPage() {
   };
 
   return (
-    <Container maxWidth={false} sx={{ minHeight: "100vh", py: 1.5 }}>
+    <GalleryPage title="Albums" count={albums.length}>
       <Box
         display="flex"
         justifyContent="space-between"
@@ -111,9 +112,7 @@ export default function AlbumsPage() {
       >
         <Box display="flex" alignItems="center" gap={1}>
           <PhotoAlbumIcon color="primary" />
-          <Typography variant="h5" fontWeight={700}>
-            Albums
-          </Typography>
+
         </Box>
         <Box display="flex" gap={1} alignItems="center">
           {selection.selectionMode && (
@@ -163,20 +162,7 @@ export default function AlbumsPage() {
           description="Create an album, then add media via Select Mode."
         />
       ) : (
-        <Box
-          ref={gridRef}
-          sx={{
-            display: "grid",
-            gap: 0.5,
-            gridTemplateColumns: {
-              xs: "repeat(2, 1fr)",
-              sm: "repeat(3, 1fr)",
-              md: "repeat(4, 1fr)",
-              lg: "repeat(5, 1fr)",
-            },
-            position: "relative",
-          }}
-        >
+        <Box ref={gridRef} sx={{ position: "relative" }}><Gallery>
           {albums.map((album) => (
             <AlbumCard
               key={album.id}
@@ -186,8 +172,8 @@ export default function AlbumsPage() {
               onSelectionClick={onItemClick}
             />
           ))}
-          <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
-        </Box>
+
+        </Gallery><MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} /></Box>
       )}
 
       <Dialog
@@ -232,6 +218,6 @@ export default function AlbumsPage() {
         onConfirm={handleDeleteSelected}
         onClose={() => setDeleteOpen(false)}
       />
-    </Container>
+    </GalleryPage>
   );
 }

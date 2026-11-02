@@ -11,8 +11,8 @@ test('cursor grid receives card deletion and blocks stale page resurrection',asy
  }).CursorMediaGrid;
  let calls=0;const fetcher=()=>++calls===1?pending.promise:Promise.resolve({items:calls===2?[{id:8}]:[],next_cursor:null});const render=()=>runtime.render(()=>Component({listKey:'album-1',fetcher}));
  render();events.emit({type:'media:deleted',ids:[7]});pending.resolve({items:[{id:7},{id:8}],next_cursor:null});await settle();
- const view=render();const grid=component(view,'react-masonry-css');const cards=[grid.props.children].flat();assert.deepEqual(cards.map(n=>n.props.children.props.media.id),[8]);
- events.emit({type:'media:deleted',ids:[8]});assert.equal(component(render(),'react-masonry-css'),undefined);
+ const view=render();const grid=component(view,'./Gallery');const cards=[grid.props.children].flat();assert.deepEqual(cards.map(n=>n.props.children.props.media.id),[8]);
+ events.emit({type:'media:deleted',ids:[8]});assert.equal(component(render(),'./Gallery'),undefined);
 });
 function requireTranspiled(file){return load(file,hooks());}
 test('bulk resolve reconciles processed ids and uses refetch mode for count-only results',async()=>{

@@ -1,3 +1,4 @@
+import GalleryPage from "../components/GalleryPage";
 import React, { useCallback, useRef, useState } from "react";
 import {
   Alert,
@@ -104,10 +105,19 @@ const ShortVideosPage: React.FC = () => {
   const totalSize = items.reduce((sum, i) => sum + (i.size || 0), 0);
 
   return (
-    <Box sx={{ p: { xs: 1, sm: 1.5 } }}>
-      <Typography variant="h4" gutterBottom>
-        Short Videos
-      </Typography>
+    <GalleryPage title="Short Videos" count={total} selection={<BulkResolveToolbar
+        statsText={`${total.toLocaleString()} video${total !== 1 ? "s" : ""} under ${formatDuration(maxDuration)}`}
+        shownCount={items.length}
+        shownSize={totalSize}
+        total={total}
+        selectedIds={selectedIds}
+        onSelectVisible={selectVisible}
+        onClearSelection={clearSelection}
+        resolve={resolveSelection}
+        onResolved={handleResolved}
+        onFeedback={showFeedback}
+      />}>
+
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Videos shorter than the threshold duration. Useful for finding accidental recordings, boomerangs,
         or animated clips that may not be worth keeping. Sorted shortest-first.
@@ -153,18 +163,6 @@ const ShortVideosPage: React.FC = () => {
       </Box>
 
       {/* Stats + bulk actions */}
-      <BulkResolveToolbar
-        statsText={`${total.toLocaleString()} video${total !== 1 ? "s" : ""} under ${formatDuration(maxDuration)}`}
-        shownCount={items.length}
-        shownSize={totalSize}
-        total={total}
-        selectedIds={selectedIds}
-        onSelectVisible={selectVisible}
-        onClearSelection={clearSelection}
-        resolve={resolveSelection}
-        onResolved={handleResolved}
-        onFeedback={showFeedback}
-      />
 
       <ReviewMediaGrid
         gridRef={gridRef}
@@ -210,7 +208,7 @@ const ShortVideosPage: React.FC = () => {
           {snackbar.message}
         </Alert>
       </Snackbar>
-    </Box>
+    </GalleryPage>
   );
 };
 

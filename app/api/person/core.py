@@ -24,6 +24,7 @@ from sqlalchemy import (
     func,
     union_all,
 )
+from sqlalchemy.orm import selectinload
 from sqlmodel import Session, distinct, select
 
 from app.config import settings
@@ -116,7 +117,7 @@ def list_persons(
     gender: str | None = Query(None),
     session: Session = Depends(get_session),
 ):
-    q = select(Person).where(
+    q = select(Person).options(selectinload(Person.profile_face).selectinload(Face.media)).where(
         Person.hidden_at.is_not(None) if hidden else Person.hidden_at.is_(None)
     )
     if name:
@@ -135,7 +136,7 @@ def list_persons(
         PersonRead(
             **person.model_dump(),
             profile_face=(
-                FaceRead(**person.profile_face.model_dump())
+                FaceRead.model_validate(person.profile_face)
                 if person.profile_face
                 else None
             ),

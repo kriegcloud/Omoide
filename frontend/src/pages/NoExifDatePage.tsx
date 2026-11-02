@@ -1,3 +1,4 @@
+import GalleryPage from "../components/GalleryPage";
 import React, { useCallback, useRef, useState } from "react";
 import {
   Alert,
@@ -98,10 +99,19 @@ const NoExifDatePage: React.FC = () => {
   const totalSize = items.reduce((sum, i) => sum + (i.size || 0), 0);
 
   return (
-    <Box sx={{ p: { xs: 1, sm: 1.5 } }}>
-      <Typography variant="h4" gutterBottom>
-        No EXIF Date
-      </Typography>
+    <GalleryPage title="No EXIF Date" count={total} selection={<BulkResolveToolbar
+        statsText={`${total.toLocaleString()} item${total !== 1 ? "s" : ""} without EXIF date`}
+        shownCount={items.length}
+        shownSize={totalSize}
+        total={total}
+        selectedIds={selectedIds}
+        onSelectVisible={selectVisible}
+        onClearSelection={clearSelection}
+        resolve={resolveSelection}
+        onResolved={handleResolved}
+        onFeedback={showFeedback}
+      />}>
+
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Media with no capture timestamp in their EXIF metadata. These are typically screenshots,
         downloaded images, WhatsApp-forwarded content, or files whose metadata was stripped.
@@ -141,18 +151,6 @@ const NoExifDatePage: React.FC = () => {
       </Box>
 
       {/* Stats + bulk actions */}
-      <BulkResolveToolbar
-        statsText={`${total.toLocaleString()} item${total !== 1 ? "s" : ""} without EXIF date`}
-        shownCount={items.length}
-        shownSize={totalSize}
-        total={total}
-        selectedIds={selectedIds}
-        onSelectVisible={selectVisible}
-        onClearSelection={clearSelection}
-        resolve={resolveSelection}
-        onResolved={handleResolved}
-        onFeedback={showFeedback}
-      />
 
       <ReviewMediaGrid
         gridRef={gridRef}
@@ -197,7 +195,7 @@ const NoExifDatePage: React.FC = () => {
           {snackbar.message}
         </Alert>
       </Snackbar>
-    </Box>
+    </GalleryPage>
   );
 };
 

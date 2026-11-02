@@ -11,7 +11,7 @@ import {
   Tabs,
   Typography,
 } from "@mui/material";
-import Grid from "@mui/material/Grid";
+import Gallery from "./Gallery";
 import {
   FaceRead,
   Media,
@@ -458,18 +458,18 @@ export function PersonContentTabs({
         </Box>
 
         {similarPersons.length > 0 ? (
-          <Grid container spacing={0.5}>
+          <Gallery>
             {similarPersons.map((similar) => (
-              <Grid key={similar.id} size={{ xs: 6, sm: 3, md: 2 }}>
+              <div key={similar.id}>
                 <SimilarPersonCard
                   {...similar}
                   selectable
                   selected={selectedSimilarIds.includes(similar.id)}
                   onToggleSelect={() => toggleSimilarSelection(similar.id)}
                 />
-              </Grid>
+              </div>
             ))}
-          </Grid>
+          </Gallery>
         ) : isLoadingSimilarTab || isMergingSimilar ? (
           <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
             <CircularProgress size={32} />

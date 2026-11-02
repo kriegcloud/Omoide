@@ -5,6 +5,7 @@ import { getImages } from "../services/media";
 export default function ImagesPage() {
   return (
     <MediaListPage
+      title="Images"
       listKeyPrefix="images"
       fetcher={getImages}
       emptyTitle="No images found"

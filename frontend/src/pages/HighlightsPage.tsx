@@ -1,30 +1,21 @@
+import GalleryPage from "../components/GalleryPage";
 import { mutationBus } from "../stores/mutationBus";
 import { ListRevision } from "../stores/listReconciliation";
 import ListState from "../components/ListState";
 import { useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import Masonry from "react-masonry-css";
+import Gallery from "../components/Gallery";
 import {
   Box,
   Chip,
-  Container,
   Typography,
 } from "@mui/material";
-import StarIcon from "@mui/icons-material/Star";
 import MediaCard from "../components/MediaCard";
 import { getHighlights, getHighlightYears } from "../services/features";
 import { HighlightYear, Media } from "../types";
 import { useSelection } from "../context/SelectionContext";
 import { useGridSelection } from "../hooks/useMarqueeSelection";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
-
-const breakpointColumnsObj = {
-  default: 5,
-  1600: 4,
-  1200: 3,
-  900: 3,
-  600: 2,
-};
 
 export default function HighlightsPage() {
   const [years, setYears] = useState<HighlightYear[]>([]);
@@ -108,19 +99,8 @@ export default function HighlightsPage() {
   }, [loadHighlights]);
 
   return (
-    <Container maxWidth={false} sx={{ minHeight: "100vh", py: 1.5 }}>
-      <Box display="flex" alignItems="center" gap={1} mb={2}>
-        <StarIcon color="primary" />
-        <Typography variant="h5" fontWeight={700}>
-          Highlights
-        </Typography>
-      </Box>
-      <Typography variant="body2" color="text.secondary" mb={2}>
-        The best of each year, picked from favorites, faces, sharpness and
-        views.
-      </Typography>
-
-      <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", mb: 3 }}>
+    <GalleryPage title={"Highlights"} count={items.length}
+      filters={      <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", mb: 0 }}>
         {years.map((y) => (
           <Chip
             key={y.year}
@@ -130,18 +110,19 @@ export default function HighlightsPage() {
             onClick={() => setYear(y.year)}
           />
         ))}
-      </Box>
+      </Box>}>
+
+      <Typography variant="body2" color="text.secondary" mb={2}>
+        The best of each year, picked from favorites, faces, sharpness and
+        views.
+      </Typography>
 
       <ListState loading={isLoading && items.length === 0} error={error}
         empty={!isLoading && items.length === 0} emptyMessage="No highlights yet. Favorite some media to help choose highlights."
         onRetry={() => { if (year === null) setRetryYears(value => value + 1); else void loadHighlights(); }} />
       {items.length > 0 && (
         <Box ref={gridRef} sx={{ position: "relative" }}>
-          <Masonry
-            breakpointCols={breakpointColumnsObj}
-            className="my-masonry-grid"
-            columnClassName="my-masonry-grid_column"
-          >
+          <Gallery>
             {items.map((media) => (
               <div key={media.id}>
                 <MediaCard
@@ -151,10 +132,10 @@ export default function HighlightsPage() {
                 />
               </div>
             ))}
-          </Masonry>
+          </Gallery>
           <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
         </Box>
       )}
-    </Container>
+    </GalleryPage>
   );
 }

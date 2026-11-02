@@ -1,3 +1,4 @@
+import GalleryPage from "../components/GalleryPage";
 import { useMutationRefresh, useUndoRefresh } from "../context/UndoContext";
 import ListStateView from "../components/ListState";
 import { useListInvalidation } from "../stores/useListStore";
@@ -359,10 +360,10 @@ const clearList = useListStore(state => state.clearList);
   };
 
   return (
-    <Box sx={{ p: { xs: 1, sm: 1.5 } }}>
+    <GalleryPage title="Potential Duplicates" count={duplicateGroups.length}>
       <Box ref={headerRef} sx={{ pb: 2 }}>
         <Box sx={{ display: "flex", alignItems: "baseline", gap: 2, flexWrap: "wrap", mb: 1 }}>
-          <Typography variant="h5" component="h1">Potential Duplicates</Typography>
+
           <Typography variant="caption" color="text.secondary">
             Selection covers loaded rows only
           </Typography>
@@ -504,7 +505,7 @@ const clearList = useListStore(state => state.clearList);
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
         <Alert severity="error" variant="filled" onClose={() => setResolveError(null)}>{resolveError}</Alert>
       </Snackbar>
-    </Box>
+    </GalleryPage>
   );
 };
 

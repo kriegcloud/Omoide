@@ -26,7 +26,7 @@ function load(relative, rt, overrides={}) {
  const req=name=>{if(name in mods)return name==='../context/UndoContext'?{useMutationRefresh(){},useUndoRefresh(){},...mods[name]}:name==='../stores/useListStore'?{readCachedList:(state,key)=>state.lists[key],useListInvalidation(){},refreshCachedList:async()=>{},...mods[name]}:mods[name];if(name==='react/jsx-runtime')return require(name);if(name.startsWith('../hooks/useVisiblePolling')||name.startsWith('../utils/dataset')||name==='../hooks/useEditorUrlState'||name==='../utils/editorUrlState')return load(name.replace('../','')+'.ts',rt,overrides);if(name.includes('/services/'))return {};return {__esModule:true,default:name,...ui};};
  new Function('require','module','exports',js)(req,result,result.exports);return result.exports;
 }
-function nodes(tree,predicate){const found=[];function visit(node){if(Array.isArray(node)){node.forEach(visit);return;}if(!node||typeof node!=='object')return;if(predicate(node))found.push(node);visit(node.props?.children);}visit(tree);return found;}
+function nodes(tree,predicate){const found=[];function visit(node){if(Array.isArray(node)){node.forEach(visit);return;}if(!node||typeof node!=='object')return;if(predicate(node))found.push(node);[node.props?.children, node.props?.actions, node.props?.sort, node.props?.filters, node.props?.tabs, node.props?.selection].forEach(visit);}visit(tree);return found;}
 const text=node=>Array.isArray(node)?node.map(text).join(''):node&&typeof node==='object'?text(node.props?.children):node??'';
 const button=(tree,label)=>nodes(tree,n=>n.type==='Button'&&text(n)===label)[0];
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};

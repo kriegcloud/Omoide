@@ -4,7 +4,7 @@ import { useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
 import { refreshCachedList } from "../stores/useListStore";
 import React, { useState, useEffect, useRef } from "react";
 import { Box, CircularProgress, Autocomplete, TextField } from "@mui/material";
-import Masonry from "react-masonry-css";
+import Gallery from "./Gallery";
 import { useInView } from "react-intersection-observer";
 
 import { Media, Person, PersonReadSimple, Tag } from "../types";
@@ -18,14 +18,6 @@ import { useGridSelection } from "../hooks/useMarqueeSelection";
 import MarqueeSelectionBox from "./MarqueeSelectionBox";
 import config from "../config";
 
-const breakpointColumnsObj = {
-  default: 6,
-  1800: 5,
-  1500: 4,
-  1200: 3,
-  900: 2,
-  600: 1,
-};
 
 interface MediaAppearancesProps {
   person: Person;
@@ -190,11 +182,7 @@ export default function MediaAppearances({
         </Box>
       </Box>
       <Box ref={gridRef} sx={{ position: "relative" }}>
-        <Masonry
-          breakpointCols={breakpointColumnsObj}
-          className="my-masonry-grid"
-          columnClassName="my-masonry-grid_column"
-        >
+        <Gallery>
           {items &&
             items.map((media) => (
               <div key={media.id}>
@@ -213,7 +201,7 @@ export default function MediaAppearances({
                 />
               </div>
             ))}
-        </Masonry>
+        </Gallery>
         <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
       </Box>
 

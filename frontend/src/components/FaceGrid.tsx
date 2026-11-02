@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useRef } from "react";
 import { Box } from "@mui/material";
+import Gallery from "./Gallery";
 import FaceCard from "./FaceCard";
 import { FaceRead } from "../types";
 import { useGridSelection } from "../hooks/useMarqueeSelection";
@@ -36,31 +37,28 @@ export const FaceGrid: React.FC<FaceGridProps> = ({
     selectedIds: selectedIdSet,
     onSelectionChange: handleSelectionChange,
     selecting,
+    orderedIds: faces.map((face) => face.id),
   });
 
   return (
     <Box
       ref={containerRef}
-      sx={{
-        position: "relative",
-        display: "flex",
-        flexWrap: "wrap",
-        gap: 0.25, // Dense face review: 2px gaps without changing the crop
-        justifyContent: "flex-start",
-      }}
+      sx={{ position: "relative" }}
     >
-      {faces.map((face) => (
-        <FaceCard
-          key={face.id}
-          face={face}
-          keyboardReview
-          isProfile={false} // Orphans can't be profile pics
-          selected={selectedIdSet.has(face.id)}
-          selecting={selecting}
-          onSelectionClick={onItemClick}
-          footer={renderFooter?.(face)}
-        />
-      ))}
+      <Gallery>
+        {faces.map((face) => (
+          <FaceCard
+            key={face.id}
+            face={face}
+            keyboardReview
+            isProfile={false} // Orphans can't be profile pics
+            selected={selectedIdSet.has(face.id)}
+            selecting={selecting}
+            onSelectionClick={onItemClick}
+            footer={renderFooter?.(face)}
+          />
+        ))}
+      </Gallery>
       <MarqueeSelectionBox container={containerRef.current} rect={marqueeRect} />
     </Box>
   );

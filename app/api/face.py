@@ -13,6 +13,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func
+from sqlalchemy.orm import selectinload
 from sqlalchemy.dialects.sqlite import insert
 from sqlmodel import Session, delete, select, text, update
 
@@ -368,7 +369,7 @@ def get_orphan_face_suggestions(
     faces = {
         face.id: face
         for face in session.exec(
-            select(Face).where(Face.id.in_([match.face_id for match in page]))
+            select(Face).options(selectinload(Face.media)).where(Face.id.in_([match.face_id for match in page]))
         ).all()
     }
     next_offset = offset + len(page)
@@ -433,7 +434,7 @@ def get_orphans(
 ):
     orphans, next_cursor = paginate(
         session,
-        select(Face).where(Face.person_id.is_(None), Face.ignored_at.is_(None)),
+        select(Face).options(selectinload(Face.media)).where(Face.person_id.is_(None), Face.ignored_at.is_(None)),
         [(Face.id, False)],
         cursor=cursor,
         limit=limit,

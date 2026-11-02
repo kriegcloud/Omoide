@@ -46,6 +46,7 @@ import {
 } from "../utils/editorOps";
 import { buildEditorTheme } from "../utils/editorTheme";
 import ConfirmDialog from "./ConfirmDialog";
+import FaceBoxOverlay from "./FaceBoxOverlay";
 import { observeEditorFits } from "../utils/editorFitObserver";
 
 interface LazyEditorProps {
@@ -847,12 +848,9 @@ export default function ImageEditorDialog({
           {faceGuides && imageOverlay && media.width && media.height && ((imageOverlay.rotation % 360) + 360) % 360 === 0 && (
             <Box sx={imageOverlay.clip ? { position: "absolute", pointerEvents: "none", zIndex: 5, left: imageOverlay.clip.left, top: imageOverlay.clip.top, width: imageOverlay.clip.width, height: imageOverlay.clip.height, overflow: "hidden" } : { display: "contents" }}>
             <Box sx={{ position: "absolute", pointerEvents: "none", zIndex: 5, left: imageOverlay.left - (imageOverlay.clip?.left ?? 0), top: imageOverlay.top - (imageOverlay.clip?.top ?? 0), width: imageOverlay.width, height: imageOverlay.height, overflow: "hidden" }}>
-              {(faceSuggestions ?? []).map((suggestion) => {
-                const [x, y, width, height] = suggestion.face_bbox;
-                return (
-                  <Box key={suggestion.face_id} sx={{ position: "absolute", border: "2px solid", borderColor: "warning.light", boxShadow: "0 0 0 1px rgba(0,0,0,0.6)", left: `${(x / (media.width ?? 1)) * 100}%`, top: `${(y / (media.height ?? 1)) * 100}%`, width: `${(width / (media.width ?? 1)) * 100}%`, height: `${(height / (media.height ?? 1)) * 100}%` }} />
-                );
-              })}
+              {(faceSuggestions ?? []).map((suggestion) => (
+                <FaceBoxOverlay key={suggestion.face_id} bbox={suggestion.face_bbox} sourceWidth={media.width!} sourceHeight={media.height!} />
+              ))}
             </Box>
             </Box>
           )}

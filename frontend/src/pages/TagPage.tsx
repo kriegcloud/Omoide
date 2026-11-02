@@ -1,9 +1,10 @@
+import GalleryPage from "../components/GalleryPage";
+import Gallery from "../components/Gallery";
 import { useListInvalidation } from "../stores/useListStore";
 import type { Tag } from "../types";
 import { readCachedList } from "../stores/useListStore";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Button, Container, Typography, Box, CircularProgress } from "@mui/material";
-import Grid from "@mui/material/Grid";
+import { Alert, Button, Typography, Box, CircularProgress } from "@mui/material";
 
 import { useInView } from "react-intersection-observer";
 import TagCard from "../components/TagCard";
@@ -75,9 +76,9 @@ export default function TagsPage() {
     }
   };
   return (
-    <Container maxWidth={false} sx={{ pt: 1.5, pb: 3 }}>
+    <GalleryPage title="Tags" count={items.length}>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-        <Typography variant="h4">Tags</Typography>
+
         <Box display="flex" gap={1} alignItems="center">
           {selection.selectionMode && (
             <Typography variant="body2" color="text.secondary">
@@ -103,9 +104,9 @@ export default function TagsPage() {
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
 
-      <Grid ref={gridRef} container spacing={0.5} sx={{ position: "relative" }}>
+      <Box ref={gridRef} sx={{ position: "relative" }}><Gallery>
         {items.map((tag) => (
-          <Grid key={tag.id} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
+          <div key={tag.id}>
             {/* 1,2,3,4 per row */}
             <TagCard
               tag={tag}
@@ -114,10 +115,9 @@ export default function TagsPage() {
               selected={selection.selectedIds.has(tag.id)}
               onSelectionClick={onItemClick}
             />
-          </Grid>
+          </div>
         ))}
-        <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
-      </Grid>
+      </Gallery><MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} /></Box>
 
       {isLoading && (
         <Box textAlign="center" py={4}>
@@ -144,6 +144,6 @@ export default function TagsPage() {
         onConfirm={handleDeleteSelected}
         onClose={() => setDeleteOpen(false)}
       />
-    </Container>
+    </GalleryPage>
   );
 }

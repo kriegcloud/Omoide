@@ -5,6 +5,7 @@ import { getVideos } from "../services/media";
 export default function VideosPage() {
   return (
     <MediaListPage
+      title="Videos"
       listKeyPrefix="videos"
       fetcher={getVideos}
       emptyTitle="No videos found"

@@ -6,17 +6,19 @@ from .extensions import (
 """Finding similar persons and merging them."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import selectinload
 from sqlmodel import Session, text
 
 from app.config import settings
 from app.database import get_session
-from app.models import Person
+from app.models import Face, Person
 from app.persons import get_person_embedding, merge_person_into
 from app.schemas.person import (
     MergePersonsBulkRequest,
     MergePersonsRequest,
     MergePersonsResult,
     SimilarPerson,
+    FaceRead,
 )
 
 router = APIRouter()
@@ -115,6 +117,16 @@ def get_similarities(person_id: int, session: Session = Depends(get_session)):
 
     result_rows = session.exec(sql).all()
 
+    # Fetch profile metadata for the bounded similarity page in batches.
+    profiles = {
+        candidate.id: (candidate.profile_face if candidate.profile_face and candidate.profile_face.thumbnail_path else None)
+        for candidate in session.exec(
+            select(Person)
+            .where(Person.id.in_([row.person_id for row in result_rows]))
+            .options(selectinload(Person.profile_face).selectinload(Face.media))
+        ).all()
+    } if result_rows else {}
+
     similar_persons_list = []
     for row in result_rows:
         similar_persons_list.append(
@@ -123,6 +135,8 @@ def get_similarities(person_id: int, session: Session = Depends(get_session)):
                 name=row.person_name,
                 thumbnail=row.thumbnail_path,  # Populate the new thumbnail field
                 similarity=row.similarity_pct,
+                profile_face=(FaceRead.model_validate(profiles[row.person_id])
+                              if profiles.get(row.person_id) else None),
             )
         )
 

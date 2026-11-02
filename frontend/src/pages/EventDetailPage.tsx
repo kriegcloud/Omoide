@@ -1,3 +1,4 @@
+import GalleryPage from "../components/GalleryPage";
 import { useMutationRefresh } from "../context/UndoContext";
 import ConfirmDialog from "../components/ConfirmDialog";
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -5,7 +6,6 @@ import {
   Alert,
   Box,
   Button,
-  Container,
   IconButton,
   TextField,
   Typography,
@@ -121,9 +121,9 @@ export default function EventDetailPage() {
   };
 
   return (
-    <Container maxWidth={false} sx={{ minHeight: "100vh", py: 1.5 }}>
-      <Box display="flex" alignItems="center" gap={1} mb={1} flexWrap="wrap">
-        <TheatersIcon color="primary" />
+    <GalleryPage title={event?.title || dateRange || "Event"} count={event?.media_count}
+      actions={      <Box display="flex" alignItems="center" gap={1}  flexWrap="wrap">
+
         {isRenaming ? (
           <>
             <TextField
@@ -150,9 +150,7 @@ export default function EventDetailPage() {
           </>
         ) : (
           <>
-            <Typography variant="h5" fontWeight={700}>
-              {event?.title || dateRange || "Event"}
-            </Typography>
+
             {event && !config.PRESENTATION_MODE && (
               <IconButton aria-label="Rename event" size="small" onClick={startRenaming}>
                 <EditIcon fontSize="small" />
@@ -160,7 +158,7 @@ export default function EventDetailPage() {
             )}
           </>
         )}
-        <Box flexGrow={1} />
+
         {event && !config.PRESENTATION_MODE && (
           <Button
             variant="outlined"
@@ -171,7 +169,8 @@ export default function EventDetailPage() {
             Convert to album
           </Button>
         )}
-      </Box>
+      </Box>}>
+
       <Typography variant="body2" color="text.secondary" mb={3}>
         {event ? `${dateRange} · ${event.media_count} items` : ""}
       </Typography>
@@ -197,6 +196,6 @@ export default function EventDetailPage() {
       <ConfirmDialog open={convertTarget !== null} title="Convert event to album?"
         message={`Convert "${convertTarget?.title ?? ""}" to an album and remove this event? This cannot be undone.`}
         confirmLabel="Convert" loading={isConverting} onConfirm={handleConvert} onClose={() => setConvertTarget(null)} />
-    </Container>
+    </GalleryPage>
   );
 }

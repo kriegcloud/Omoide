@@ -52,7 +52,7 @@ function load(relative, runtime, modules={}) {
   },module,module.exports);
   return module.exports;
 }
-function find(node,match) {if(!node||typeof node!=='object')return; if(match(node))return node; for(const child of [node.props?.children].flat(Infinity)){const found=find(child,match);if(found)return found;} }
+function find(node,match) {if(!node||typeof node!=='object')return; if(match(node))return node; for(const child of [node.props?.children, node.props?.actions, node.props?.sort, node.props?.filters, node.props?.tabs, node.props?.selection].flat(Infinity)){const found=find(child,match);if(found)return found;} }
 function component(node,name) {return find(node,node=>node.type===name);}
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
 async function settle(){for(let i=0;i<8;i++)await Promise.resolve();}

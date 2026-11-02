@@ -16,7 +16,7 @@ for(const kind of ['Album','Event'])test(`${kind} detail rejects old responses a
  const p=entityPage(kind);p.render();p.route.id='2';p.render();
  const row=id=>({id,name:'album-'+id,title:'event-'+id,media_count:1,start_at:'2026-01-01',end_at:'2026-01-01'});
  p.second.resolve(row(2));await settle();p.render();p.first.resolve(row(1));await settle();
- const title=find(p.render(),n=>n.type==='Typography'&&n.props.variant==='h5');
+ const title=p.render().props.title;
  assert.match(text(title),/-2$/);p.runtime.unmount();
 });
 test('album delete confirmation never retargets to a newly navigated album',async()=>{
@@ -66,7 +66,7 @@ test('album rename completion after navigation cannot overwrite the next detail'
  const tree=p.render();find(tree,n=>n.type==='TextField').props.onChange({target:{value:'renamed'}});
  const pending=find(p.render(),n=>n.type==='Button'&&text(n)==='Rename').props.onClick();p.route.id='2';p.render();p.second.resolve({id:2,name:'two',media_count:1});await settle();
  rename.resolve({id:1,name:'renamed',media_count:1});await pending;
- assert.equal(text(find(p.render(),n=>n.type==='Typography'&&n.props.variant==='h5')),'two');p.runtime.unmount();
+ assert.equal(text(p.render().props.title),'two');p.runtime.unmount();
 });
 for(const kind of ['Album','Event'])test(`${kind} read completion after unmount cannot write state`,async()=>{
  const p=entityPage(kind);let unmounted=false,writes=0;const state=p.runtime.api.useState;

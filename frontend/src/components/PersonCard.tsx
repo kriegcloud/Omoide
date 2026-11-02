@@ -7,18 +7,20 @@ import { setPersonFavorite } from "../services/personActions";
 import { Box, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import type { PersonReadSimple } from "../types";
-import { API } from "../config";
-import { encodeFilePath } from "../urlUtils";
+import { useFaceThumbnail, type FaceThumbnailData } from "../hooks/useFaceThumbnail";
+import FaceBoxOverlay from "./FaceBoxOverlay";
 import type { SelectionClickEvent } from "../hooks/useMarqueeSelection";
 import SelectableTileFrame from "./SelectableTileFrame";
 
-type PersonCardPerson = Pick<PersonReadSimple, "id" | "name"> & { profile_face?: { thumbnail_path?: string | null } | null; appearance_count?: number; is_favorite?: boolean };
+type PersonCardPerson = Pick<PersonReadSimple, "id" | "name"> & { profile_face?: FaceThumbnailData | null; appearance_count?: number; is_favorite?: boolean };
 
 interface PersonCardProps {
   person: PersonCardPerson;
   selecting?: boolean;
   selected?: boolean;
   onSelectionClick?: (personId: number, event: SelectionClickEvent) => boolean;
+  secondaryLabel?: string;
+  showFavorite?: boolean;
 }
 
 const getInitials = (name = "") => {
@@ -34,6 +36,8 @@ export default function PersonCard({
   selecting = false,
   selected = false,
   onSelectionClick,
+  secondaryLabel,
+  showFavorite = true,
 }: PersonCardProps) {
   const [favorite, setFavorite] = useState(Boolean(person.is_favorite));
   const [favoriteBusy, setFavoriteBusy] = useState(false);
@@ -45,26 +49,25 @@ export default function PersonCard({
   };
   const fallbackName = person.name || "Unknown";
 
-  const thumbUrl = person.profile_face?.thumbnail_path
-    ? `${API}/thumbnails/${encodeFilePath(
-        person.profile_face.thumbnail_path
-      )}`
-    : undefined;
+  const thumbnail = useFaceThumbnail(person.profile_face);
+  const thumbUrl = thumbnail.src;
 
   const appearanceLabel =
     typeof person.appearance_count === "number" && person.appearance_count > 0
       ? `${person.appearance_count} media`
       : "";
 
+  const captionLabel = secondaryLabel ?? appearanceLabel;
+
   return (
     <SelectableTileFrame
       id={person.id}
       href={`/person/${person.id}`}
-      aspectRatio="3/4"
+      aspectRatio={thumbnail.aspectRatio}
       selecting={selecting}
       selected={selected}
       onSelectionClick={onSelectionClick}
-      menu={selecting ? undefined : config.PRESENTATION_MODE ? (
+      menu={selecting || !showFavorite ? undefined : config.PRESENTATION_MODE ? (
         favorite && (
           <FavoriteIcon aria-label="Favorite" color="error" sx={{ m: 0.5, display: "block" }} />
         )
@@ -94,14 +97,16 @@ export default function PersonCard({
       )}
       sx={{
         color: "common.white",
-        background: thumbUrl
-          ? `url("${thumbUrl}")`
-          : (themeParam) =>
-              `linear-gradient(135deg, ${themeParam.palette.primary.main}, ${themeParam.palette.primary.dark})`,
-        backgroundSize: "cover",
-        backgroundPosition: "center",
+        background: (themeParam) =>
+          `linear-gradient(135deg, ${themeParam.palette.primary.main}, ${themeParam.palette.primary.dark})`,
       }}
     >
+      {thumbUrl && (
+        <Box component="img" src={thumbUrl} alt={thumbnail.showsParent ? `Photo containing ${fallbackName}` : `Face crop for ${fallbackName}`} loading="lazy" draggable={false} onLoad={thumbnail.onLoad} onError={thumbnail.onError} sx={{ display: "block", width: "100%", height: "100%", objectFit: "contain" }} />
+      )}
+      {thumbnail.showsParent && thumbnail.dimensions && (
+        <FaceBoxOverlay bbox={person.profile_face?.bbox} sourceWidth={thumbnail.dimensions[0]} sourceHeight={thumbnail.dimensions[1]} space="detector" />
+      )}
       {!thumbUrl && (
         <Box
           sx={{
@@ -146,7 +151,8 @@ export default function PersonCard({
             mt: 0.5,
           }}
         >
-          {appearanceLabel}
+          {captionLabel}
+          {thumbUrl && !thumbnail.showsParent && `${captionLabel ? " · " : ""}Face crop`}
         </Typography>
       </Box>
     </SelectableTileFrame>

@@ -1,5 +1,8 @@
 import { useEditorUrlState } from "../hooks/useEditorUrlState";
 import { positiveId } from "../utils/editorUrlState";
+import { StickySelectionToolbar } from "../components/BulkResolveToolbar";
+import Gallery from "../components/Gallery";
+import GalleryPage from "../components/GalleryPage";
 import { useVisiblePolling } from "../hooks/useVisiblePolling";
 import { useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -519,7 +522,18 @@ export default function DatasetDetailPage() {
   if (!dataset) return <Container maxWidth={false} sx={{ py: 4 }}><Alert severity="error">{error ?? "Dataset not found"}</Alert></Container>;
 
   return (
-    <Container maxWidth={false} sx={{ py: 4, pb: 12 }}>
+    <GalleryPage title={dataset.name} count={dataset.item_count ?? items.length} sx={{ pb: 12 }}
+      tabs={      <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ mb: 2 }}><Tab label={`Items (${dataset.item_count ?? items.length})`} /><Tab label="Analysis" /><Tab label={`Exports (${exports.length})`} /><Tab label={`Runs (${runs.length})`} /><Tab label="Captions" /></Tabs>}
+      sort={tab === 0 && (            <FormControl size="small" sx={{ minWidth: 180, ml: "auto" }}><InputLabel>Sort</InputLabel><Select label="Sort" value={sort} onChange={(event) => setSort(event.target.value)}><MenuItem value="position">Position</MenuItem><MenuItem value="sharpness">Sharpness</MenuItem><MenuItem value="frontality">Frontality</MenuItem><MenuItem value="face_ratio">Face ratio</MenuItem><MenuItem value="identity_distance">Identity distance</MenuItem><MenuItem value="brightness">Brightness</MenuItem></Select></FormControl>)}
+      selection={tab === 0 && (<StickySelectionToolbar sx={{ p: 1, mb: 2 }}>          <Stack direction="row" spacing={1} alignItems="center"  flexWrap="wrap" useFlexGap>
+            <Button variant="outlined" onClick={selection.toggleSelecting}>{selection.isSelecting ? "Cancel selection" : "Select items"}</Button>
+            {selection.isSelecting && <Typography color="text.secondary">{selection.selectedIds.size} selected</Typography>}
+            {selection.isSelecting && <><Button disabled={!selectedItems.length} onClick={() => void bulkExcluded(true)}>Exclude</Button><Button disabled={!selectedItems.length} onClick={() => void bulkExcluded(false)}>Include</Button><Button disabled={!selectedItems.length || !config.REPAIRS_ENABLED} onClick={() => setRepairOpen(true)}>Repair…</Button><Button color="error" disabled={!selectedItems.length} onClick={() => void remove(selectedItems)}>Remove</Button></>}
+            <Button variant="outlined" disabled={dataset.person_id == null || items.length === 0} onClick={() => setBatchCropOpen(true)}>Batch crop…</Button>
+            <Button variant="contained" disabled={items.length === 0} onClick={() => navigate(`/dataset/${datasetId}/triage`)}>Triage</Button>
+            <Button variant="outlined" disabled={dataset.person_id == null} onClick={() => setFrameMiningOpen(true)}>Mine video frames…</Button>
+
+          </Stack></StickySelectionToolbar>)}>
       <Paper elevation={0} sx={{ p: { xs: 2, md: 3 }, mb: 3, border: 1, borderColor: "divider", borderRadius: 1 }}>
         <Stack direction={{ xs: "column", md: "row" }} spacing={2} alignItems={{ md: "flex-start" }}>
           <Box flex={1}>
@@ -542,21 +556,13 @@ export default function DatasetDetailPage() {
       </Paper>
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
       {notice && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setNotice(null)}>{notice}</Alert>}
-      <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ mb: 2 }}><Tab label={`Items (${dataset.item_count ?? items.length})`} /><Tab label="Analysis" /><Tab label={`Exports (${exports.length})`} /><Tab label={`Runs (${runs.length})`} /><Tab label="Captions" /></Tabs>
 
       {tab === 0 && (
         <>
-          <Stack direction="row" spacing={1} alignItems="center" mb={2} flexWrap="wrap" useFlexGap>
-            <Button variant="outlined" onClick={selection.toggleSelecting}>{selection.isSelecting ? "Cancel selection" : "Select items"}</Button>
-            {selection.isSelecting && <Typography color="text.secondary">{selection.selectedIds.size} selected</Typography>}
-            {selection.isSelecting && <><Button disabled={!selectedItems.length} onClick={() => void bulkExcluded(true)}>Exclude</Button><Button disabled={!selectedItems.length} onClick={() => void bulkExcluded(false)}>Include</Button><Button disabled={!selectedItems.length || !config.REPAIRS_ENABLED} onClick={() => setRepairOpen(true)}>Repair…</Button><Button color="error" disabled={!selectedItems.length} onClick={() => void remove(selectedItems)}>Remove</Button></>}
-            <Button variant="outlined" disabled={dataset.person_id == null || items.length === 0} onClick={() => setBatchCropOpen(true)}>Batch crop…</Button>
-            <Button variant="contained" disabled={items.length === 0} onClick={() => navigate(`/dataset/${datasetId}/triage`)}>Triage</Button>
-            <Button variant="outlined" disabled={dataset.person_id == null} onClick={() => setFrameMiningOpen(true)}>Mine video frames…</Button>
-            <FormControl size="small" sx={{ minWidth: 180, ml: "auto" }}><InputLabel>Sort</InputLabel><Select label="Sort" value={sort} onChange={(event) => setSort(event.target.value)}><MenuItem value="position">Position</MenuItem><MenuItem value="sharpness">Sharpness</MenuItem><MenuItem value="frontality">Frontality</MenuItem><MenuItem value="face_ratio">Face ratio</MenuItem><MenuItem value="identity_distance">Identity distance</MenuItem><MenuItem value="brightness">Brightness</MenuItem></Select></FormControl>
-          </Stack>
+
           {items.length === 0 ? <Typography color="text.secondary">Add images from any media grid to start curating this dataset.</Typography> : (
-            <Box ref={gridRef} sx={{ display: "grid", gap: 0.5, gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(3, 1fr)", md: "repeat(4, 1fr)", lg: "repeat(5, 1fr)" }, position: "relative" }}>
+            <Box ref={gridRef} sx={{ position: "relative" }}>
+              <Gallery>
               {items.map((item) => (
                 <MediaCard key={item.id} media={item.media} onSelectionClick={onItemClick} datasetContext={{
                   caption: item.effective_caption, excluded: item.excluded, excludedReason: item.excluded_reason, hasOps: item.has_ops,
@@ -568,6 +574,7 @@ export default function DatasetDetailPage() {
                   onEditCrop: () => setCropItem(item), onRemove: () => void remove([item]),
                 }} />
               ))}
+              </Gallery>
               <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
             </Box>
           )}
@@ -663,7 +670,7 @@ export default function DatasetDetailPage() {
         <DialogTitle>Preview gap candidates</DialogTitle>
         <DialogContent>
           {gapPreview && <Typography color="text.secondary" mb={2}>Add up to {gapPreview.deficit} images for {gapPreview.dimension} · {gapPreview.band.replaceAll("_", " ")}.</Typography>}
-          {gapMedia.length === 0 ? <CircularProgress size={24} /> : <Box sx={{ display: "grid", gap: 0.5, gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(4, 1fr)", md: "repeat(6, 1fr)" } }}>{gapMedia.map((media) => <Box key={media.id} component="img" src={`${API}/thumbnails/${encodeFilePath(media.thumbnail_path ?? "")}`} alt={media.filename} sx={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 1, bgcolor: "action.hover" }} />)}</Box>}
+          {gapMedia.length === 0 ? <CircularProgress size={24} /> : <Gallery>{gapMedia.map((media) => <Box key={media.id} component="img" src={`${API}/thumbnails/${encodeFilePath(media.thumbnail_path ?? "")}`} alt={media.filename} sx={{ width: "100%", aspectRatio: "1 / 1", objectFit: "contain", borderRadius: "4px", bgcolor: "action.hover" }} />)}</Gallery>}
         </DialogContent>
         <DialogActions><Button onClick={() => setGapPreview(null)}>Cancel</Button><Button variant="contained" disabled={gapMedia.length === 0} onClick={addGapItems}>Add {gapMedia.length}</Button></DialogActions>
       </Dialog>
@@ -686,6 +693,6 @@ export default function DatasetDetailPage() {
         onClose={() => {if (renderCurrent()) setCropItem(null);}}
         onOpsReady={async (ops, designState) => { await patchItem(cropItem, { edit_ops: ops, edit_design_state: designState }); }}
       /></Suspense>}
-    </Container>
+    </GalleryPage>
   );
 }

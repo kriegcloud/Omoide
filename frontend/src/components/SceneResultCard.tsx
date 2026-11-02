@@ -1,4 +1,5 @@
-import { Box, Card, CardActionArea, Typography } from "@mui/material";
+import SelectableTileFrame from "./SelectableTileFrame";
+import { Box, Typography } from "@mui/material";
 import PlayCircleOutlineIcon from "@mui/icons-material/PlayCircleOutline";
 import ScheduleIcon from "@mui/icons-material/Schedule";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -47,8 +48,12 @@ export function SceneResultCard({ scene, listKey }: SceneResultCardProps) {
   };
 
   return (
-    <Card
-      elevation={0}
+    <SelectableTileFrame
+      id={scene.scene_id}
+      selected={false}
+      selecting={false}
+      selectionEnabled={false}
+      onOpen={handleClick}
       sx={{
         borderRadius: 1,
         overflow: "hidden",
@@ -56,7 +61,7 @@ export function SceneResultCard({ scene, listKey }: SceneResultCardProps) {
         cursor: "pointer",
       }}
     >
-      <CardActionArea onClick={handleClick} sx={{ position: "relative" }}>
+      <Box sx={{ position: "relative" }}>
         <Box
           component="img"
           src={sceneThumb}
@@ -106,8 +111,8 @@ export function SceneResultCard({ scene, listKey }: SceneResultCardProps) {
             )}
           </Box>
         </Box>
-      </CardActionArea>
-    </Card>
+      </Box>
+    </SelectableTileFrame>
   );
 }
 

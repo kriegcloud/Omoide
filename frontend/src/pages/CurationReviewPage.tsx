@@ -1,6 +1,7 @@
+import GalleryPage from "../components/GalleryPage";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Alert, Box, Button, Chip, CircularProgress, Container, FormControl,
+  Alert, Box, Button, Chip, CircularProgress, FormControl,
   InputLabel, MenuItem, Paper, Select, Stack, TextField, Typography,
 } from "@mui/material";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -36,9 +37,9 @@ export default function CurationReviewPage() {
   }, [retry]);
 
   return (
-    <Container maxWidth="xl" sx={{ py: 4 }}>
+    <GalleryPage title={"Still review"}>
       <Stack spacing={3}>
-        <Box><Button component={Link} to="/datasets" sx={{ mb: 1 }}>Back to datasets</Button><Typography variant="h4" component="h1" fontWeight={700}>Still review</Typography><Typography color="text.secondary">Compare each prepared image and its caption before including it in an export.</Typography></Box>
+        <Box><Button component={Link} to="/datasets" sx={{ mb: 1 }}>Back to datasets</Button><Typography color="text.secondary">Compare each prepared image and its caption before including it in an export.</Typography></Box>
         {statusError ? <Alert severity="error" action={<Button color="inherit" onClick={() => setRetry(value => value + 1)}>Retry</Button>}>{statusError}</Alert>
           : !status ? <Box role="status"><CircularProgress size={24} aria-label="Checking still review availability" /></Box>
           : !status.enabled || !["fixture", "production"].includes(status.mode) ? <Alert severity="info">Still review is disabled. The local operator must enable it before you can connect.</Alert>
@@ -59,7 +60,7 @@ export default function CurationReviewPage() {
             ) : <CurationWorkspace client={client} mode={status.mode as "fixture" | "production"} onDisconnect={() => { setClient(null); setCredential(""); }} />}
           </>}
       </Stack>
-    </Container>
+    </GalleryPage>
   );
 }
 

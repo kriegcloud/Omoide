@@ -1,3 +1,4 @@
+import GalleryPage from "../components/GalleryPage";
 import { searchByImage } from "../services/searchActions";
 import { mutationBus } from "../stores/mutationBus";
 import { ListRevision, mergeUnique } from "../stores/listReconciliation";
@@ -9,14 +10,13 @@ import {
   Box,
   Button,
   CircularProgress,
-  Container,
   Typography,
   ToggleButton,
   ToggleButtonGroup,
 } from "@mui/material";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInView } from "react-intersection-observer";
-import Masonry from "react-masonry-css";
+import Gallery from "../components/Gallery";
 import { useLocation, useSearchParams } from "react-router-dom";
 import MediaCard from "../components/MediaCard";
 import PersonCard from "../components/PersonCard";
@@ -37,14 +37,6 @@ import { useGridSelection } from "../hooks/useMarqueeSelection";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 
 const ITEMS_PER_PAGE = 30;
-
-const breakpointColumnsObj = {
-  default: 5,
-  1600: 4,
-  1200: 3,
-  900: 2,
-  600: 2,
-};
 
 type MediaFilter = "all" | "image" | "video";
 
@@ -403,13 +395,9 @@ export default function SearchResultsPage() {
   };
 
   return (
-    <Container maxWidth={false} sx={{ pt: 1.5, pb: 3 }}>
-      <Typography variant="h4" gutterBottom>
-        {title}
-      </Typography>
-
-      {category === "media" && (
-        <Box sx={{ mb: 3, display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
+    <GalleryPage title={title} count={visibleItems.length}
+      filters={category === "media" && (
+        <Box sx={{ mb: 0, display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
           <ToggleButtonGroup
             exclusive
             size="small"
@@ -433,7 +421,7 @@ export default function SearchResultsPage() {
             </ToggleButtonGroup>
           )}
         </Box>
-      )}
+      )}>
 
       {(category === "media" ? mediaState.error : listError) && (
         <Alert
@@ -493,13 +481,9 @@ export default function SearchResultsPage() {
       )}
 
       <Box ref={resultsGridRef} sx={{ position: "relative" }}>
-        <Masonry
-          breakpointCols={breakpointColumnsObj}
-          className="my-masonry-grid"
-          columnClassName="my-masonry-grid_column"
-        >
+        <Gallery>
           {visibleItems.map(renderItem)}
-        </Masonry>
+        </Gallery>
         <MarqueeSelectionBox
           container={resultsGridRef.current}
           rect={marqueeRect}
@@ -517,6 +501,6 @@ export default function SearchResultsPage() {
         !(category === "media" ? mediaState.error : listError) && (
           <Typography sx={{ mt: 4 }}>No results found.</Typography>
         )}
-    </Container>
+    </GalleryPage>
   );
 }

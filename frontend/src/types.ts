@@ -49,7 +49,8 @@ export interface MediaFolderListing {
   breadcrumbs: MediaFolderBreadcrumb[];
 }
 
-export interface ProfileFace {
+export interface ProfileFace extends FaceGalleryGeometry {
+  timestamp?: number | null;
   id: number;
   assigned_at?: string | null;
   assignment_source?: FaceAssignmentSource | null;
@@ -211,7 +212,15 @@ export interface FaceAssign {
   source?: FaceAssignSource;
 }
 
-export interface Face {
+export interface FaceGalleryGeometry {
+  /** xywh in the upright detector image, whose long side is at most 1280px. */
+  bbox?: number[] | null;
+  media_width?: number | null;
+  media_height?: number | null;
+  media_thumbnail_path?: string | null;
+  media_duration?: number | null;
+}
+export interface Face extends FaceGalleryGeometry {
   id: number;
   assigned_at?: string | null;
   assignment_source?: FaceAssignmentSource | null;
@@ -220,7 +229,7 @@ export interface Face {
   thumbnail_path: string;
   similarity?: number;
   person?: Person;
-  timestamp?: number;
+  timestamp?: number | null;
   sex?: "F" | "M" | null;
   sex_score?: number | null;
   age?: number | null;
@@ -244,7 +253,8 @@ export interface PersonRelationshipGraph {
   root_id: number;
   max_depth: number;
 }
-export interface FaceRead {
+export interface FaceRead extends FaceGalleryGeometry {
+  timestamp?: number | null;
   id: number;
   assigned_at?: string | null;
   assignment_source?: FaceAssignmentSource | null;
@@ -519,6 +529,7 @@ export interface SimilarPersonWithDetails {
   name?: string;
   similarity: number;
   thumbnail?: string;
+  profile_face?: FaceRead | null;
 }
 
 export interface SimilarPerson {
@@ -526,6 +537,7 @@ export interface SimilarPerson {
   name?: string;
   similarity: number;
   thumbnail?: string;
+  profile_face?: FaceRead | null;
 }
 
 export interface MediaPreview {

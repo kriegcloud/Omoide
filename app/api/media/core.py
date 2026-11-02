@@ -70,7 +70,7 @@ def get_media(media_id: int, session: Session = Depends(get_session)):
                 PersonRead(
                     **person.model_dump(),
                     profile_face=(
-                        FaceRead(**person.profile_face.model_dump())
+                        FaceRead.model_validate(person.profile_face)
                         if person.profile_face
                         else None
                     ),
@@ -93,7 +93,7 @@ def get_media(media_id: int, session: Session = Depends(get_session)):
                 PersonRead(
                     **person.model_dump(),
                     profile_face=(
-                        FaceRead(**person.profile_face.model_dump())
+                        FaceRead.model_validate(person.profile_face)
                         if person.profile_face
                         else None
                     ),

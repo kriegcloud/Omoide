@@ -1,7 +1,7 @@
+import GalleryPage from "./GalleryPage";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
-  Box,
   Button,
   FormControl,
   InputLabel,
@@ -155,10 +155,42 @@ export function ReviewPage<T extends ReviewMediaItem>({
   const selectedCount = selection.selectedIds.size;
 
   return (
-    <Box sx={{ p: { xs: 1, sm: 1.5 } }}>
-      <Typography variant="h4" component="h1" gutterBottom>
-        {title}
-      </Typography>
+    <GalleryPage title={title} count={items.length} selection={<BulkResolveToolbar
+        statsText={statsText(total)}
+        shownCount={items.length}
+        shownSize={shownSize}
+        total={total}
+        selectedIds={selection.selectedIds}
+        onSelectVisible={() => selection.selectAll(items.map((item) => item.id))}
+        onClearSelection={selection.clear}
+        resolve={resolve}
+        onResolved={handleResolved}
+        onFeedback={showFeedback}
+        extraActions={
+          <>
+            {actions}
+            {rerunProcessors && (
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<ReplayIcon />}
+                onClick={() =>
+                  setRerunIds(
+                    selectedCount > 0
+                      ? Array.from(selection.selectedIds)
+                      : items.map((item) => item.id)
+                  )
+                }
+                disabled={items.length === 0}
+              >
+                {selectedCount > 0
+                  ? `Rerun (${selectedCount} selected)`
+                  : `Rerun all visible (${items.length})`}
+              </Button>
+            )}
+          </>
+        }
+      />}>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         {description}
       </Typography>
@@ -197,42 +229,7 @@ export function ReviewPage<T extends ReviewMediaItem>({
         </Paper>
       )}
 
-      <BulkResolveToolbar
-        statsText={statsText(total)}
-        shownCount={items.length}
-        shownSize={shownSize}
-        total={total}
-        selectedIds={selection.selectedIds}
-        onSelectVisible={() => selection.selectAll(items.map((item) => item.id))}
-        onClearSelection={selection.clear}
-        resolve={resolve}
-        onResolved={handleResolved}
-        onFeedback={showFeedback}
-        extraActions={
-          <>
-            {actions}
-            {rerunProcessors && (
-              <Button
-                size="small"
-                variant="outlined"
-                startIcon={<ReplayIcon />}
-                onClick={() =>
-                  setRerunIds(
-                    selectedCount > 0
-                      ? Array.from(selection.selectedIds)
-                      : items.map((item) => item.id)
-                  )
-                }
-                disabled={items.length === 0}
-              >
-                {selectedCount > 0
-                  ? `Rerun (${selectedCount} selected)`
-                  : `Rerun all visible (${items.length})`}
-              </Button>
-            )}
-          </>
-        }
-      />
+
 
       <ReviewMediaGrid
         itemCount={items.length}
@@ -289,6 +286,6 @@ export function ReviewPage<T extends ReviewMediaItem>({
           {snackbar.message}
         </Alert>
       </Snackbar>
-    </Box>
+    </GalleryPage>
   );
 }

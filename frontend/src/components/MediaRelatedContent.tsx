@@ -1,9 +1,11 @@
+import Gallery from "./Gallery";
+import GalleryPage from "./GalleryPage";
 import ListState from "./ListState";
 import { mutationBus } from "../stores/mutationBus";
 import { ListRevision } from "../stores/listReconciliation";
 import { useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
 import React, { useEffect, useState, useMemo, useRef } from "react";
-import { Box, Typography } from "@mui/material";
+import { Box } from "@mui/material";
 import { Media } from "../types";
 import MediaCard from "./MediaCard";
 import { getSimilarMedia } from "../services/media";
@@ -87,25 +89,21 @@ export default function SimilarContent({ mediaId }: { mediaId: number }) {
   }
 
   return (
-    <Box>
-      <Typography variant="h6" gutterBottom>
-        Similar Content
-      </Typography>
+    <GalleryPage title="Similar Content" count={similar.length} sx={{ minHeight: 0, px: { xs: 0, sm: 0 }, py: 0 }}>
 
       <Box
         ref={gridRef}
         sx={{
-          columnCount: { xs: 2, sm: 2, md: 3 },
-          columnGap: (theme) => theme.spacing(2),
           position: "relative",
         }}
       >
+        <Gallery>
         {similar.map((item) => (
           <Box
             key={item.id}
             sx={{
               breakInside: "avoid",
-              mb: 2,
+
             }}
           >
             <MediaCard
@@ -115,8 +113,9 @@ export default function SimilarContent({ mediaId }: { mediaId: number }) {
             />
           </Box>
         ))}
+        </Gallery>
         <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
       </Box>
-    </Box>
+    </GalleryPage>
   );
 }

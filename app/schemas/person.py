@@ -226,6 +226,7 @@ class SimilarPerson(SQLModel):
     name: str | None
     similarity: float
     thumbnail: str | None = None
+    profile_face: FaceRead | None = None
 
 
 class RelationshipNode(BaseModel):

@@ -1,3 +1,4 @@
+import Gallery from "./Gallery";
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
@@ -161,7 +162,7 @@ export default function FrameMiningDialog({
               <Box>
                 <Typography variant="subtitle1" fontWeight={700} gutterBottom>Candidate frames</Typography>
                 {activeCandidates.length === 0 ? <Typography color="text.secondary">No matching frames met the face-size and identity thresholds.</Typography> : (
-                  <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(3, 1fr)", md: "repeat(4, 1fr)", lg: "repeat(6, 1fr)" } }}>
+                  <Gallery>
                     {activeCandidates.map((candidate) => {
                       const checked = selectedFrames[activeVideo]?.has(candidate.timestamp_ms) ?? false;
                       return <Paper key={candidate.timestamp_ms} variant="outlined" sx={{ overflow: "hidden", position: "relative" }}>
@@ -170,7 +171,7 @@ export default function FrameMiningDialog({
                         <Box p={1}><Typography variant="caption" display="block">{(candidate.timestamp_ms / 1000).toFixed(2)}s · likeness {candidate.likeness.toFixed(2)}</Typography><Typography variant="caption" color="text.secondary">sharpness {candidate.sharpness.toFixed(0)} · face {candidate.face_size.toFixed(0)}px</Typography></Box>
                       </Paper>;
                     })}
-                  </Box>
+                  </Gallery>
                 )}
               </Box>
             )}

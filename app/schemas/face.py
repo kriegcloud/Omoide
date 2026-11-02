@@ -1,13 +1,19 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AliasChoices, AliasPath, BaseModel, ConfigDict, Field
 
 
 class FaceRead(BaseModel):
     id: int
     media_id: int
     thumbnail_path: str
+    # Stored xywh coordinates use the detector image (long side <= 1280).
+    bbox: list[int] | None = None
+    media_width: int | None = Field(default=None, validation_alias=AliasChoices("media_width", AliasPath("media", "width")))
+    media_height: int | None = Field(default=None, validation_alias=AliasChoices("media_height", AliasPath("media", "height")))
+    media_thumbnail_path: str | None = Field(default=None, validation_alias=AliasChoices("media_thumbnail_path", AliasPath("media", "thumbnail_path")))
+    media_duration: float | None = Field(default=None, validation_alias=AliasChoices("media_duration", AliasPath("media", "duration")))
     similarity: float | None = None
     timestamp: float | None = None
     kps: list[list[float]] | None = None

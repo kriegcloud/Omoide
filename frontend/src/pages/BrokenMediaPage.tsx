@@ -1,3 +1,4 @@
+import GalleryPage from "../components/GalleryPage";
 import { useState } from "react";
 import {
   Alert,
@@ -154,10 +155,8 @@ const BrokenMediaPage: React.FC = () => {
     : null;
 
   return (
-    <Box sx={{ p: 3, maxWidth: "1400px", mx: "auto" }}>
-      <Typography variant="h4" gutterBottom>
-        Broken Media
-      </Typography>
+    <GalleryPage title="Broken Media" count={items.length}>
+
       <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
         These files could not be processed — frames could not be extracted, making
         them unsearchable. Review the error, then delete or blacklist them.
@@ -421,7 +420,7 @@ const BrokenMediaPage: React.FC = () => {
           {snackbar.message}
         </Alert>
       </Snackbar>
-    </Box>
+    </GalleryPage>
   );
 };
 

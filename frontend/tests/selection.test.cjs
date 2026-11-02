@@ -77,6 +77,10 @@ function load(relative, runtime, overrides = {}) {
     '../context/SelectionContext': { useSelection: () => ({ setSelected() {}, isSelecting: false }), useSelectionList() {} },
     '../config': { API: '/api' },
     '../urlUtils': { encodeFilePath: encodeURIComponent },
+    '../hooks/useFaceThumbnail': { useFaceThumbnail: () => ({ src: 'face.jpg', aspectRatio: 1 }) },
+    './FaceBoxOverlay': { default: 'FaceBoxOverlay', __esModule: true },
+    '../utils/faceBox': { uprightFaceDimensions: (width, height) => [width, height] },
+    '../components/GalleryPage': { default: 'GalleryPage', __esModule: true },
     './SelectableTileFrame': { default: 'SelectableTileFrame', __esModule: true },
     // Hotkey registry is exercised by src/hotkeys/tests; here it is a no-op that returns an unsubscribe.
     '../hotkeys/useHotkey': { __esModule: true, useHotkeyRegistry: () => () => () => {}, useHotkey() {}, useHotkeys() {} },
@@ -106,7 +110,7 @@ function load(relative, runtime, overrides = {}) {
 function find(node, predicate) {
   if (!node || typeof node !== 'object') return undefined;
   if (predicate(node)) return node;
-  for (const child of [node.props?.children].flat(Infinity)) {
+  for (const child of [node.props?.children, node.props?.actions, node.props?.sort, node.props?.filters, node.props?.tabs, node.props?.selection].flat(Infinity)) {
     const found = find(child, predicate);
     if (found) return found;
   }
@@ -621,8 +625,8 @@ test('orphan select-all and delete-all stay in the sticky action bar after clear
     '../stores/useListStore': store.module,
     '../services/face': { getOrphanFaceCount: async () => 2 },
   }).default;
-  const All = runtime.render(() => Page()).props.children[1].type;
-  const renderBar = () => helper.component(runtime.render(() => All()), 'StickySelectionToolbar');
+  const All = runtime.render(() => Page()).type;
+  const renderBar = () => helper.component(runtime.render(() => All({})), 'StickySelectionToolbar');
   const selectButton = bar => find(bar, node => node.type === 'Button' && ['Select All', 'Select None'].includes(node.props.children));
   let bar = renderBar();
   assert.ok(bar);

@@ -1,3 +1,5 @@
+import Gallery from "../components/Gallery";
+import GalleryPage from "../components/GalleryPage";
 import { useListInvalidation } from "../stores/useListStore";
 import { useMutationRefresh } from "../context/UndoContext";
 import { readCachedList } from "../stores/useListStore";
@@ -9,9 +11,7 @@ import {
   Box,
   Button,
   CircularProgress,
-  Container,
   Typography,
-  Grid,
   ToggleButton,
   ToggleButtonGroup,
 } from "@mui/material";
@@ -25,9 +25,7 @@ import { useSelection } from "../context/SelectionContext";
 import { useGridSelection } from "../hooks/useMarqueeSelection";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 
-const BG_SECTION = "background.default";
 const TEXT_PRIMARY = "text.primary";
-const ACCENT = "accent.main";
 
 type MediaFilter = "all" | "image" | "video";
 
@@ -146,29 +144,18 @@ export default function TagDetailPage() {
   }
 
   return (
-    <Container
-      maxWidth={false}
-      sx={{ pt: 1.5, pb: 3, bgcolor: BG_SECTION, minHeight: "100vh" }}
-    >
-      <Typography variant="h4" gutterBottom sx={{ color: ACCENT }}>
-        Tag: #{tag.name}
-      </Typography>
-
-      {/* Media Section */}
-      <Box mb={6}>
-        <Box
+    <GalleryPage title={`Tag: #${tag.name}`} count={filteredMediaItems.length}
+      filters={        <Box
           sx={{
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
             flexWrap: "wrap",
             gap: 2,
-            mb: 2,
+            mb: 0,
           }}
         >
-          <Typography variant="h5" sx={{ color: TEXT_PRIMARY }}>
-            Media
-          </Typography>
+
           <ToggleButtonGroup
             exclusive
             size="small"
@@ -181,7 +168,11 @@ export default function TagDetailPage() {
             <ToggleButton value="image">Images</ToggleButton>
             <ToggleButton value="video">Videos</ToggleButton>
           </ToggleButtonGroup>
-        </Box>
+        </Box>}>
+
+      {/* Media Section */}
+      <Box mb={6}>
+
         {listError && (
           <Alert
             severity="error"
@@ -204,27 +195,23 @@ export default function TagDetailPage() {
             {listError}
           </Alert>
         )}
-        <Grid
-          ref={mediaGridRef}
-          container
-          spacing={0.5}
-          sx={{ position: "relative" }}
-        >
+        <Box ref={mediaGridRef} sx={{ position: "relative" }}><Gallery>
           {filteredMediaItems.map((m: Media) => (
-            <Grid key={m.id} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
+            <div key={m.id}>
               <MediaCard
                 media={m}
                 mediaListKey={listKey}
                 navigationContext={{ ids: mediaIds }}
                 onSelectionClick={onItemClick}
               />
-            </Grid>
+            </div>
           ))}
+        </Gallery>
           <MarqueeSelectionBox
             container={mediaGridRef.current}
             rect={marqueeRect}
           />
-        </Grid>
+        </Box>
         {isLoading && (
           <Box textAlign="center" py={3}>
             <CircularProgress />
@@ -245,9 +232,9 @@ export default function TagDetailPage() {
         <Typography variant="h5" gutterBottom sx={{ color: TEXT_PRIMARY }}>
           People
         </Typography>
-        <Grid container spacing={0.5}>
+        <Gallery>
           {(tag.persons ?? []).map((p: Person) => (
-            <Grid key={p.id} size={{ xs: 6, sm: 4, md: 3, lg: 2.4 }}>
+            <div key={p.id}>
               <Box
                 component={RouterLink}
                 to={`/person/${p.id}`}
@@ -255,10 +242,10 @@ export default function TagDetailPage() {
               >
                 <PersonCard person={p} />
               </Box>
-            </Grid>
+            </div>
           ))}
-        </Grid>
+        </Gallery>
       </Box>
-    </Container>
+    </GalleryPage>
   );
 }

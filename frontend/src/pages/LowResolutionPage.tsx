@@ -1,3 +1,4 @@
+import GalleryPage from "../components/GalleryPage";
 import React, { useCallback, useRef, useState } from "react";
 import {
   Alert,
@@ -131,10 +132,19 @@ const LowResolutionPage: React.FC = () => {
   const totalSize = items.reduce((sum, i) => sum + (i.size || 0), 0);
 
   return (
-    <Box sx={{ p: { xs: 1, sm: 1.5 } }}>
-      <Typography variant="h4" gutterBottom>
-        Low Resolution
-      </Typography>
+    <GalleryPage title="Low Resolution" count={total} selection={<BulkResolveToolbar
+        statsText={`${total.toLocaleString()} item${total !== 1 ? "s" : ""} under ${maxMp.toFixed(1)} MP`}
+        shownCount={items.length}
+        shownSize={totalSize}
+        total={total}
+        selectedIds={selectedIds}
+        onSelectVisible={selectVisible}
+        onClearSelection={clearSelection}
+        resolve={resolveSelection}
+        onResolved={handleResolved}
+        onFeedback={showFeedback}
+      />}>
+
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Media whose pixel count (width × height) is below the threshold. Sorted lowest-resolution first.
         Useful for finding thumbnails, corrupt imports, and low-quality duplicates.
@@ -191,18 +201,6 @@ const LowResolutionPage: React.FC = () => {
       </Box>
 
       {/* Stats + bulk actions */}
-      <BulkResolveToolbar
-        statsText={`${total.toLocaleString()} item${total !== 1 ? "s" : ""} under ${maxMp.toFixed(1)} MP`}
-        shownCount={items.length}
-        shownSize={totalSize}
-        total={total}
-        selectedIds={selectedIds}
-        onSelectVisible={selectVisible}
-        onClearSelection={clearSelection}
-        resolve={resolveSelection}
-        onResolved={handleResolved}
-        onFeedback={showFeedback}
-      />
 
       <ReviewMediaGrid
         gridRef={gridRef}
@@ -248,7 +246,7 @@ const LowResolutionPage: React.FC = () => {
           {snackbar.message}
         </Alert>
       </Snackbar>
-    </Box>
+    </GalleryPage>
   );
 };
 

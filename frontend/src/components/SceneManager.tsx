@@ -1,3 +1,4 @@
+import Gallery from "./Gallery";
 import { useMutationRefresh } from "../context/UndoContext";
 import React, { useState, useEffect, useCallback, useRef, MutableRefObject } from "react";
 import {
@@ -14,7 +15,6 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  Grid,
   IconButton,
   TextField,
   Tooltip,
@@ -247,9 +247,9 @@ export function SceneManager({
         </Typography>
       )}
       {!loading && filteredScenes.length > 0 && (
-        <Grid container spacing={2}>
+        <Gallery>
           {filteredScenes.map((scene) => (
-            <Grid key={scene.id} size={{ xs: 6, sm: 4, md: 3 }}>
+            <div key={scene.id}>
               <SceneCard
                 scene={scene}
                 onSeek={() => onSeekRequest(scene.start_time)}
@@ -259,9 +259,9 @@ export function SceneManager({
                     : undefined
                 }
               />
-            </Grid>
+            </div>
           ))}
-        </Grid>
+        </Gallery>
       )}
 
       {/* Add Scene Dialog */}

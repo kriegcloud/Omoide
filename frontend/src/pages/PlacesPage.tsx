@@ -1,3 +1,5 @@
+import GalleryPage from "../components/GalleryPage";
+import Gallery from "../components/Gallery";
 import { useMutationRefresh } from "../context/UndoContext";
 import React, { useEffect, useState } from "react";
 import {
@@ -8,7 +10,6 @@ import {
   CardActionArea,
   CardContent,
   CircularProgress,
-  Container,
   Snackbar,
   Typography,
 } from "@mui/material";
@@ -55,7 +56,7 @@ export default function PlacesPage() {
   };
 
   return (
-    <Container maxWidth={false} sx={{ minHeight: "100vh", py: 1.5 }}>
+    <GalleryPage title="Places" count={places.length}>
       <Box
         display="flex"
         justifyContent="space-between"
@@ -66,9 +67,7 @@ export default function PlacesPage() {
       >
         <Box display="flex" alignItems="center" gap={1}>
           <PublicIcon color="primary" />
-          <Typography variant="h5" fontWeight={700}>
-            Places
-          </Typography>
+
         </Box>
         {!config.PRESENTATION_MODE && (
           <Button
@@ -107,18 +106,7 @@ export default function PlacesPage() {
             <Typography variant="subtitle1" fontWeight={700} mb={1.5}>
               {country.country} · {country.count.toLocaleString()} items
             </Typography>
-            <Box
-              sx={{
-                display: "grid",
-                gap: 2,
-                gridTemplateColumns: {
-                  xs: "repeat(2, 1fr)",
-                  sm: "repeat(3, 1fr)",
-                  md: "repeat(4, 1fr)",
-                  lg: "repeat(6, 1fr)",
-                },
-              }}
-            >
+            <Box><Gallery>
               {country.cities.map((city) => (
                 <Card key={city.city} sx={{ borderRadius: 1 }}>
                   <CardActionArea
@@ -162,7 +150,7 @@ export default function PlacesPage() {
                   </CardActionArea>
                 </Card>
               ))}
-            </Box>
+            </Gallery></Box>
           </Box>
         ))
       )}
@@ -174,6 +162,6 @@ export default function PlacesPage() {
         message={snackbar}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       />
-    </Container>
+    </GalleryPage>
   );
 }

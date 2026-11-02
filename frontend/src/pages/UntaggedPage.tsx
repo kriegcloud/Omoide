@@ -1,3 +1,4 @@
+import GalleryPage from "../components/GalleryPage";
 import React, { useCallback, useRef, useState } from "react";
 import {
   Alert,
@@ -98,10 +99,19 @@ const UntaggedPage: React.FC = () => {
   const totalSize = items.reduce((sum, i) => sum + (i.size || 0), 0);
 
   return (
-    <Box sx={{ p: { xs: 1, sm: 1.5 } }}>
-      <Typography variant="h4" gutterBottom>
-        Untagged Media
-      </Typography>
+    <GalleryPage title="Untagged Media" count={total} selection={<BulkResolveToolbar
+        statsText={`${total.toLocaleString()} untagged item${total !== 1 ? "s" : ""}`}
+        shownCount={items.length}
+        shownSize={totalSize}
+        total={total}
+        selectedIds={selectedIds}
+        onSelectVisible={selectVisible}
+        onClearSelection={clearSelection}
+        resolve={resolveSelection}
+        onResolved={handleResolved}
+        onFeedback={showFeedback}
+      />}>
+
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Media that has no tags assigned. Use this view to identify items that still need to be categorized.
         Click any thumbnail to open the full media view and add tags.
@@ -140,18 +150,6 @@ const UntaggedPage: React.FC = () => {
       </Box>
 
       {/* Stats + bulk actions */}
-      <BulkResolveToolbar
-        statsText={`${total.toLocaleString()} untagged item${total !== 1 ? "s" : ""}`}
-        shownCount={items.length}
-        shownSize={totalSize}
-        total={total}
-        selectedIds={selectedIds}
-        onSelectVisible={selectVisible}
-        onClearSelection={clearSelection}
-        resolve={resolveSelection}
-        onResolved={handleResolved}
-        onFeedback={showFeedback}
-      />
 
       <ReviewMediaGrid
         gridRef={gridRef}
@@ -196,7 +194,7 @@ const UntaggedPage: React.FC = () => {
           {snackbar.message}
         </Alert>
       </Snackbar>
-    </Box>
+    </GalleryPage>
   );
 };
 

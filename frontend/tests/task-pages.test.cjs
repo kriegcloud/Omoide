@@ -39,7 +39,7 @@ function load(file,h,overrides={}) {
   new Function('require','module','exports',code)(id=>{if(id in modules)return id==='../context/UndoContext'?{useMutationRefresh:noop,useUndoRefresh:noop,...modules[id]}:id==='../stores/useListStore'?{readCachedList:(state,key)=>state.lists[key],...modules[id]}:modules[id];if(id.includes('/services/'))return {};if(id.startsWith('../components/')||id.startsWith('@mui/icons-material/'))return new Proxy({__esModule:true,default:id},{get:(v,k)=>v[k]??k}); if(id.startsWith('../hooks/')||id.startsWith('../stores/'))return load(id.slice(3)+'.ts',h,overrides); return require(id);},mod,mod.exports);
   return mod.exports;
 }
-function find(node,predicate){if(!node||typeof node!=='object')return; if(predicate(node))return node; for(const child of [node.props?.children].flat(Infinity)){const match=find(child,predicate);if(match)return match;}}
+function find(node,predicate){if(!node||typeof node!=='object')return; if(predicate(node))return node; for(const child of [node.props?.children, node.props?.actions, node.props?.sort, node.props?.filters, node.props?.tabs, node.props?.selection].flat(Infinity)){const match=find(child,predicate);if(match)return match;}}
 function contexts(tree){const result=[];function visit(n){if(!n||typeof n!=='object')return;if(n.props?.value)result.push(n.props.value);[n.props?.children].flat(Infinity).forEach(visit);}visit(tree);return result;}
 function env(){global.window={addEventListener:noop,removeEventListener:noop,setTimeout,clearTimeout,innerHeight:800,innerWidth:1200,scrollY:0};global.document={visibilityState:'visible',addEventListener:noop,removeEventListener:noop};}
 function task(id,status='running'){return {id,status,task_type:'run_processor_for_media'};}

@@ -1,4 +1,7 @@
-import { PERSON_GRID_SIZES, PersonThumbSizeToggle, usePersonThumbSize } from "./PersonThumbSize";
+import { StickySelectionToolbar } from "./BulkResolveToolbar";
+import Gallery from "./Gallery";
+import GalleryPage from "./GalleryPage";
+import { PersonThumbSizeToggle, usePersonThumbSize } from "./PersonThumbSize";
 import { useLocalStoragePreference } from "../hooks/useLocalStoragePreference";
 import type { PersonSort } from "../services/person";
 import ListStateView from "./ListState";
@@ -15,14 +18,12 @@ import {
   Button,
   Chip,
   CircularProgress,
-  Container,
   Snackbar,
   Stack,
   Typography,
   ToggleButton,
   ToggleButtonGroup,
 } from "@mui/material";
-import Grid from "@mui/material/Grid";
 import { useInView } from "react-intersection-observer";
 import { useNavigate } from "react-router-dom";
 import config from "../config";
@@ -310,20 +311,14 @@ const clearList = useListStore(state => state.clearList);
     setSnackbar((previous) => ({ ...previous, open: false }));
 
   return (
-    <Container
-      maxWidth={false}
-      sx={{ pt: 1.5, pb: 3, bgcolor: "background.default", px: 1.5 }}
-    >
-      <Stack
+    <GalleryPage title={title} count={people.length} countLabel="people" filters={      <Stack
         direction={{ xs: "column", sm: "row" }}
         spacing={2}
         justifyContent="space-between"
         alignItems={{ xs: "flex-start", sm: "center" }}
         sx={{ mb: 3 }}
       >
-        <Typography variant="h5" color="text.primary">
-          {title}
-        </Typography>
+
         <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
           <TextField size="small" label="Search people" value={name} onChange={e => setName(e.target.value)} />
           <TextField select size="small" label="Sort people" value={sort} onChange={e => setSort(e.target.value as PersonSort)} sx={{minWidth: 160}}>
@@ -354,7 +349,8 @@ const clearList = useListStore(state => state.clearList);
               onClick={handleRefresh}
             />
           )}
-          {selectionMode && (
+        </Stack>
+      </Stack>} selection={<StickySelectionToolbar sx={{ p: 1, mb: 2 }}><Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">          {selectionMode && (
             <Typography variant="body2" color="text.secondary">
               {selectedCount} selected · {people.length} loaded
             </Typography>
@@ -399,8 +395,7 @@ const clearList = useListStore(state => state.clearList);
           >
             {isDeleting ? "Deleting..." : "Delete Selected"}
           </Button>
-        </Stack>
-      </Stack>
+</Stack></StickySelectionToolbar>}>
 
       {!hidden && (
         <>
@@ -419,25 +414,18 @@ const clearList = useListStore(state => state.clearList);
 
       <ListStateView loading={isLoading && people.length === 0} error={error} empty={!isLoading && people.length === 0} emptyMessage="No people found." onRetry={refetch} />
 
-      <Grid
-        ref={gridRef}
-        container
-        spacing={0.5}
-        alignItems="stretch"
-        sx={{ position: "relative" }}
-      >
+      <Box ref={gridRef} sx={{ position: "relative" }}><Gallery minTileWidth={thumbSize === "small" ? 120 : thumbSize === "medium" ? 180 : 260}>
         {people.map((person) => (
-          <Grid key={person.id} size={PERSON_GRID_SIZES[thumbSize]}>
+          <div key={person.id}>
             <PersonCard
               person={person}
               selecting={selectionMode}
               selected={selectedIds.has(person.id)}
               onSelectionClick={onItemClick}
             />
-          </Grid>
+          </div>
         ))}
-        <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
-      </Grid>
+      </Gallery><MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} /></Box>
 
       {isLoading && (
         <Box textAlign="center" py={2}>
@@ -480,6 +468,6 @@ const clearList = useListStore(state => state.clearList);
           {snackbar.message}
         </Alert>
       </Snackbar>
-    </Container>
+    </GalleryPage>
   );
 }

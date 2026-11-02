@@ -4,7 +4,8 @@ import { useListInvalidation } from "../stores/useListStore";
 import { useUndoRefresh } from "../context/UndoContext";
 import { refreshCachedList } from "../stores/useListStore";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import Masonry from "react-masonry-css";
+import Gallery from "./Gallery";
+import GalleryPage from "./GalleryPage";
 import SortIcon from "@mui/icons-material/Sort";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import { useInView } from "react-intersection-observer";
@@ -14,7 +15,6 @@ import {
   Button,
   Chip,
   CircularProgress,
-  Container,
   Menu,
   MenuItem,
   Typography,
@@ -35,15 +35,8 @@ export const MEDIA_SORT_LABELS: Record<MediaSortOrder, string> = {
   latest: "Recently added",
 };
 
-const breakpointColumnsObj = {
-  default: 5,
-  1600: 4,
-  1200: 3,
-  900: 3,
-  600: 2,
-};
-
 interface MediaListPageProps {
+  title: string;
   listKeyPrefix: string;
   fetcher: (
     cursor: string | null,
@@ -54,6 +47,7 @@ interface MediaListPageProps {
 }
 
 export default function MediaListPage({
+  title,
   listKeyPrefix,
   fetcher,
   emptyTitle,
@@ -148,21 +142,13 @@ const clearListsByPrefix = useListStore(state => state.clearListsByPrefix);
   };
 
   return (
-    <Container
-      maxWidth={false}
-      sx={{
-        bgcolor: "background.default",
-        color: "text.primary",
-        minHeight: "100vh",
-        py: 2,
-      }}
-    >
+    <GalleryPage title={title} count={items.length} countLabel={hasMore ? "items loaded" : "items"}
+      sort={<>
       <Box
         display="flex"
         justifyContent="flex-end"
         alignItems="center"
         gap={1}
-        mb={2}
       >
         {hasNewItems && (
           <Chip
@@ -205,16 +191,13 @@ const clearListsByPrefix = useListStore(state => state.clearListsByPrefix);
           </MenuItem>
         </Menu>
       </Box>
-
+      </>}
+    >
       <ListStateView loading={isLoading && items.length === 0} error={error} empty={!isLoading && items.length === 0} emptyMessage={emptyTitle} action={<Typography color="text.secondary">{emptyDescription}</Typography>} onRetry={refetch} />
 
       {items.length > 0 && (
         <Box ref={gridRef} sx={{ position: "relative" }}>
-          <Masonry
-            breakpointCols={breakpointColumnsObj}
-            className="my-masonry-grid"
-            columnClassName="my-masonry-grid_column"
-          >
+          <Gallery>
             {items.map((media: Media) => (
               <div key={media.id}>
                 <MediaCard
@@ -224,7 +207,7 @@ const clearListsByPrefix = useListStore(state => state.clearListsByPrefix);
                 />
               </div>
             ))}
-          </Masonry>
+          </Gallery>
           <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
         </Box>
       )}
@@ -235,6 +218,6 @@ const clearListsByPrefix = useListStore(state => state.clearListsByPrefix);
         </Box>
       )}
       {hasMore && !error && <Box ref={loaderRef} sx={{ height: "10px" }} />}
-    </Container>
+    </GalleryPage>
   );
 }

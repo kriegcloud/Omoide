@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { Box, Chip, Typography } from "@mui/material";
 import { Link, useLocation } from "react-router-dom";
 
@@ -34,6 +34,7 @@ const SelectableMediaTile: React.FC<SelectableMediaTileProps> = ({
   onToggle,
 }) => {
   const location = useLocation();
+  const [aspectRatio, setAspectRatio] = useState(4 / 3);
   const thumbUrl = `${API}/thumbnails/${thumbnailPath ? encodeFilePath(thumbnailPath) : `${id}.jpg`}`;
 
   const handleSelectionClick = (itemId: number, event: SelectionClickEvent) => {
@@ -54,7 +55,7 @@ const SelectableMediaTile: React.FC<SelectableMediaTileProps> = ({
       onSelectionClick={handleSelectionClick}
       href={`/medium/${id}`}
       linkState={{ backgroundLocation: location }}
-      aspectRatio="4/3"
+      aspectRatio={aspectRatio}
       sx={{ minWidth: 0, cursor: "pointer" }}
       bottomRight={badgeLabel && (
         <Chip
@@ -92,7 +93,8 @@ const SelectableMediaTile: React.FC<SelectableMediaTileProps> = ({
         src={thumbUrl}
         alt={filename}
         loading="lazy"
-        sx={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+        onLoad={event => { const image = event.currentTarget; if (image.naturalWidth && image.naturalHeight) setAspectRatio(image.naturalWidth / image.naturalHeight); }}
+        sx={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
         onError={(e) => { e.currentTarget.style.opacity = "0.3"; }}
       />
     </SelectableTileFrame>

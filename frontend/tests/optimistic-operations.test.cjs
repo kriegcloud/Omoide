@@ -194,9 +194,9 @@ test('cursor grid revalidation keeps existing cards and optional overlay hides p
  }).CursorMediaGrid;
  const fetcher=()=>++calls===1?Promise.resolve({items:[{id:1}],next_cursor:null}):reload.promise;
  const render=token=>runtime.render(()=>Grid({listKey:'album:fixture',fetcher,refreshToken:token,optimistic:true}));
- render(0);await settle();assert(component(render(0),'react-masonry-css'));render(1);assert(component(render(1),'react-masonry-css'));
- const h=e.startOperation(command('a',request));assert.equal(component(render(1),'react-masonry-css'),undefined);
- request.reject(new e.DefinitiveMutationError('denied'));await h.done;assert(component(render(1),'react-masonry-css'));
+ render(0);await settle();assert(component(render(0),'./Gallery'));render(1);assert(component(render(1),'./Gallery'));
+ const h=e.startOperation(command('a',request));assert.equal(component(render(1),'./Gallery'),undefined);
+ request.reject(new e.DefinitiveMutationError('denied'));await h.done;assert(component(render(1),'./Gallery'));
  runtime.unmount();reload.resolve({items:[{id:1}],next_cursor:null});await settle();
 });
 test('legacy cursor removal is idempotent for repeated explicit ids',async()=>{

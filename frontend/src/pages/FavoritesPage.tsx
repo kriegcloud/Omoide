@@ -5,6 +5,7 @@ import { getFavorites } from "../services/media";
 export default function FavoritesPage() {
   return (
     <MediaListPage
+      title="Favorites"
       listKeyPrefix="favorites"
       fetcher={getFavorites}
       emptyTitle="No favorites yet"
