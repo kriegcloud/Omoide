@@ -212,7 +212,7 @@ export default function ProfileSetupDialog() {
               {!hasMultiple ? (
                 <>
                   <Typography>
-                    Choose where to store omoide’s data profile. If you’re unsure,
+                    Choose where to store beep media’s data profile. If you’re unsure,
                     keep the default location. You can change this later in Configuration.
                   </Typography>
                   <Box>

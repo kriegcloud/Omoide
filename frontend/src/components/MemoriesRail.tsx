@@ -46,7 +46,7 @@ export function MemoriesRail() {
       sx={{
         mb: 4,
         p: 2,
-        borderRadius: 3,
+        borderRadius: 1,
         bgcolor: "background.paper",
         boxShadow: (theme) => theme.shadows[1],
       }}
@@ -111,7 +111,7 @@ export function MemoriesRail() {
                       width: "auto",
                       minWidth: 80,
                       objectFit: "cover",
-                      borderRadius: 2,
+                      borderRadius: 1,
                       display: "block",
                       flexShrink: 0,
                       transition: "transform 0.15s",

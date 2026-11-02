@@ -48,7 +48,7 @@ export default function PlacesPage() {
   };
 
   return (
-    <Container maxWidth="xl" sx={{ minHeight: "100vh", py: 4 }}>
+    <Container maxWidth={false} sx={{ minHeight: "100vh", py: 1.5 }}>
       <Box
         display="flex"
         justifyContent="space-between"
@@ -113,7 +113,7 @@ export default function PlacesPage() {
               }}
             >
               {country.cities.map((city) => (
-                <Card key={city.city} sx={{ borderRadius: 3 }}>
+                <Card key={city.city} sx={{ borderRadius: 1 }}>
                   <CardActionArea
                     component={Link}
                     to={`/places/media?city=${encodeURIComponent(

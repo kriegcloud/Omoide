@@ -1,3 +1,4 @@
+import BrandLogo from "./BrandLogo";
 import KeyboardIcon from "@mui/icons-material/Keyboard";
 import { useHotkey, useHotkeyHelp } from "../hotkeys/useHotkey";
 import React, { useEffect, useState } from "react";
@@ -81,7 +82,7 @@ function TaskStatusButton({ onClick }: { onClick: () => void }) {
         disableElevation
         sx={{
           textTransform: "none",
-          borderRadius: 2,
+          borderRadius: 1,
           px: 1.5,
           py: 0.75,
           gap: 1,
@@ -118,9 +119,6 @@ function TaskStatusButton({ onClick }: { onClick: () => void }) {
 export function Header() {
   const openHelp = useHotkeyHelp();
   const searchRef = React.useRef<HTMLInputElement>(null);
-  const theme = useTheme();
-  const base = import.meta.env.BASE_URL || "/";
-  const wordmarkSrc = `${base}brand/omoide_header_${theme.palette.mode}.png`;
   const { isSelecting, selectedIds, toggleSelecting } = useSelection();
   const [isControlPanelOpen, setIsControlPanelOpen] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -187,17 +185,8 @@ export function Header() {
 
       {/* Logo (Mobile Only - Desktop uses Sidebar) */}
       <Box sx={{ display: { xs: "block", md: "none" }, flexGrow: 1 }}>
-        <Link to="/">
-          <Box
-            component="img"
-            src={wordmarkSrc}
-            alt="omoide logo"
-            sx={{
-              height: 32,
-              width: "auto",
-              display: "block",
-            }}
-          />
+        <Link to="/" style={{ textDecoration: "none" }}>
+          <BrandLogo />
         </Link>
       </Box>
 

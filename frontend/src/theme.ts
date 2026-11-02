@@ -1,74 +1,58 @@
 import type { ThemeMode } from "./ThemeContext";
 import { alpha, createTheme } from "@mui/material";
 
-// Gallery Slate palette and derived tints - Modernized
-const gallerySlate = {
-  light: {
-    primary: { main: "#3B82F6", light: "#60A5FA", dark: "#2563EB" }, // Vibrant Blue
-    secondary: { main: "#64748B", light: "#94A3B8", dark: "#475569" }, // Slate
-    accent: { main: "#10B981", light: "#34D399", dark: "#059669" }, // Emerald
-    background: { default: "#F8FAFC", paper: "#FFFFFF" },
-    text: { primary: "#0F172A", secondary: "#475569", disabled: "#94A3B8" },
-    divider: "#E2E8F0",
-    success: { main: "#22C55E" },
-    warning: { main: "#F59E0B" },
-    error: { main: "#EF4444" },
-    info: { main: "#3B82F6" },
-    overlays: {
-      elevated: "rgba(255, 255, 255, 0.8)",
-      hover: "rgba(15, 23, 42, 0.04)",
-      active: "rgba(15, 23, 42, 0.08)",
-      focus: "rgba(59, 130, 246, 0.2)",
-      selection: "rgba(59, 130, 246, 0.15)",
-    },
-  },
+// Forest green / zinc from beep Brand.tokens.ts and TrustGraph Workbench.
+// Light surfaces are warmed to parchment; functional foregrounds stay zinc.
+const mediaPalette = {
   dark: {
-    primary: { main: "#60A5FA", light: "#93C5FD", dark: "#3B82F6" },
-    secondary: { main: "#94A3B8", light: "#CBD5E1", dark: "#64748B" },
-    accent: { main: "#34D399", light: "#6EE7B7", dark: "#10B981" },
-    background: { default: "#0F172A", paper: "#1E293B" },
-    text: { primary: "#F8FAFC", secondary: "#CBD5E1", disabled: "#64748B" },
-    divider: "#334155",
-    success: { main: "#4ADE80" },
-    warning: { main: "#FBBF24" },
-    error: { main: "#F87171" },
-    info: { main: "#60A5FA" },
-    overlays: {
-      elevated: "rgba(30, 41, 59, 0.8)",
-      hover: "rgba(248, 250, 252, 0.06)",
-      active: "rgba(248, 250, 252, 0.12)",
-      focus: "rgba(96, 165, 250, 0.3)",
-      selection: "rgba(96, 165, 250, 0.2)",
-    },
+    primary: { main: "#5c9a5c", light: "#82b582", dark: "#3d7d3d", contrastText: "#09090b" },
+    secondary: { main: "#a1a1aa", light: "#d4d4d8", dark: "#71717a", contrastText: "#09090b" },
+    accent: { main: "#5c9a5c", light: "#82b582", dark: "#3d7d3d" },
+    background: { default: "#09090b", paper: "#111113" },
+    text: { primary: "#fafafa", secondary: "#a1a1aa", disabled: "#71717a" },
+    divider: "#27272a",
+    success: { main: "#22c55e", contrastText: "#09090b" },
+    warning: { main: "#eab308", contrastText: "#09090b" },
+    error: { main: "#ef4444", contrastText: "#09090b" },
+    info: { main: "#a1a1aa", contrastText: "#09090b" },
+  },
+  light: {
+    primary: { main: "#2d632d", light: "#3d7d3d", dark: "#214e21", contrastText: "#fafafa" },
+    secondary: { main: "#52525b", light: "#71717a", dark: "#27272a", contrastText: "#fafafa" },
+    accent: { main: "#2d632d", light: "#3d7d3d", dark: "#214e21" },
+    background: { default: "#faf8f3", paper: "#f4f1ea" },
+    text: { primary: "#18181b", secondary: "#52525b", disabled: "#71717a" },
+    divider: "#d4d4d8",
+    success: { main: "#16a34a", contrastText: "#09090b" },
+    warning: { main: "#854d0e", contrastText: "#fafafa" },
+    error: { main: "#b91c1c", contrastText: "#fafafa" },
+    info: { main: "#52525b", contrastText: "#fafafa" },
   },
 } as const;
 
 export const getTheme = (mode: ThemeMode) => {
-  const p = mode === "light" ? gallerySlate.light : gallerySlate.dark;
-  const theme = createTheme({
-    palette: {
-      mode,
-      primary: p.primary,
-      secondary: p.secondary,
-      background: p.background,
-      text: p.text,
-      divider: p.divider,
-      success: p.success,
-      warning: p.warning,
-      error: p.error,
-      info: p.info,
-      // custom field set via module augmentation below
-      accent: p.accent,
+  const colors = mediaPalette[mode];
+  const p = {
+    ...colors,
+    overlays: {
+      elevated: colors.background.paper,
+      hover: alpha(colors.text.primary, mode === "dark" ? 0.06 : 0.04),
+      active: alpha(colors.text.primary, 0.12),
+      focus: alpha(colors.primary.main, 0.3),
+      selection: alpha(colors.primary.main, 0.16),
     },
-    shape: { borderRadius: 16 }, // Increased border radius
+  };
+  return createTheme({
+    palette: {
+      mode, ...colors,
+      action: { hover: p.overlays.hover, selected: p.overlays.selection, focus: p.overlays.focus },
+    },
+    shape: { borderRadius: 4 },
     typography: {
-      fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
-      h1: { fontWeight: 700 },
-      h2: { fontWeight: 700 },
-      h3: { fontWeight: 600 },
-      h4: { fontWeight: 600 },
-      h5: { fontWeight: 600 },
-      h6: { fontWeight: 600 },
+      fontFamily: '"Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif',
+      h1: { fontWeight: 700 }, h2: { fontWeight: 700 },
+      h3: { fontWeight: 600 }, h4: { fontWeight: 600 },
+      h5: { fontWeight: 600 }, h6: { fontWeight: 600 },
       button: { fontWeight: 600 },
     },
     components: {
@@ -100,6 +84,7 @@ export const getTheme = (mode: ThemeMode) => {
             scrollBehavior: 'smooth',
           },
           body: {
+            "--color-raised": mode === "dark" ? "#18181b" : "#eeeae1",
             // CSS custom properties for app-wide use
             "--color-bg": themeParam.palette.background.default,
             "--color-paper": themeParam.palette.background.paper,
@@ -114,6 +99,7 @@ export const getTheme = (mode: ThemeMode) => {
             "--overlay-focus": p.overlays.focus,
             "--overlay-selection": p.overlays.selection,
           },
+          'code, pre, kbd, samp': { fontFamily: 'var(--font-mono)' },
           '.MuiPaper-root': {
             backgroundColor: themeParam.palette.background.paper,
             color: themeParam.palette.text.primary,
@@ -124,147 +110,58 @@ export const getTheme = (mode: ThemeMode) => {
           },
         }),
       },
+      MuiContainer: {
+        styleOverrides: { root: ({ theme }) => ({
+          paddingLeft: theme.spacing(1), paddingRight: theme.spacing(1),
+          [theme.breakpoints.up("sm")]: { paddingLeft: theme.spacing(1.5), paddingRight: theme.spacing(1.5) },
+        }) },
+      },
       MuiPaper: {
-        styleOverrides: {
-          root: {
-            backgroundImage: "none",
-            // Glassmorphism effect
-            backdropFilter: "blur(12px)",
-            backgroundColor: p.overlays.elevated,
-            '&.MuiPaper-elevation1': { 
-              boxShadow: mode === 'light' 
-                ? '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)' 
-                : '0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2)',
-            },
-            '&.MuiPaper-elevation2': {
-               boxShadow: mode === 'light'
-                ? '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)'
-                : '0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.2)',
-            }
-          },
+        styleOverrides: { root: { backgroundImage: "none", backgroundColor: p.background.paper, borderRadius: 4 },
+          elevation1: { boxShadow: "0 1px 3px rgba(0,0,0,.12)" },
+          elevation2: { backgroundColor: mode === "dark" ? "#18181b" : "#eeeae1", boxShadow: "0 2px 8px rgba(0,0,0,.16)" },
         },
       },
-      MuiAppBar: {
-        styleOverrides: {
-          colorPrimary: {
-            backgroundColor: p.overlays.elevated,
-            backdropFilter: "blur(12px)",
-            color: p.text.primary,
-            borderBottom: `1px solid ${p.divider}`,
-            boxShadow: 'none',
-          },
+      MuiDialog: { styleOverrides: { paper: { borderRadius: 6 } } },
+      MuiAppBar: { styleOverrides: { colorPrimary: {
+        backgroundColor: p.background.paper, color: p.text.primary,
+        borderBottom: `1px solid ${p.divider}`, boxShadow: "none",
+      } } },
+      MuiButton: { styleOverrides: { root: {
+        textTransform: "none", borderRadius: 4, minHeight: 32, padding: "4px 12px",
+      }, containedPrimary: { boxShadow: "none", "&:hover": { boxShadow: "none" } } } },
+      MuiIconButton: { styleOverrides: { root: {
+        minWidth: 32, minHeight: 32,
+        "&:hover": { background: p.overlays.hover },
+        "&.Mui-focusVisible": { boxShadow: `0 0 0 3px ${p.overlays.focus}` },
+      } } },
+      MuiToggleButton: { styleOverrides: { root: { borderRadius: 4, minHeight: 32 } } },
+      MuiChip: { styleOverrides: {
+        root: { borderRadius: 4, fontWeight: 500 },
+        colorPrimary: { background: p.primary.main, color: p.primary.contrastText },
+        colorInfo: ({ ownerState }) => {
+          const outlined = ownerState.variant === "outlined";
+          const background = outlined ? p.background.paper : p.info.main;
+          const color = outlined ? p.info.main : p.info.contrastText;
+          return { background, color, ...(outlined ? { borderColor: color } : {}),
+            "&.MuiChip-clickable:hover, &.Mui-focusVisible": { background, color, boxShadow: `inset 0 0 0 1px ${color}` } };
         },
-      },
-      MuiButton: {
-        styleOverrides: {
-          root: { 
-            textTransform: "none",
-            borderRadius: 12,
-            padding: "8px 16px",
-          },
-          containedPrimary: { 
-            boxShadow: "0 4px 6px -1px rgba(59, 130, 246, 0.3)",
-            '&:hover': {
-              boxShadow: "0 10px 15px -3px rgba(59, 130, 246, 0.4)",
-            }
-          },
-        },
-      },
-      MuiChip: {
-        styleOverrides: {
-          root: { borderRadius: 8, fontWeight: 500 },
-          colorPrimary: ({ theme }) => ({
-            background: theme.palette.primary.main,
-            color: theme.palette.getContrastText(theme.palette.primary.main),
-          }),
-          colorInfo: ({ theme, ownerState }) => {
-            const outlined = ownerState.variant === "outlined";
-            const color = outlined
-              ? mode === "light" ? "#1D4ED8" : "#93C5FD"
-              : "#0F172A";
-            const background = outlined
-              ? theme.palette.background.paper
-              : theme.palette.info.main;
-            return {
-              background,
-              color,
-              ...(outlined ? { borderColor: color } : {}),
-              // Keep the accessible pair when MUI applies interactive states.
-              "&.MuiChip-clickable:hover, &.Mui-focusVisible": {
-                background,
-                color,
-                boxShadow: `inset 0 0 0 1px ${color}`,
-              },
-            };
-          },
-        },
-      },
-      MuiTabs: {
-        styleOverrides: {
-          indicator: { 
-            backgroundColor: p.primary.main,
-            height: 3,
-            borderRadius: '3px 3px 0 0'
-          },
-        },
-      },
-      MuiTab: {
-        styleOverrides: {
-          root: { 
-            textTransform: "none",
-            fontWeight: 600,
-            fontSize: '0.95rem',
-          },
-        },
-      },
-      MuiTooltip: {
-        styleOverrides: {
-          tooltip: {
-            backgroundColor: p.text.primary,
-            color: p.background.paper,
-            borderRadius: 8,
-            fontSize: '0.8rem',
-          },
-        },
-      },
-      MuiListItemButton: {
-        styleOverrides: {
-          root: {
-            borderRadius: 8,
-            margin: '2px 8px',
-            "&:hover": { background: p.overlays.hover },
-            "&.Mui-selected": {
-              background: p.overlays.selection,
-              color: p.primary.main,
-              "& .MuiListItemIcon-root": {
-                color: p.primary.main,
-              }
-            },
-          },
-        },
-      },
-      MuiIconButton: {
-        styleOverrides: {
-          root: {
-            "&:hover": { background: p.overlays.hover },
-            "&.Mui-focusVisible": { boxShadow: `0 0 0 3px ${p.overlays.focus}` },
-          },
-        },
-      },
-      MuiDivider: {
-        styleOverrides: { root: { borderColor: p.divider } },
-      },
+      } },
+      MuiTabs: { styleOverrides: { indicator: { backgroundColor: p.primary.main, height: 2 } } },
+      MuiTab: { styleOverrides: { root: { textTransform: "none", fontWeight: 600, fontSize: "0.9rem", minHeight: 40 } } },
+      MuiTooltip: { styleOverrides: { tooltip: { backgroundColor: p.text.primary, color: p.background.paper, borderRadius: 4, fontSize: "0.8rem" } } },
+      MuiListItemButton: { styleOverrides: { root: {
+        borderRadius: 4, minHeight: 32, margin: "2px 4px",
+        "&:hover": { background: p.overlays.hover },
+        "&.Mui-selected": { background: p.overlays.selection, color: p.primary.main,
+          "& .MuiListItemIcon-root": { color: p.primary.main } },
+      } } },
+      MuiDivider: { styleOverrides: { root: { borderColor: p.divider } } },
     },
   });
-  return theme;
 };
 
-// Palette augmentation for custom 'accent'
 declare module "@mui/material/styles" {
-  interface Palette {
-    accent: Palette["primary"];
-  }
-  interface PaletteOptions {
-    accent?: PaletteOptions["primary"];
-  }
+  interface Palette { accent: Palette["primary"]; }
+  interface PaletteOptions { accent?: PaletteOptions["primary"]; }
 }

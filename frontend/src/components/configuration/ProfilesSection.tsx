@@ -69,7 +69,7 @@ export default function ProfilesSection({
               </Typography>
               <Typography
                 variant="body2"
-                sx={{ color: "text.secondary", fontFamily: "monospace" }}
+                sx={{ color: "text.secondary", fontFamily: "var(--font-mono)" }}
               >
                 {profiles.active_path}
               </Typography>
@@ -138,7 +138,7 @@ export default function ProfilesSection({
                       primary={p.name}
                       secondary={p.path}
                       secondaryTypographyProps={{
-                        sx: { fontFamily: "monospace" },
+                        sx: { fontFamily: "var(--font-mono)" },
                       }}
                     />
                     <ListItemSecondaryAction>

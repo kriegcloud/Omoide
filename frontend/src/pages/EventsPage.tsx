@@ -132,7 +132,7 @@ export default function EventsPage() {
   }
 
   return (
-    <Container maxWidth="xl" sx={{ minHeight: "100vh", py: 4 }}>
+    <Container maxWidth={false} sx={{ minHeight: "100vh", py: 1.5 }}>
       <Box
         display="flex"
         justifyContent="space-between"
@@ -195,7 +195,7 @@ export default function EventsPage() {
         ref={gridRef}
         sx={{
           display: "grid",
-          gap: 2,
+          gap: 0.5,
           gridTemplateColumns: {
             xs: "repeat(1, 1fr)",
             sm: "repeat(2, 1fr)",

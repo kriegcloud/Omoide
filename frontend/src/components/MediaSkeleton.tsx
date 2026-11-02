@@ -8,7 +8,7 @@ export function MediaSkeleton() {
         height: "100%",
         display: "flex",
         flexDirection: "column",
-        borderRadius: 3,
+        borderRadius: 1,
         overflow: "hidden",
         bgcolor: "background.paper",
         boxShadow: 1,

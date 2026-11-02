@@ -37,9 +37,9 @@ export const MediaGrid: React.FC<MediaGridProps> = ({
     <Box
       ref={gridRef}
       sx={{
-        display: "flex",
-        flexWrap: "wrap",
-        gap: 2, // Sets the spacing between cards
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(min(180px, 100%), 1fr))",
+        gap: 0.5,
         position: "relative",
       }}
     >
@@ -47,8 +47,7 @@ export const MediaGrid: React.FC<MediaGridProps> = ({
         <Box
           key={media.id}
           sx={{
-            flex: "1 1 200px",
-            maxWidth: "220px",
+            minWidth: 0,
           }}
         >
           <MediaCard

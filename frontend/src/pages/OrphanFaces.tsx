@@ -54,7 +54,7 @@ export default function OrphanFacesPage() {
 
   return (
     <>
-      <Container maxWidth="xl" sx={{ pt: 4 }}>
+      <Container maxWidth={false} sx={{ pt: 4 }}>
         <ToggleButtonGroup
           exclusive
           value={view}
@@ -278,7 +278,7 @@ function AllOrphanFaces() {
 
 
   return (
-    <Container id="unassigned-faces" maxWidth="xl" sx={{ pt: 4, pb: 7 }}>
+    <Container id="unassigned-faces" maxWidth={false} sx={{ pt: 1.5, pb: 3 }}>
       <Box sx={{ display: "flex", alignItems: "center", flexWrap: "wrap", mb: 2, gap: 2 }}>
         <Typography variant="h4" sx={{ flexGrow: 1 }}>
           Unassigned Faces

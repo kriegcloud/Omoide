@@ -88,7 +88,7 @@ function EvalGrid({ batch }: { batch: EvalBatch }) {
           ...batch.seeds.map((seed) => {
             const sample = cells.get(`${promptIndex}:${seed}`);
             return (
-              <Box key={`${promptIndex}:${seed}`} sx={{ position: "relative", minHeight: 120, bgcolor: "action.hover", borderRadius: 2, overflow: "hidden" }}>
+              <Box key={`${promptIndex}:${seed}`} sx={{ position: "relative", minHeight: 120, bgcolor: "action.hover", borderRadius: 1, overflow: "hidden" }}>
                 {sample && !sample.error ? (
                   <Box component="img" src={evalSampleImageUrl(batch.id, sample.id)} alt={`Evaluation for prompt ${promptIndex + 1}, seed ${seed}`} loading="lazy" sx={{ width: "100%", height: "100%", aspectRatio: "1 / 1", objectFit: "cover", display: "block" }} />
                 ) : (
@@ -296,7 +296,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
       {error && <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>}
 
       {compareRuns && (
-        <Paper elevation={0} sx={{ p: 2, border: 1, borderColor: "divider", borderRadius: 3 }}>
+        <Paper elevation={0} sx={{ p: 2, border: 1, borderColor: "divider", borderRadius: 1 }}>
           <Typography variant="subtitle2">Completed-run likeness</Typography>
           <Box sx={{ mt: 1, minHeight: 84 }}>
             <LikenessSparkline
@@ -339,7 +339,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
         const isExpanded = expanded.has(run.id);
         const runLikeness = likeness[run.id];
         return (
-          <Paper key={run.id} elevation={0} sx={{ border: 1, borderColor: "divider", borderRadius: 3, overflow: "hidden" }}>
+          <Paper key={run.id} elevation={0} sx={{ border: 1, borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
             <Box sx={{ p: { xs: 2, md: 2.5 } }}>
               <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" gap={2}>
                 <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -444,7 +444,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
                   ) : (
                     <Stack spacing={1.5}>
                       {(evalBatches[run.id] ?? []).map((batch) => (
-                        <Paper key={batch.id} variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
+                        <Paper key={batch.id} variant="outlined" sx={{ p: 1.5, borderRadius: 1 }}>
                           <Stack direction={{ xs: "column", sm: "row" }} gap={1} alignItems={{ sm: "center" }}>
                             <Box sx={{ minWidth: 0, flex: 1 }}>
                               <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap" useFlexGap>
@@ -494,7 +494,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
                             if (!detail) {
                               return <CircularProgress key={batchId} size={24} />;
                             }
-                            return <Paper key={batchId} variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}><Typography variant="subtitle2" sx={{ mb: 1 }}>Batch #{batchId}</Typography><EvalGrid batch={detail} /></Paper>;
+                            return <Paper key={batchId} variant="outlined" sx={{ p: 1.5, borderRadius: 1 }}><Typography variant="subtitle2" sx={{ mb: 1 }}>Batch #{batchId}</Typography><EvalGrid batch={detail} /></Paper>;
                           })}
                         </Box>
                       )}
@@ -509,7 +509,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
                     {[...grouped.entries()].sort(([left], [right]) => right - left).map(([step, stepSamples]) => (
                       <Box
                         key={step}
-                        sx={step === run.likeness_best_step ? { p: 1.5, mx: -1.5, border: 2, borderColor: "success.main", borderRadius: 2 } : undefined}
+                        sx={step === run.likeness_best_step ? { p: 1.5, mx: -1.5, border: 2, borderColor: "success.main", borderRadius: 1 } : undefined}
                       >
                         <Typography variant="body2" fontWeight={700} sx={{ mb: 1 }}>Step {step.toLocaleString()}</Typography>
                         <Box sx={{ display: "grid", gridTemplateColumns: { xs: "repeat(2, minmax(0, 1fr))", sm: "repeat(3, minmax(0, 1fr))", lg: "repeat(4, minmax(0, 1fr))" }, gap: 1.5 }}>
@@ -520,7 +520,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
                                 src={trainingSampleImageUrl(run.id, sample.id)}
                                 alt={`Training sample from step ${step}`}
                                 loading="lazy"
-                                sx={{ display: "block", width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 2, bgcolor: "action.hover" }}
+                                sx={{ display: "block", width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 1, bgcolor: "action.hover" }}
                               />
                               <Chip
                                 size="small"

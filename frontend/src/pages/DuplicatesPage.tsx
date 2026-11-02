@@ -75,7 +75,11 @@ function GroupRow({ index, style, data }: ListChildComponentProps<GroupRowData>)
     <div style={style}>
       {group ? (
         <Box ref={rowRef} sx={{
-          pb: 3,
+          // Included in ResizeObserver measurement, so virtual offsets include
+          // clearance for the card border and its outward focus outline.
+          pt: 0.5,
+          px: 0.5,
+          pb: 1,
           // Each group's action header sticks within the virtual list's own
           // scrollport, then leaves with its group. Page filters stay above it.
           "& > .MuiPaper-root > .MuiBox-root:first-of-type": {
@@ -315,7 +319,7 @@ const clearList = useListStore(state => state.clearList);
   };
 
   return (
-    <Box sx={{ p: 2, maxWidth: "1600px", mx: "auto" }}>
+    <Box sx={{ p: { xs: 1, sm: 1.5 } }}>
       <Box ref={headerRef} sx={{ pb: 2 }}>
         <Box sx={{ display: "flex", alignItems: "baseline", gap: 2, flexWrap: "wrap", mb: 1 }}>
           <Typography variant="h5" component="h1">Potential Duplicates</Typography>

@@ -155,7 +155,7 @@ export function ReviewPage<T extends ReviewMediaItem>({
   const selectedCount = selection.selectedIds.size;
 
   return (
-    <Box sx={{ p: 2, maxWidth: "1600px", mx: "auto" }}>
+    <Box sx={{ p: { xs: 1, sm: 1.5 } }}>
       <Typography variant="h4" component="h1" gutterBottom>
         {title}
       </Typography>

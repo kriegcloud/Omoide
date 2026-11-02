@@ -69,7 +69,7 @@ export function FavoritesStripWidget() {
                 width: "auto",
                 minWidth: 80,
                 objectFit: "cover",
-                borderRadius: 2,
+                borderRadius: 1,
                 display: "block",
                 flexShrink: 0,
                 transition: "transform 0.15s",

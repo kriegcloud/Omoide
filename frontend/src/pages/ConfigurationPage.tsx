@@ -874,7 +874,7 @@ export default function ConfigurationPage() {
                   </Typography>
                   <Typography
                     variant="body2"
-                    sx={{ color: "text.secondary", fontFamily: "monospace" }}
+                    sx={{ color: "text.secondary", fontFamily: "var(--font-mono)" }}
                   >
                     {profiles.active_path}
                   </Typography>
@@ -942,7 +942,7 @@ export default function ConfigurationPage() {
                           primary={p.name}
                           secondary={p.path}
                           secondaryTypographyProps={{
-                            sx: { fontFamily: "monospace" },
+                            sx: { fontFamily: "var(--font-mono)" },
                           }}
                         />
                         <ListItemSecondaryAction>
@@ -2487,7 +2487,7 @@ export default function ConfigurationPage() {
         <DialogContent>
           <DialogContentText sx={{ mb: 2 }}>
             Removing this media directory from configuration will remove all indexed
-            media records under that path from Omoide on save. Original files on disk
+            media records under that path from beep media on save. Original files on disk
             are not deleted.
           </DialogContentText>
           <DialogContentText sx={{ mb: 2 }}>

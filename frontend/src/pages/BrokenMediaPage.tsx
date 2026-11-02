@@ -350,10 +350,10 @@ const BrokenMediaPage: React.FC = () => {
                         />
                       </Box>
                     </TableCell>
-                    <TableCell sx={{ fontFamily: "monospace" }}>
+                    <TableCell sx={{ fontFamily: "var(--font-mono)" }}>
                       {item.filename}
                     </TableCell>
-                    <TableCell sx={{ fontFamily: "monospace" }}>
+                    <TableCell sx={{ fontFamily: "var(--font-mono)" }}>
                       {item.parent_directory}
                     </TableCell>
                     <TableCell align="right">{formatBytes(item.size)}</TableCell>
@@ -361,7 +361,7 @@ const BrokenMediaPage: React.FC = () => {
                       sx={{
                         maxWidth: 400,
                         color: "error.main",
-                        fontFamily: "monospace",
+                        fontFamily: "var(--font-mono)",
                         fontSize: "0.75rem",
                         whiteSpace: "pre-wrap",
                         wordBreak: "break-word",

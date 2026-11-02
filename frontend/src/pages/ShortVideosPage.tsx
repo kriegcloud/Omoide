@@ -104,7 +104,7 @@ const ShortVideosPage: React.FC = () => {
   const totalSize = items.reduce((sum, i) => sum + (i.size || 0), 0);
 
   return (
-    <Box sx={{ p: 2, maxWidth: "1600px", mx: "auto" }}>
+    <Box sx={{ p: { xs: 1, sm: 1.5 } }}>
       <Typography variant="h4" gutterBottom>
         Short Videos
       </Typography>

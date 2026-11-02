@@ -244,7 +244,7 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia,
         </DialogTitle>
         <DialogContent>
           {dayToView && (
-            <ImageList cols={4} gap={8}>
+            <ImageList cols={4} gap={4}>
               {dayToView.map((media) => (
                 <ImageListItem key={media.id}>
                   <img

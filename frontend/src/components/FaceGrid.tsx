@@ -45,7 +45,7 @@ export const FaceGrid: React.FC<FaceGridProps> = ({
         position: "relative",
         display: "flex",
         flexWrap: "wrap",
-        gap: 2, // Consistent spacing
+        gap: 0.25, // Dense face review: 2px gaps without changing the crop
         justifyContent: "flex-start",
       }}
     >

@@ -71,7 +71,7 @@ export const DuplicateMediaCard: React.FC<DuplicateMediaCardProps> = ({
           boxShadow: isSelectedAsMaster ? theme.shadows[4] : theme.shadows[1],
         }}
         footer={
-          <CardContent>
+          <CardContent sx={{ p: 1, "&:last-child": { pb: 1 } }}>
             {media.best && <Chip size="small" label="Largest" sx={{ mb: 0.5 }} />}
             <FormControlLabel
               data-tile-control
@@ -90,6 +90,7 @@ export const DuplicateMediaCard: React.FC<DuplicateMediaCardProps> = ({
               color="text.secondary"
               noWrap
               title={media.path}
+              sx={{ fontFamily: "var(--font-mono)" }}
             >
               {media.path}
             </Typography>

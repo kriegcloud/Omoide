@@ -174,7 +174,7 @@ export default function MediaDirectoriesSection({
         <DialogContent>
           <DialogContentText sx={{ mb: 2 }}>
             Removing this media directory from configuration will remove all indexed
-            media records under that path from Omoide on save. Original files on disk
+            media records under that path from beep media on save. Original files on disk
             are not deleted.
           </DialogContentText>
           <DialogContentText sx={{ mb: 2 }}>

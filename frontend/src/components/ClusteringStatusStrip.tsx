@@ -126,7 +126,7 @@ export default function ClusteringStatusStrip({
       sx={{
         mb: 3,
         bgcolor: "background.paper",
-        borderRadius: 2,
+        borderRadius: 1,
         px: 1.5,
         pt: 1.5,
         pb: activeCluster ? 1 : 1.5,

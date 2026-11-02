@@ -82,7 +82,7 @@ function CompositionPanel({ analysis, gaps, items, onPreview }: {
       <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" } }}>
         {Object.entries(analysis.composition).map(([dimension, bands]) => {
           const total = Math.max(1, Object.values(bands).reduce((sum, count) => sum + count, 0));
-          return <Paper key={dimension} elevation={0} sx={{ p: 2, border: 1, borderColor: "divider", borderRadius: 3 }}>
+          return <Paper key={dimension} elevation={0} sx={{ p: 2, border: 1, borderColor: "divider", borderRadius: 1 }}>
             <Typography variant="subtitle2" fontWeight={700} mb={1.5} sx={{ textTransform: "capitalize" }}>{dimension}</Typography>
             <Stack direction="row" sx={{ height: 8, overflow: "hidden", borderRadius: "4px", bgcolor: "action.hover" }}>
               {Object.entries(bands).map(([band, count], index) => <Box key={band} title={`${band}: ${count}`} sx={{ width: `${(count / total) * 100}%`, bgcolor: COMPOSITION_COLORS[index % COMPOSITION_COLORS.length] }} />)}
@@ -100,11 +100,11 @@ function CompositionPanel({ analysis, gaps, items, onPreview }: {
     </Box>
     <Box>
       <Typography variant="h6" gutterBottom>Visual clusters</Typography>
-      {analysis.clusters.length === 0 ? <Typography color="text.secondary">Image embeddings are not available yet.</Typography> : <Stack spacing={1}>{analysis.clusters.map((cluster, index) => <Paper key={index} elevation={0} sx={{ p: 1.5, border: 1, borderColor: "divider", borderRadius: 3 }}><Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ sm: "center" }}><Typography fontWeight={700} minWidth={80}>Cluster {index + 1}</Typography><Stack direction="row" spacing={0.5}>{cluster.representative_media_ids.map((mediaId) => { const item = items.find((entry) => entry.media_id === mediaId); return item ? <Box key={mediaId} component="img" src={`${API}/thumbnails/${encodeFilePath(item.media.thumbnail_path ?? "")}`} alt="" sx={{ width: 56, height: 56, objectFit: "cover", borderRadius: 1 }} /> : null; })}</Stack><Box flex={1}><Typography variant="body2" color="text.secondary">{cluster.count} images</Typography><Stack direction="row" spacing={0.5} mt={0.5} flexWrap="wrap" useFlexGap>{cluster.top_tags.map((tag) => <Chip key={tag} size="small" label={tag} />)}</Stack></Box></Stack></Paper>)}</Stack>}
+      {analysis.clusters.length === 0 ? <Typography color="text.secondary">Image embeddings are not available yet.</Typography> : <Stack spacing={1}>{analysis.clusters.map((cluster, index) => <Paper key={index} elevation={0} sx={{ p: 1.5, border: 1, borderColor: "divider", borderRadius: 1 }}><Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ sm: "center" }}><Typography fontWeight={700} minWidth={80}>Cluster {index + 1}</Typography><Stack direction="row" spacing={0.5}>{cluster.representative_media_ids.map((mediaId) => { const item = items.find((entry) => entry.media_id === mediaId); return item ? <Box key={mediaId} component="img" src={`${API}/thumbnails/${encodeFilePath(item.media.thumbnail_path ?? "")}`} alt="" sx={{ width: 56, height: 56, objectFit: "cover", borderRadius: 1 }} /> : null; })}</Stack><Box flex={1}><Typography variant="body2" color="text.secondary">{cluster.count} images</Typography><Stack direction="row" spacing={0.5} mt={0.5} flexWrap="wrap" useFlexGap>{cluster.top_tags.map((tag) => <Chip key={tag} size="small" label={tag} />)}</Stack></Box></Stack></Paper>)}</Stack>}
     </Box>
     <Box>
       <Typography variant="h6" gutterBottom>Gaps</Typography>
-      {gaps.every((gap) => gap.deficit === 0) ? <Typography color="text.secondary">Composition targets are covered.</Typography> : <Stack spacing={1}>{gaps.filter((gap) => gap.deficit > 0).map((gap) => <Paper key={`${gap.dimension}-${gap.band}`} elevation={0} sx={{ px: 2, py: 1.5, border: 1, borderColor: "divider", borderRadius: 3 }}><Stack direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "center" }} justifyContent="space-between" gap={1}><Box><Typography fontWeight={700}>{gap.dimension} · {gap.band.replaceAll("_", " ")}</Typography><Typography variant="body2" color="text.secondary">Have {gap.have}, target {gap.want}, deficit {gap.deficit}</Typography></Box><Button disabled={!gap.candidates?.length} onClick={() => onPreview(gap)}>Add {Math.min(gap.deficit, gap.candidates?.length ?? 0)}</Button></Stack></Paper>)}</Stack>}
+      {gaps.every((gap) => gap.deficit === 0) ? <Typography color="text.secondary">Composition targets are covered.</Typography> : <Stack spacing={1}>{gaps.filter((gap) => gap.deficit > 0).map((gap) => <Paper key={`${gap.dimension}-${gap.band}`} elevation={0} sx={{ px: 2, py: 1.5, border: 1, borderColor: "divider", borderRadius: 1 }}><Stack direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "center" }} justifyContent="space-between" gap={1}><Box><Typography fontWeight={700}>{gap.dimension} · {gap.band.replaceAll("_", " ")}</Typography><Typography variant="body2" color="text.secondary">Have {gap.have}, target {gap.want}, deficit {gap.deficit}</Typography></Box><Button disabled={!gap.candidates?.length} onClick={() => onPreview(gap)}>Add {Math.min(gap.deficit, gap.candidates?.length ?? 0)}</Button></Stack></Paper>)}</Stack>}
     </Box>
   </Stack>;
 }
@@ -124,7 +124,7 @@ function DuplicatesPanel({ groups, items, busy, onApply, onUndo }: {
     </Stack>
     {groups.length === 0 ? <Typography color="text.secondary">No burst or near-duplicate groups.</Typography> : <Stack spacing={1.5}>{groups.map((group, index) => {
       const keepers = new Set(group.keep);
-      return <Paper key={`${group.kind}-${index}`} elevation={0} sx={{ p: 1.5, border: 1, borderColor: "divider", borderRadius: 3 }}>
+      return <Paper key={`${group.kind}-${index}`} elevation={0} sx={{ p: 1.5, border: 1, borderColor: "divider", borderRadius: 1 }}>
         <Stack direction="row" spacing={1} alignItems="center" sx={{ overflowX: "auto", pb: 0.5 }}>
           <Chip size="small" color={group.kind === "burst" ? "warning" : "default"} label={group.kind} />
           {[...group.keep, ...group.drop].map((itemId) => {
@@ -462,11 +462,11 @@ export default function DatasetDetailPage() {
   const renderCurrent = () => datasetIdentity.current === datasetId && routeGeneration.current === renderGeneration;
 
   if (loading || (dataset !== null && dataset.id !== datasetId)) return <Box minHeight="60vh" display="grid" sx={{ placeItems: "center" }}><CircularProgress /></Box>;
-  if (!dataset) return <Container maxWidth="xl" sx={{ py: 4 }}><Alert severity="error">{error ?? "Dataset not found"}</Alert></Container>;
+  if (!dataset) return <Container maxWidth={false} sx={{ py: 4 }}><Alert severity="error">{error ?? "Dataset not found"}</Alert></Container>;
 
   return (
-    <Container maxWidth="xl" sx={{ py: 4, pb: 12 }}>
-      <Paper elevation={0} sx={{ p: { xs: 2, md: 3 }, mb: 3, border: 1, borderColor: "divider", borderRadius: 3 }}>
+    <Container maxWidth={false} sx={{ py: 4, pb: 12 }}>
+      <Paper elevation={0} sx={{ p: { xs: 2, md: 3 }, mb: 3, border: 1, borderColor: "divider", borderRadius: 1 }}>
         <Stack direction={{ xs: "column", md: "row" }} spacing={2} alignItems={{ md: "flex-start" }}>
           <Box flex={1}>
             <TextField label="Dataset name" value={dataset.name} onChange={(event) => setDataset({ ...dataset, name: event.target.value })} variant="standard" fullWidth inputProps={{ style: { fontSize: 28, fontWeight: 700 } }} />
@@ -502,7 +502,7 @@ export default function DatasetDetailPage() {
             <FormControl size="small" sx={{ minWidth: 180, ml: "auto" }}><InputLabel>Sort</InputLabel><Select label="Sort" value={sort} onChange={(event) => setSort(event.target.value)}><MenuItem value="position">Position</MenuItem><MenuItem value="sharpness">Sharpness</MenuItem><MenuItem value="frontality">Frontality</MenuItem><MenuItem value="face_ratio">Face ratio</MenuItem><MenuItem value="identity_distance">Identity distance</MenuItem><MenuItem value="brightness">Brightness</MenuItem></Select></FormControl>
           </Stack>
           {items.length === 0 ? <Typography color="text.secondary">Add images from any media grid to start curating this dataset.</Typography> : (
-            <Box ref={gridRef} sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(3, 1fr)", md: "repeat(4, 1fr)", lg: "repeat(5, 1fr)" }, position: "relative" }}>
+            <Box ref={gridRef} sx={{ display: "grid", gap: 0.5, gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(3, 1fr)", md: "repeat(4, 1fr)", lg: "repeat(5, 1fr)" }, position: "relative" }}>
               {items.map((item) => (
                 <MediaCard key={item.id} media={item.media} onSelectionClick={onItemClick} datasetContext={{
                   caption: item.effective_caption, excluded: item.excluded, excludedReason: item.excluded_reason, hasOps: item.has_ops,
@@ -533,7 +533,7 @@ export default function DatasetDetailPage() {
             <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", md: "repeat(2, 1fr)" } }}>
               {Object.entries(analysis.summary).map(([section, buckets]) => {
                 const total = Math.max(1, Object.values(buckets).reduce((sum, count) => sum + count, 0));
-                return <Paper key={section} elevation={0} sx={{ p: 2, border: 1, borderColor: "divider", borderRadius: 3 }}><Typography fontWeight={700} mb={1}>{section.replace("_hist", "").replace("_", " ")}</Typography><Stack spacing={1}>{Object.entries(buckets).map(([label, count]) => <Box key={label}><Stack direction="row" justifyContent="space-between"><Typography variant="caption">{label.replace("_", " ")}</Typography><Typography variant="caption">{count}</Typography></Stack><LinearProgress variant="determinate" value={(count / total) * 100} /></Box>)}</Stack></Paper>;
+                return <Paper key={section} elevation={0} sx={{ p: 2, border: 1, borderColor: "divider", borderRadius: 1 }}><Typography fontWeight={700} mb={1}>{section.replace("_hist", "").replace("_", " ")}</Typography><Stack spacing={1}>{Object.entries(buckets).map(([label, count]) => <Box key={label}><Stack direction="row" justifyContent="space-between"><Typography variant="caption">{label.replace("_", " ")}</Typography><Typography variant="caption">{count}</Typography></Stack><LinearProgress variant="determinate" value={(count / total) * 100} /></Box>)}</Stack></Paper>;
               })}
             </Box>
             <CompositionPanel analysis={analysis} gaps={gaps} items={items} onPreview={setGapPreview} />
@@ -563,7 +563,7 @@ export default function DatasetDetailPage() {
             <Button variant="contained" startIcon={<FileDownloadIcon />} onClick={createExport}>Export now</Button>
           </Stack>
           {exports.length === 0 ? <Typography color="text.secondary">No exports yet.</Typography> : exports.map((entry) => (
-            <Paper key={entry.id} elevation={0} sx={{ p: 2, border: 1, borderColor: "divider", borderRadius: 3 }}>
+            <Paper key={entry.id} elevation={0} sx={{ p: 2, border: 1, borderColor: "divider", borderRadius: 1 }}>
               <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" gap={1}>
                 <Box><Stack direction="row" spacing={1} alignItems="center"><Typography fontWeight={700}>{entry.layout}</Typography><Chip size="small" label={entry.status} color={entry.status === "completed" ? "success" : entry.status === "failed" ? "error" : "default"} /></Stack><Typography variant="body2" color="text.secondary">{entry.item_count} items · {entry.host_output_dir || entry.output_dir || "Preparing output…"}</Typography>{entry.error && <Typography variant="body2" color="error">{entry.error}</Typography>}{entry.launch_command && <Typography component="code" variant="caption" display="block" mt={1}>{entry.launch_command}</Typography>}</Box>
                 {entry.manifest && <Button component="a" href={datasetManifestUrl(entry.id)} target="_blank" rel="noreferrer">Manifest</Button>}
@@ -609,7 +609,7 @@ export default function DatasetDetailPage() {
         <DialogTitle>Preview gap candidates</DialogTitle>
         <DialogContent>
           {gapPreview && <Typography color="text.secondary" mb={2}>Add up to {gapPreview.deficit} images for {gapPreview.dimension} · {gapPreview.band.replaceAll("_", " ")}.</Typography>}
-          {gapMedia.length === 0 ? <CircularProgress size={24} /> : <Box sx={{ display: "grid", gap: 1, gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(4, 1fr)", md: "repeat(6, 1fr)" } }}>{gapMedia.map((media) => <Box key={media.id} component="img" src={`${API}/thumbnails/${encodeFilePath(media.thumbnail_path ?? "")}`} alt={media.filename} sx={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 2, bgcolor: "action.hover" }} />)}</Box>}
+          {gapMedia.length === 0 ? <CircularProgress size={24} /> : <Box sx={{ display: "grid", gap: 0.5, gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(4, 1fr)", md: "repeat(6, 1fr)" } }}>{gapMedia.map((media) => <Box key={media.id} component="img" src={`${API}/thumbnails/${encodeFilePath(media.thumbnail_path ?? "")}`} alt={media.filename} sx={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", borderRadius: 1, bgcolor: "action.hover" }} />)}</Box>}
         </DialogContent>
         <DialogActions><Button onClick={() => setGapPreview(null)}>Cancel</Button><Button variant="contained" disabled={gapMedia.length === 0} onClick={addGapItems}>Add {gapMedia.length}</Button></DialogActions>
       </Dialog>

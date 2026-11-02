@@ -142,8 +142,8 @@ export default function TagDetailPage() {
 
   return (
     <Container
-      maxWidth="lg"
-      sx={{ pt: 4, pb: 6, bgcolor: BG_SECTION, minHeight: "100vh" }}
+      maxWidth={false}
+      sx={{ pt: 1.5, pb: 3, bgcolor: BG_SECTION, minHeight: "100vh" }}
     >
       <Typography variant="h4" gutterBottom sx={{ color: ACCENT }}>
         Tag: #{tag.name}
@@ -202,7 +202,7 @@ export default function TagDetailPage() {
         <Grid
           ref={mediaGridRef}
           container
-          spacing={2}
+          spacing={0.5}
           sx={{ position: "relative" }}
         >
           {filteredMediaItems.map((m: Media) => (
@@ -240,7 +240,7 @@ export default function TagDetailPage() {
         <Typography variant="h5" gutterBottom sx={{ color: TEXT_PRIMARY }}>
           People
         </Typography>
-        <Grid container spacing={2}>
+        <Grid container spacing={0.5}>
           {(tag.persons ?? []).map((p: Person) => (
             <Grid key={p.id} size={{ xs: 6, sm: 4, md: 3, lg: 2.4 }}>
               <Box

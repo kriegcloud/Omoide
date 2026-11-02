@@ -56,7 +56,7 @@ export function AlbumsPreviewWidget() {
                 sx={{
                   aspectRatio: "4/3",
                   bgcolor: "action.hover",
-                  borderRadius: 2,
+                  borderRadius: 1,
                   overflow: "hidden",
                   display: "flex",
                   alignItems: "center",

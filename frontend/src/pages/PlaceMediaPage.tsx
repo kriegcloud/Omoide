@@ -18,7 +18,7 @@ export default function PlaceMediaPage() {
   );
 
   return (
-    <Container maxWidth="xl" sx={{ minHeight: "100vh", py: 4 }}>
+    <Container maxWidth={false} sx={{ minHeight: "100vh", py: 4 }}>
       <Box display="flex" alignItems="center" gap={1} mb={3}>
         <PublicIcon color="primary" />
         <Typography variant="h5" fontWeight={700}>

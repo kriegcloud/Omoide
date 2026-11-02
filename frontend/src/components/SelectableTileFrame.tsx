@@ -75,7 +75,7 @@ export default function SelectableTileFrame({
   bottomLeft,
   bottomRight,
   aspectRatio,
-  radius = 3,
+  radius = 1,
   sx = [],
   children,
   footer,
@@ -100,7 +100,7 @@ export default function SelectableTileFrame({
     top: inset,
     zIndex: 20,
     bgcolor: "rgba(0,0,0,.45)",
-    borderRadius: "8px",
+    borderRadius: "4px",
   } as const;
   const showCheckbox = selectionEnabled && !!onSelectionClick;
   const isSelecting = selectionEnabled && selecting;
@@ -193,9 +193,9 @@ export default function SelectableTileFrame({
           outline: selected ? "3px solid" : "none",
           outlineColor: "primary.main",
           outlineOffset: "-3px",
-          transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+          transition: "box-shadow 120ms ease",
           "&:hover": {
-            transform: isSelecting ? "none" : "translateY(-4px)",
+            transform: "none",
             boxShadow: isSelecting ? "none" : "0 12px 24px -8px rgba(0, 0, 0, 0.15)",
             zIndex: 10,
           },
@@ -203,7 +203,7 @@ export default function SelectableTileFrame({
             opacity: 1,
             pointerEvents: "auto",
           },
-          "&:focus-visible": { outline: "3px solid", outlineColor: "primary.main", outlineOffset: 2 },
+          "&:focus-visible": { outline: "3px solid", outlineColor: "primary.main", outlineOffset: "-3px" },
           "&:hover .tile-top-left, &:focus-within .tile-top-left": { left: badgeLeft },
           "@media (hover: none)": {
             "& .tile-checkbox, & .tile-open": { opacity: 1, pointerEvents: "auto" },

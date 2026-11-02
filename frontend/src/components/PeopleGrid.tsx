@@ -312,7 +312,7 @@ const clearList = useListStore(state => state.clearList);
   return (
     <Container
       maxWidth={false}
-      sx={{ pt: 4, pb: 6, bgcolor: "background.default", px: 4 }}
+      sx={{ pt: 1.5, pb: 3, bgcolor: "background.default", px: 1.5 }}
     >
       <Stack
         direction={{ xs: "column", sm: "row" }}
@@ -422,7 +422,7 @@ const clearList = useListStore(state => state.clearList);
       <Grid
         ref={gridRef}
         container
-        spacing={3}
+        spacing={0.5}
         alignItems="stretch"
         sx={{ position: "relative" }}
       >

@@ -158,7 +158,7 @@ export const SelectionActionBar: React.FC = () => {
             flexWrap: "wrap",
             justifyContent: "center",
             gap: 1.5,
-            borderRadius: 6,
+            borderRadius: 1,
             bgcolor: "background.paper",
             maxWidth: "calc(100vw - 32px)",
           }}

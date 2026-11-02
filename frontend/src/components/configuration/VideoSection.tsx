@@ -21,7 +21,7 @@ import { ConfigSectionProps, SwitchSetting, getErrorMessage } from "./shared";
 
 const MODE_CONSEQUENCES: Record<Exclude<VideoConversionMode, "off">, string> = {
   keep_original:
-    "After each scan, every video your browser cannot play is converted to a playable MP4 copy stored in Omoide's data folder. Your original files are not changed, but the copies need additional disk space (roughly as much as the converted videos) and converting uses a lot of CPU or GPU time.",
+    "After each scan, every video your browser cannot play is converted to a playable MP4 copy stored in beep media's data folder. Your original files are not changed, but the copies need additional disk space (roughly as much as the converted videos) and converting uses a lot of CPU or GPU time.",
   replace_original:
     "After each scan, every video your browser cannot play is converted to MP4 and the ORIGINAL FILE IS DELETED. The original format and quality cannot be restored, and other programs referring to the old file name will no longer find it. Read-only directories are skipped.",
 };

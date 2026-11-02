@@ -116,7 +116,7 @@ export default function GeneralSection({
             onChange={(checked) =>
               onValueChange("general", "write_location_to_files", checked)
             }
-            description="Locations set in the map editor are also written into the photo's EXIF data. When off they are only stored in Omoide's database; the files stay untouched (this also works for read-only directories)."
+            description="Locations set in the map editor are also written into the photo's EXIF data. When off they are only stored in beep media's database; the files stay untouched (this also works for read-only directories)."
           />
         </FormGroup>
       </Grid>

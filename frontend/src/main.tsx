@@ -5,6 +5,8 @@ import App from './App';
 
 import { AppThemeProvider } from './ThemeContext';
 
+import '@fontsource-variable/inter';
+import '@fontsource-variable/jetbrains-mono';
 import './index.css';
 
 installPresentationGuard();

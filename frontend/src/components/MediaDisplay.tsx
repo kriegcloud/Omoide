@@ -31,7 +31,7 @@ export function MediaDisplay({ media, initialTime, autoplay, seekRequest, onProg
           width: "100%",
           maxWidth: "100%",
           overflow: "hidden",
-          borderRadius: { xs: 0, sm: 2 },
+          borderRadius: { xs: 0, sm: 1 },
           bgcolor: "background.paper",
           boxShadow: { xs: "none", sm: 4 },
         }}

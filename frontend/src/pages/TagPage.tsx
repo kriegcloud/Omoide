@@ -73,7 +73,7 @@ export default function TagsPage() {
     }
   };
   return (
-    <Container maxWidth="lg" sx={{ pt: 4, pb: 6 }}>
+    <Container maxWidth={false} sx={{ pt: 1.5, pb: 3 }}>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
         <Typography variant="h4">Tags</Typography>
         <Box display="flex" gap={1} alignItems="center">
@@ -101,7 +101,7 @@ export default function TagsPage() {
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
 
-      <Grid ref={gridRef} container spacing={4} sx={{ position: "relative" }}>
+      <Grid ref={gridRef} container spacing={0.5} sx={{ position: "relative" }}>
         {items.map((tag) => (
           <Grid key={tag.id} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
             {/* 1,2,3,4 per row */}

@@ -395,7 +395,7 @@ export default function SearchResultsPage() {
   };
 
   return (
-    <Container maxWidth="xl" sx={{ pt: 4, pb: 6 }}>
+    <Container maxWidth={false} sx={{ pt: 1.5, pb: 3 }}>
       <Typography variant="h4" gutterBottom>
         {title}
       </Typography>
@@ -472,7 +472,7 @@ export default function SearchResultsPage() {
               overflowX: "auto",
               pb: 1,
               "&::-webkit-scrollbar": { height: 4 },
-              "&::-webkit-scrollbar-thumb": { borderRadius: 2, bgcolor: "divider" },
+              "&::-webkit-scrollbar-thumb": { borderRadius: 1, bgcolor: "divider" },
             }}
           >
             {mediaState.persons.map((person) => (

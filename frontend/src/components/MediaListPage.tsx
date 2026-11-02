@@ -149,7 +149,7 @@ const clearListsByPrefix = useListStore(state => state.clearListsByPrefix);
 
   return (
     <Container
-      maxWidth="xl"
+      maxWidth={false}
       sx={{
         bgcolor: "background.default",
         color: "text.primary",
@@ -179,7 +179,7 @@ const clearListsByPrefix = useListStore(state => state.clearListsByPrefix);
           startIcon={<SortIcon />}
           sx={{
             bgcolor: "action.hover",
-            borderRadius: 2,
+            borderRadius: 1,
             px: 2,
             color: "text.primary",
           }}

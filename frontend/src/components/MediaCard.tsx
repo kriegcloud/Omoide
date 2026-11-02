@@ -253,7 +253,7 @@ function MediaCard({
         />
       )}
       footer={datasetContext && (
-        <Box sx={{ px: 1.25, py: 1, minHeight: 66 }}>
+        <Box sx={{ px: 1, py: 0.5, minHeight: 54 }}>
           <Typography variant="caption" color="text.secondary" noWrap display="block">
             {datasetContext.caption || "No caption"}
           </Typography>
@@ -280,7 +280,10 @@ function MediaCard({
               position: "relative",
               display: "block",
               width: "100%",
-              paddingTop: "100%", // 1:1 Aspect Ratio
+              // Keep more of landscape/portrait images visible in masonry.
+              paddingTop: media?.width && media?.height
+                ? `${Math.min(1.5, Math.max(0.65, media.height / media.width)) * 100}%`
+                : "100%",
               cursor: isDraggable ? "grab" : "pointer",
             }}
           >
@@ -392,7 +395,7 @@ function MediaCard({
               bottom: 0,
               left: 0,
               width: "100%",
-              p: 2,
+              p: 1,
               background: "linear-gradient(to top, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0.4) 60%, rgba(0,0,0,0) 100%)",
               pointerEvents: "none",
               opacity: 0.8, // Always slightly visible
@@ -434,7 +437,7 @@ function MediaCard({
                     sx={{ 
                         color: "rgba(255,255,255,0.9)", 
                         textShadow: "0 1px 2px rgba(0,0,0,0.5)",
-                        fontFamily: "monospace",
+                        fontFamily: "var(--font-mono)",
                         fontSize: "0.7rem"
                     }}
                   >

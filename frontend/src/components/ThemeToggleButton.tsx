@@ -29,10 +29,10 @@ const ThemeSwitch = styled(Switch)(({ theme }) => ({
     boxShadow: "none",
     width: 24,
     height: 24,
-    borderRadius: 12,
+    borderRadius: "50%",
   },
   "& .MuiSwitch-track": {
-    borderRadius: 17,
+    borderRadius: 4,
     opacity: 1,
     backgroundColor:
       theme.palette.mode === "light"

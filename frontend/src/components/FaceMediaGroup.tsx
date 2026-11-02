@@ -82,7 +82,7 @@ export default function FaceGroupCard({
             e.stopPropagation();
             onToggleExpand();
           }}
-          sx={{ color: "white", bgcolor: "rgba(0,0,0,.45)", borderRadius: "8px", "&:hover": { bgcolor: "rgba(0,0,0,.65)" } }}
+          sx={{ color: "white", bgcolor: "rgba(0,0,0,.45)", borderRadius: "4px", "&:hover": { bgcolor: "rgba(0,0,0,.65)" } }}
         >
           <UnfoldMoreIcon sx={{ fontSize: 16 }} />
         </IconButton>

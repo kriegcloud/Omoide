@@ -107,7 +107,7 @@ export default function HighlightsPage() {
   }, [loadHighlights]);
 
   return (
-    <Container maxWidth="xl" sx={{ minHeight: "100vh", py: 4 }}>
+    <Container maxWidth={false} sx={{ minHeight: "100vh", py: 1.5 }}>
       <Box display="flex" alignItems="center" gap={1} mb={2}>
         <StarIcon color="primary" />
         <Typography variant="h5" fontWeight={700}>

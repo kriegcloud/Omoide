@@ -488,7 +488,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                               value={clusteringPct}
                               sx={{
                                 height: 6,
-                                borderRadius: 3,
+                                borderRadius: 1,
                                 mt: 0.5,
                                 bgcolor: "divider",
                                 "& .MuiLinearProgress-bar": {
@@ -520,7 +520,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                           value={showIndeterminate ? undefined : pct}
                           sx={{
                             height: 6,
-                            borderRadius: 3,
+                            borderRadius: 1,
                             mt: 0.5,
                             bgcolor: "divider",
                             "& .MuiLinearProgress-bar": {
@@ -537,7 +537,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                         value={showIndeterminate ? undefined : pct}
                         sx={{
                           height: 6,
-                          borderRadius: 3,
+                          borderRadius: 1,
                           mt: 0.5,
                           bgcolor: "divider",
                           "& .MuiLinearProgress-bar": {

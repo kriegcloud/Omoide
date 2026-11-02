@@ -127,7 +127,7 @@ const NopersonsPage: React.FC = () => {
   const selectedCount = selectedIds.size;
 
   return (
-    <Box sx={{ p: 2, maxWidth: "1600px", mx: "auto" }}>
+    <Box sx={{ p: { xs: 1, sm: 1.5 } }}>
       <Typography variant="h4" gutterBottom>
         No Persons Detected
       </Typography>

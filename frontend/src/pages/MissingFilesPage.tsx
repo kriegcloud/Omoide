@@ -490,10 +490,10 @@ const MissingFilesPage: React.FC = () => {
                         />
                       </Box>
                     </TableCell>
-                    <TableCell sx={{ fontFamily: "monospace" }}>
+                    <TableCell sx={{ fontFamily: "var(--font-mono)" }}>
                       {item.filename}
                     </TableCell>
-                    <TableCell sx={{ fontFamily: "monospace" }}>
+                    <TableCell sx={{ fontFamily: "var(--font-mono)" }}>
                       {item.parent_directory}
                     </TableCell>
                     <TableCell align="right">

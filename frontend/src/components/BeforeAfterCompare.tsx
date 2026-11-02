@@ -10,7 +10,7 @@ const source = (media: Media) => `${API}/originals/${encodeFilePath(media.path)}
 export default function BeforeAfterCompare({ before, after }: { before: Media; after: Media }) {
   const [position, setPosition] = useState(50);
   return (
-    <Box sx={{ position: "relative", width: "100%", mb: 2, overflow: "hidden", borderRadius: 2, bgcolor: "black" }}>
+    <Box sx={{ position: "relative", width: "100%", mb: 2, overflow: "hidden", borderRadius: 1, bgcolor: "black" }}>
       <MediaImage src={source(after)} alt="Repaired" width={after.width || undefined} height={after.height || undefined} sx={{ display: "block", width: "100%", height: "auto", maxHeight: "80vh", objectFit: "contain" }} />
       <Box sx={{ position: "absolute", inset: 0, clipPath: `inset(0 ${100 - position}% 0 0)`, overflow: "hidden" }}>
         <MediaImage src={source(before)} alt="Original" width={before.width || undefined} height={before.height || undefined} sx={{ width: "100%", height: "100%", objectFit: "contain" }} />

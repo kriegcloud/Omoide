@@ -94,7 +94,7 @@ export default function AlbumsPage() {
   };
 
   return (
-    <Container maxWidth="xl" sx={{ minHeight: "100vh", py: 4 }}>
+    <Container maxWidth={false} sx={{ minHeight: "100vh", py: 1.5 }}>
       <Box
         display="flex"
         justifyContent="space-between"
@@ -161,7 +161,7 @@ export default function AlbumsPage() {
           ref={gridRef}
           sx={{
             display: "grid",
-            gap: 2,
+            gap: 0.5,
             gridTemplateColumns: {
               xs: "repeat(2, 1fr)",
               sm: "repeat(3, 1fr)",

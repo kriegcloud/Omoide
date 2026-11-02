@@ -1,4 +1,5 @@
 import React from "react";
+import BrandLogo from "./BrandLogo";
 import {
   Box,
   List,
@@ -59,8 +60,6 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
   const location = useLocation();
   const { isSelecting, selectedIds, toggleSelecting } = useSelection();
   const selectedCount = selectedIds.size;
-  const base = import.meta.env.BASE_URL || "/";
-  const wordmarkSrc = `${base}brand/omoide_header_${theme.palette.mode}.png`;
   const isTemporary = variant === "temporary";
 
   const RAW_SECTIONS: NavSection[] = [
@@ -188,31 +187,28 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
     >
       <Box
         sx={{
-          p: 2,
+          p: 1.5,
+          backgroundImage: `radial-gradient(ellipse at 25% 0%, ${theme.palette.mode === "dark" ? "rgba(61,125,61,.35)" : "rgba(61,125,61,.18)"}, transparent 75%)`,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
         }}
       >
-        <Link to="/" onClick={isTemporary ? onClose : undefined}>
-          <Box
-            component="img"
-            src={wordmarkSrc}
-            alt="omoide"
-            sx={{ width: 140, height: "auto" }}
-          />
+        <Link to="/" onClick={isTemporary ? onClose : undefined}
+          style={{ display: "flex", alignItems: "center", gap: 10, color: "inherit", textDecoration: "none" }}>
+          <BrandLogo />
         </Link>
       </Box>
-      <Divider sx={{ mb: 2 }} />
+      <Divider sx={{ mb: 0.5 }} />
 
-      <List component="nav" sx={{ px: 2 }}>
-        <Box sx={{ px: 2, py: 1.5 }}>
+      <List component="nav" sx={{ px: 0.5 }}>
+        <Box sx={{ px: 0.5, py: 0.5 }}>
           <ListItemButton
             onClick={toggleSelecting}
             selected={isSelecting}
             sx={{
-              borderRadius: 2,
-              py: 1,
+              borderRadius: 1,
+              py: 0.5,
               "&.Mui-selected": {
                 bgcolor: "action.selected",
                 color: "primary.main",
@@ -252,7 +248,7 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
                 fontWeight: 700,
                 textTransform: "uppercase",
                 letterSpacing: "0.05em",
-                mt: 2,
+                mt: 1.5,
                 mb: 1,
                 lineHeight: 1,
               }}
@@ -273,8 +269,8 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
                     onClick={isTemporary ? onClose : undefined}
                     selected={isActive}
                     sx={{
-                      borderRadius: 2,
-                      py: 1,
+                      borderRadius: 1,
+                      py: 0.5,
                       "&.active": {
                         bgcolor: "action.selected",
                         color: "primary.main",

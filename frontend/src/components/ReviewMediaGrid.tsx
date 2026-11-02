@@ -40,8 +40,8 @@ const ReviewMediaGrid: React.FC<ReviewMediaGridProps> = ({
           position: "relative",
           display: "grid",
           gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
-          gap: 1.5,
-          p: 2,
+          gap: 0.5,
+          p: 0.5,
         }}
       >
         {children}

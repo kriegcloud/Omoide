@@ -22,7 +22,7 @@ export function HomeWidgetCard({
       sx={{
         mb: 4,
         p: 2,
-        borderRadius: 3,
+        borderRadius: 1,
         bgcolor: "background.paper",
         boxShadow: (theme) => theme.shadows[1],
       }}

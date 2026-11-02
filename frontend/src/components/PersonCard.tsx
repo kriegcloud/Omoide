@@ -129,7 +129,7 @@ export default function PersonCard({
           display: "flex",
           flexDirection: "column",
           justifyContent: "flex-end",
-          p: 1.5,
+          p: 1,
         }}
       >
         <Typography variant="subtitle1" fontWeight="bold" lineHeight={1.2}>

@@ -49,7 +49,7 @@ export default function DatasetsPage() {
       ) : (
         <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)", md: "repeat(3, 1fr)", lg: "repeat(4, 1fr)" } }}>
           {datasets.map((dataset) => (
-            <Card key={dataset.id} elevation={0} sx={{ borderRadius: 3, border: 1, borderColor: "divider", overflow: "hidden" }}>
+            <Card key={dataset.id} elevation={0} sx={{ borderRadius: 1, border: 1, borderColor: "divider", overflow: "hidden" }}>
               <CardActionArea component={Link} to={`/dataset/${dataset.id}`}>
                 <Box sx={{ aspectRatio: "16 / 10", bgcolor: "action.hover", display: "grid", placeItems: "center", overflow: "hidden" }}>
                   {dataset.cover?.thumbnail_path ? (

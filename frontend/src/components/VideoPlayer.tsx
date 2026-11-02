@@ -373,7 +373,7 @@ export function VideoWithPreview({
             Play converted version
           </Button>
           <Typography variant="body2" align="center" color="inherit">
-            Omoide converts it while it plays; the file is not changed. To do
+            beep media converts it while it plays; the file is not changed. To do
             this automatically, enable it under Settings → Video. You can also
             use the Open file button in the toolbar to play it in your default
             application.

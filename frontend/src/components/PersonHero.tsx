@@ -263,7 +263,7 @@ export function PersonHero({
                 ? alpha(theme.palette.common.white, 0.05)
                 : alpha(theme.palette.common.black, 0.02),
             mt: 4,
-            borderRadius: 3,
+            borderRadius: 1,
           }}
         >
           <PersonEditForm

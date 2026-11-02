@@ -129,10 +129,13 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
   return (
     <Paper ref={groupRef} tabIndex={-1} onFocus={event => { if (event.target === event.currentTarget) onFocusGroup(); }}
       aria-label={`Group ${group.group_id}, ${group.items.length} items`} variant="outlined"
-      sx={{ outline: focused ? "2px solid" : undefined, outlineColor: "primary.main", outlineOffset: "-2px" }}>
+      sx={{ outline: focused ? "2px solid" : undefined, outlineColor: "primary.main", outlineOffset: 0 }}>
       <Box
         sx={{
-          p: 2,
+          p: 1,
+          // An opaque sticky header must follow the card's inner corner;
+          // square paint here used to cover the rounded border/focus ring.
+          borderRadius: "3px 3px 0 0",
           borderBottom: "1px solid",
           borderColor: "divider",
           display: "flex",
@@ -199,7 +202,7 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
           </Button>
         </Box>
       </Box>
-      <Grid container spacing={2} sx={{ p: 2 }}>
+      <Grid container spacing={0.5} sx={{ p: 0.5 }}>
         {group.items.map((media) => (
           <Grid key={media.id} size={{ xs: 6, sm: 4, md: 3, lg: 2 }}>
             <DuplicateMediaCard

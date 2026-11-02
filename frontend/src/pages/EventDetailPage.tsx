@@ -107,7 +107,7 @@ export default function EventDetailPage() {
   };
 
   return (
-    <Container maxWidth="xl" sx={{ minHeight: "100vh", py: 4 }}>
+    <Container maxWidth={false} sx={{ minHeight: "100vh", py: 1.5 }}>
       <Box display="flex" alignItems="center" gap={1} mb={1} flexWrap="wrap">
         <TheatersIcon color="primary" />
         {isRenaming ? (

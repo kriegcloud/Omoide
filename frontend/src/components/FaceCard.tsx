@@ -116,7 +116,7 @@ function FaceCard({
           width: "100%",
           height: "100%",
           boxSizing: "border-box",
-          borderRadius: 3,
+          borderRadius: 1,
           border: isProfile ? `3px solid ${theme.palette.primary.main}` : "none",
         }}
       />

@@ -66,7 +66,7 @@ export default function SimilarPersonCard({
         position: "relative",
         display: "block",
         overflow: "hidden",
-        borderRadius: 3,
+        borderRadius: 1,
         textDecoration: "none",
         color: (theme) => theme.palette.common.white,
         transition: "transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out",

@@ -173,7 +173,7 @@ export function BinaryNavigationControls({ variant = "global", sx }: BinaryNavig
             gap: 1,
             px: 1,
             py: 0.5,
-            borderRadius: "999px",
+            borderRadius: "4px",
             backgroundColor: (theme) =>
               theme.palette.mode === "dark"
                 ? "rgba(0,0,0,0.6)"

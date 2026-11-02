@@ -28,7 +28,7 @@ export function SwipeHint() {
           justifyContent: "center",
           color: "white",
           bgcolor: "rgba(0, 0, 0, 0.6)",
-          borderRadius: 4,
+          borderRadius: 1,
           p: 3,
           backdropFilter: "blur(4px)",
         }}

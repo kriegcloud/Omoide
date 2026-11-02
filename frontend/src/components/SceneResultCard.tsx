@@ -50,7 +50,7 @@ export function SceneResultCard({ scene, listKey }: SceneResultCardProps) {
     <Card
       elevation={0}
       sx={{
-        borderRadius: 2,
+        borderRadius: 1,
         overflow: "hidden",
         position: "relative",
         cursor: "pointer",

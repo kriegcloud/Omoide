@@ -229,7 +229,7 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange }: {
     suggestions.map((item) => ({ face_id: item.id, person_id: item.person_id }));
 
   return (
-    <Container id="unassigned-faces" maxWidth="xl" sx={{ pt: 4, pb: 7 }}>
+    <Container id="unassigned-faces" maxWidth={false} sx={{ pt: 1.5, pb: 3 }}>
       <Typography variant="h4" sx={{ mb: 2 }}>Suggested Matches</Typography>
       <Box sx={{ maxWidth: 400, px: 1, mb: 2 }}>
         <Typography id="suggestions-min-score">Minimum score: {sliderScore.toFixed(2)}</Typography>

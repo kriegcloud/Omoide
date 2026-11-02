@@ -24,13 +24,13 @@ video {
   width: auto;
 }
 .my-masonry-grid_column {
-  padding-left: 16px; 
+  padding-left: 4px;
   background-clip: padding-box;
 }
 
 
 .my-masonry-grid_column > div {
-  margin-bottom: 16px;
+  margin-bottom: 4px;
 }
 
 /* CARTO's free raster basemaps now require an API key, so dark mode fakes a
@@ -61,3 +61,8 @@ video {
   filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg)
     saturate(0.3) brightness(0.7);
 }
+
+:root {
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
+}
+code, pre, kbd, samp { font-family: var(--font-mono); }

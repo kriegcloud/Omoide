@@ -199,7 +199,7 @@ export default function PersonDetailPage() {
 
   if (!loading && (loadError || !person)) {
     return (
-      <Container sx={{ py: 4 }}>
+      <Container sx={{ py: 1.5 }}>
         <Alert severity="error" action={<Button color="inherit" onClick={() => void retryDetail()}>Retry</Button>}>
           {loadError || "Person not found"}
         </Alert>
@@ -223,7 +223,7 @@ export default function PersonDetailPage() {
   }
 
   return (
-    <Container maxWidth="xl" sx={{ pt: 2, pb: 6 }}>
+    <Container maxWidth={false} sx={{ pt: 2, pb: 6 }}>
       <PersonHero
         person={person}
         onSave={onSave}

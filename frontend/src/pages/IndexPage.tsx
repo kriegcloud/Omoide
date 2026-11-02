@@ -362,10 +362,10 @@ export default function IndexPage() {
         alignItems="center"
         flexWrap="wrap"
         gap={2}
-        mb={4}
+        mb={1.5}
         sx={{
-          p: 2,
-          borderRadius: 3,
+          p: 1,
+          borderRadius: 1,
           bgcolor: "background.paper",
           boxShadow: (theme) => theme.shadows[1],
           backdropFilter: "blur(12px)",
@@ -382,7 +382,7 @@ export default function IndexPage() {
           sx={{
             '& .MuiToggleButton-root': {
                 border: 'none',
-                borderRadius: 2,
+                borderRadius: 1,
                 mx: 0.5,
                 px: 2,
                 py: 1,
@@ -430,7 +430,7 @@ export default function IndexPage() {
             startIcon={<CameraAltIcon />}
             sx={{
                 bgcolor: camera ? 'action.selected' : 'action.hover',
-                borderRadius: 2,
+                borderRadius: 1,
                 px: 2,
                 color: camera ? 'primary.main' : 'text.primary'
             }}
@@ -443,7 +443,7 @@ export default function IndexPage() {
             onClose={() => setCameraMenuAnchorEl(null)}
             PaperProps={{
                 elevation: 2,
-                sx: { borderRadius: 2, mt: 1, minWidth: 220, maxHeight: 420 }
+                sx: { borderRadius: 1, mt: 1, minWidth: 220, maxHeight: 420 }
             }}
           >
             <MenuItem
@@ -472,7 +472,7 @@ export default function IndexPage() {
             startIcon={<SortIcon />}
             sx={{
                 bgcolor: 'action.hover',
-                borderRadius: 2,
+                borderRadius: 1,
                 px: 2,
                 color: 'text.primary'
             }}
@@ -486,7 +486,7 @@ export default function IndexPage() {
           onClose={handleSortMenuClose}
           PaperProps={{
               elevation: 2,
-              sx: { borderRadius: 2, mt: 1, minWidth: 180 }
+              sx: { borderRadius: 1, mt: 1, minWidth: 180 }
           }}
         >
           <MenuItem
@@ -580,7 +580,7 @@ export default function IndexPage() {
               <Box
                 sx={{
                   display: "grid",
-                  gap: 2,
+                  gap: 0.5,
                   gridTemplateColumns: {
                     xs: "repeat(auto-fill, minmax(200px, 1fr))",
                     sm: "repeat(auto-fill, minmax(220px, 1fr))",
@@ -647,7 +647,7 @@ export default function IndexPage() {
         <Box
           sx={{
             display: "grid",
-            gap: 2,
+            gap: 0.5,
             // Approximate masonry layout with grid for skeletons
             gridTemplateColumns: {
                xs: "repeat(2, 1fr)",
@@ -721,11 +721,11 @@ export default function IndexPage() {
 
   return (
     <Container
-      maxWidth="xl"
+      maxWidth={false}
       sx={{
         minHeight: "100vh",
-        py: 4,
-        px: { xs: 2, sm: 3, md: 4 },
+        py: 1.5,
+        px: { xs: 1, sm: 1.5 },
       }}
     >
       {widgets

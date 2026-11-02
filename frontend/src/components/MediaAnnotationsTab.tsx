@@ -265,7 +265,7 @@ export function MediaAnnotationsTab({
       )}
       {!backendReady && (
         <Alert severity="warning">
-          ComfyUI annotation is unavailable. The rest of Omoide remains fully
+          ComfyUI annotation is unavailable. The rest of beep media remains fully
           usable. {health?.detail ?? "The host bridge did not report ready."}
         </Alert>
       )}

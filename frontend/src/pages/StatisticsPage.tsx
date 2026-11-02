@@ -32,7 +32,7 @@ const CHART_HEIGHT = 160;
 
 function StatTile({ label, value }: { label: string; value: string }) {
   return (
-    <Paper sx={{ p: 2, borderRadius: 3, flex: "1 1 130px", minWidth: 130 }}>
+    <Paper sx={{ p: 2, borderRadius: 1, flex: "1 1 130px", minWidth: 130 }}>
       <Typography variant="h5" fontWeight={700}>
         {value}
       </Typography>
@@ -65,7 +65,7 @@ function TopList({
 }) {
   const max = Math.max(1, ...rows.map((r) => r.count));
   return (
-    <Paper sx={{ p: 2.5, borderRadius: 3, flex: "1 1 280px", minWidth: 260 }}>
+    <Paper sx={{ p: 2.5, borderRadius: 1, flex: "1 1 280px", minWidth: 260 }}>
       <Typography variant="subtitle2" fontWeight={700} mb={1.5}>
         {title}
       </Typography>
@@ -209,7 +209,7 @@ export default function StatisticsPage() {
       </Box>
 
       {/* Per-year stacked columns: identity job (images vs videos) */}
-      <Paper sx={{ p: 2.5, borderRadius: 3, mb: 3 }}>
+      <Paper sx={{ p: 2.5, borderRadius: 1, mb: 3 }}>
         <Box
           sx={{
             display: "flex",
@@ -316,7 +316,7 @@ export default function StatisticsPage() {
       </Paper>
 
       {/* Last 24 months: single-series magnitude, one hue */}
-      <Paper sx={{ p: 2.5, borderRadius: 3, mb: 3 }}>
+      <Paper sx={{ p: 2.5, borderRadius: 1, mb: 3 }}>
         <Typography variant="subtitle2" fontWeight={700} mb={2}>
           Media per month (last 24 months)
         </Typography>

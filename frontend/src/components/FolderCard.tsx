@@ -45,7 +45,7 @@ const FolderCard: React.FC<FolderCardProps> = ({ folder, onOpen }) => {
     <Card
       elevation={0}
       sx={{
-        borderRadius: 2,
+        borderRadius: 1,
         overflow: "hidden",
         backgroundColor: alpha(theme.palette.background.paper, 0.7),
         border: `1px solid ${alpha(theme.palette.divider, 0.4)}`,

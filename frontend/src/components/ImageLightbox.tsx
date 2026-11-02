@@ -230,7 +230,7 @@ export function ImageLightbox({ open, src, alt, onClose }: ImageLightboxProps) {
           gap: 0.5,
           bgcolor: "rgba(0,0,0,0.6)",
           backdropFilter: "blur(4px)",
-          borderRadius: 2,
+          borderRadius: 1,
           px: 1,
           py: 0.5,
           zIndex: 10,

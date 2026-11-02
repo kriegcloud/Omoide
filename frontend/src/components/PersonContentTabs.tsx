@@ -458,7 +458,7 @@ export function PersonContentTabs({
         </Box>
 
         {similarPersons.length > 0 ? (
-          <Grid container spacing={2}>
+          <Grid container spacing={0.5}>
             {similarPersons.map((similar) => (
               <Grid key={similar.id} size={{ xs: 6, sm: 3, md: 2 }}>
                 <SimilarPersonCard

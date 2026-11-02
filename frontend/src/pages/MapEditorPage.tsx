@@ -272,7 +272,7 @@ export default function MapEditorPage() {
     } catch (err) {
       setSnackbar({
         open: true,
-        // The server explains refusals (e.g. a file Omoide may not write to).
+        // The server explains refusals (e.g. a file beep media may not write to).
         message: err instanceof Error ? err.message : "Failed to save location",
         severity: "error",
       });
@@ -430,7 +430,7 @@ export default function MapEditorPage() {
             <Link component={RouterLink} to="/configuration">
               Configuration
             </Link>{" "}
-            to store them only in Omoide.
+            to store them only in beep media.
           </Alert>
         ) : (
           blockedFolderCount > 0 &&
@@ -480,7 +480,7 @@ export default function MapEditorPage() {
                     height: "auto",
                     aspectRatio: "1 / 1",
                     objectFit: "cover",
-                    borderRadius: 2,
+                    borderRadius: 1,
                     cursor: "pointer",
                     border:
                       selectedMedia?.id === m.id

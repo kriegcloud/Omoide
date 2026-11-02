@@ -196,7 +196,7 @@ export default function TagCard({
             sx: {
               bgcolor: "background.paper",
               color: "text.primary",
-              borderRadius: 2,
+              borderRadius: 1,
             },
           },
         }}
