@@ -489,6 +489,17 @@ test('virtualized scrolling retains previously intersected tiles after they unmo
   assert.deepEqual([...g.changes.at(-1)].sort(), [1, 2, 3, 4, 5, 6]);
 });
 
+test('window virtualized marquee retains intersected tiles after rows unmount', (t) => {
+  const g = grid(t);
+  g.options.virtualized = true; g.hook = g.render();
+  g.drag(250, 490); g.tick();
+  const removed = g.container.children.splice(0, 3);
+  removed.forEach(tile => { tile.matches = () => true; });
+  g.observers.at(-1).callback([{ type: 'childList', addedNodes: [], removedNodes: removed }]);
+  g.tick();
+  assert.deepEqual([...g.changes.at(-1)].sort(), [1, 2, 3, 4, 5, 6]);
+});
+
 test('virtualized Shift range uses loaded ids even when the anchor is unmounted', (t) => {
   const g = grid(t);
   g.options.orderedIds = [1, 2, 3, 4, 5, 6];

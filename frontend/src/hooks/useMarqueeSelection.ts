@@ -27,6 +27,8 @@ interface UseGridSelectionOptions<TId extends number | string> {
   loadedCount?: number;
   /** Complete visual order for virtualized grids; selection survives unmounts. */
   orderedIds?: TId[];
+  /** Retain measured tiles during a drag when window virtualization unmounts rows. */
+  virtualized?: boolean;
   hasMore?: boolean;
   containerRef: React.RefObject<HTMLElement | null>;
   itemSelector?: string;
@@ -79,6 +81,7 @@ export function useGridSelection<TId extends number | string = number>({
   listKey,
   loadedCount,
   orderedIds: loadedIds,
+  virtualized = false,
   hasMore = false,
   containerRef,
   itemSelector = "[data-selectable-id]",
@@ -203,7 +206,7 @@ export function useGridSelection<TId extends number | string = number>({
       // Retain positions sampled earlier in this drag when a virtual scrollport
       // unmounts rows. They still participate as the rectangle grows or shrinks.
       // The cache is discarded at drag end and on layout resize.
-      const measured = new Map(scrollTarget ? tiles.map((tile) => [tile.id, tile]) : []);
+      const measured = new Map(scrollTarget || virtualized ? tiles.map((tile) => [tile.id, tile]) : []);
       for (const item of items) {
         const rect = item.getBoundingClientRect();
         resizeObserver?.observe(item);
@@ -426,7 +429,7 @@ export function useGridSelection<TId extends number | string = number>({
       cancelMarqueeRef.current = null;
       stop();
     };
-  }, [container, disabled, itemSelector, allowPlainDragOnItems]);
+  }, [container, disabled, itemSelector, allowPlainDragOnItems, virtualized]);
 
   useEffect(() => {
     if (!container || disabled) return;

@@ -10,11 +10,8 @@ import React, {
   useRef,
   useState,
 } from "react";
-import {
-  VariableSizeList,
-  type ListChildComponentProps,
-  type ListOnItemsRenderedProps,
-} from "react-window";
+import { useWindowVirtualRows } from "../hooks/useWindowVirtualRows";
+import { infiniteScrollObserver } from "../hooks/infiniteScroll";
 import {
   Typography,
   Box,
@@ -57,12 +54,14 @@ interface GroupRowData {
   onSelectGroup: (group: GroupType, checked: boolean) => void;
   onResolveRequested: (snapshot: DuplicateResolveSnapshot) => void;
   measureRow: (index: number, groupId: number, height: number) => void;
+  headerOffset: number;
+  measurementKey: number;
 }
 
-function GroupRow({ index, style, data }: ListChildComponentProps<GroupRowData>) {
+function GroupRow({ index, style, data }: { index: number; style: React.CSSProperties; data: GroupRowData }) {
   const rowRef = useRef<HTMLDivElement>(null);
   const group = data.groups[index];
-  const { measureRow } = data;
+  const { measureRow, measurementKey } = data;
 
   useLayoutEffect(() => {
     const element = rowRef.current;
@@ -73,22 +72,21 @@ function GroupRow({ index, style, data }: ListChildComponentProps<GroupRowData>)
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [index, group, measureRow]);
+  }, [index, group, measureRow, measurementKey]);
 
   return (
     <div style={style}>
-      {group ? (
+      {group && (
         <Box ref={rowRef} sx={{
           // Included in ResizeObserver measurement, so virtual offsets include
           // clearance for the card border and its outward focus outline.
           pt: 0.5,
           px: 0.5,
           pb: 1,
-          // Each group's action header sticks within the virtual list's own
-          // scrollport, then leaves with its group. Page filters stay above it.
+          // Stick below the measured app bar and leave with this group.
           "& > .MuiPaper-root > .MuiBox-root:first-of-type": {
             position: "sticky",
-            top: 0,
+            top: data.headerOffset,
             zIndex: (theme) => theme.zIndex.appBar - 1,
             bgcolor: "background.paper",
             boxShadow: 1,
@@ -107,29 +105,22 @@ function GroupRow({ index, style, data }: ListChildComponentProps<GroupRowData>)
             onResolveRequested={data.onResolveRequested}
           />
         </Box>
-      ) : (
-        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 1, height: LOADER_HEIGHT }}>
-          <CircularProgress size={20} />
-          <Typography variant="body2">Loading more groups...</Typography>
-        </Box>
       )}
     </div>
   );
 }
-
-const groupRowKey = (index: number, data: GroupRowData) => data.groups[index]?.group_id ?? "loader";
 
 const DuplicatesPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const folder = searchParams.get("folder") || null;
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
   const gridRef = useRef<HTMLDivElement>(null);
-  const headerRef = useRef<HTMLDivElement>(null);
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const listRef = useRef<VariableSizeList<GroupRowData>>(null);
-  const rowHeights = useRef(new Map<number, number>());
-  const [viewport, setViewport] = useState({ width: 0, height: 480 });
-  const [visibleStopIndex, setVisibleStopIndex] = useState(-1);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const [rowHeights, setRowHeights] = useState(new Map<number, number>());
+  const [layoutWidth, setLayoutWidth] = useState(0);
+  const measuredWidth = useRef(0);
+  const [headerOffset, setHeaderOffset] = useState(0);
+  const [nearEnd, setNearEnd] = useState(false);
   const [masterIds, setMasterIds] = useState<Record<number, number>>({});
   const [sortBy, setSortBy] = useState<"count" | "size">("count");
   const [mediaType, setMediaType] = useState<"" | "image" | "video">("");
@@ -148,7 +139,18 @@ const DuplicatesPage: React.FC = () => {
   } = useListStore((state) => state.lists[listKey] || defaultListState) as ListState<GroupType>;
   const groups = useMemo(() => duplicateGroups.filter((group) => group.items.length > 1), [duplicateGroups]);
   const groupIds = useMemo(() => groups.map(group => group.group_id), [groups]);
-  const scrollToGroup = useCallback((index: number) => listRef.current?.scrollToItem(index, "smart"), []);
+  const measuredHeights = useMemo(() => new Map(groups.map((group, index) =>
+    [index, rowHeights.get(group.group_id) ?? ESTIMATED_GROUP_HEIGHT])), [groups, rowHeights]);
+  const { totalHeight, items: virtualRows, scrollToIndex } = useWindowVirtualRows({
+    containerRef: gridRef,
+    rowCount: groups.length,
+    estimatedHeight: ESTIMATED_GROUP_HEIGHT,
+    measuredHeights,
+    overscan: window.innerHeight * 1.5,
+    headerOffset,
+    layoutKey: `${listKey}:${layoutWidth}:${groupIds.join(",")}`,
+  });
+  const scrollToGroup = useCallback((index: number) => scrollToIndex(index, "smart"), [scrollToIndex]);
   const { focusedId, setFocusedId } = useDuplicateGroupFocus(groupIds, listKey, scrollToGroup);
   const fetchInitial = useListStore(state => state.fetchInitial);
 const loadMore = useListStore(state => state.loadMore);
@@ -158,6 +160,9 @@ const clearList = useListStore(state => state.clearList);
     listKey,
     hasMore,
     containerRef: gridRef,
+    virtualized: true,
+    orderedIds: groups.flatMap(group => group.items.map(media => media.id)),
+    loadedCount: new Set(groups.flatMap(group => group.items.map(media => media.id))).size,
     selecting: isSelecting,
     selectedIds,
     onSelectionChange: setSelected,
@@ -184,68 +189,56 @@ const clearList = useListStore(state => state.clearList);
   useUndoRefresh("duplicates-stats", async () => { setStats(await getDuplicateStats(folder)); });
 
   const mt = mediaType || undefined;
+  const headerOffsetRef = useRef(headerOffset);
+  headerOffsetRef.current = headerOffset;
 
   useEffect(() => {
     clearList(listKey);
     fetchInitial(listKey, () => getDuplicates(null, sortBy, mt, 10, minCount, folder));
-    setVisibleStopIndex(-1);
-    rowHeights.current.clear();
-    listRef.current?.scrollTo(0);
+    setRowHeights(new Map());
+    const element = gridRef.current;
+    if (element) window.scrollTo({ top: Math.max(0, element.getBoundingClientRect().top + window.scrollY - headerOffsetRef.current), behavior: "instant" });
   }, [fetchInitial, listKey, clearList, refreshKey, sortBy, mt, minCount, folder]);
 
-  // A visible loader row requests the next cursor page; the effect runs again
-  // when a short page arrives and still does not fill the viewport.
+  // Match other galleries: prefetch when the end is within 1.5 window heights.
   useEffect(() => {
-    if (hasMore && !isLoading && !listError && (groups.length === 0 || visibleStopIndex >= groups.length)) {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver(([entry]) => setNearEnd(entry.isIntersecting), infiniteScrollObserver);
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (hasMore && !isLoading && !listError && nearEnd) {
       loadMore(listKey, (cursor) => getDuplicates(cursor, sortBy, mt, 10, minCount, folder));
     }
-  }, [visibleStopIndex, groups.length, hasMore, isLoading, listError, loadMore, listKey, sortBy, mt, minCount, folder]);
+  }, [nearEnd, groups.length, hasMore, isLoading, listError, loadMore, listKey, sortBy, mt, minCount, folder]);
 
   useLayoutEffect(() => {
-    const element = viewportRef.current;
-    const header = headerRef.current;
-    if (!element || !header) return;
+    const element = gridRef.current;
+    const appBar = document.querySelector<HTMLElement>(".MuiAppBar-positionSticky");
+    if (!element) return;
     const measure = () => {
       const width = element.clientWidth;
-      const height = Math.max(240, window.innerHeight - element.getBoundingClientRect().top - (isSelecting ? 112 : 16));
-      setViewport((previous) => previous.width === width && previous.height === height ? previous : { width, height });
+      if (measuredWidth.current !== width) {
+        measuredWidth.current = width;
+        setRowHeights(new Map());
+        setLayoutWidth(width);
+      }
+      setHeaderOffset(appBar?.getBoundingClientRect().height ?? 0);
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
-    observer.observe(header);
+    if (appBar) observer.observe(appBar);
     window.addEventListener("resize", measure);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", measure);
-    };
-  }, [isSelecting]);
-
-  useLayoutEffect(() => {
-    // Offscreen measurements are invalid after responsive columns change.
-    rowHeights.current.clear();
-    listRef.current?.resetAfterIndex(0);
-  }, [viewport.width]);
-
-  useLayoutEffect(() => {
-    // Resolved/removed groups shift indices; heights remain keyed by group ID.
-    listRef.current?.resetAfterIndex(0);
-  }, [groups]);
-
-  const measureRow = useCallback((index: number, groupId: number, height: number) => {
-    if (height > 0 && rowHeights.current.get(groupId) !== height) {
-      rowHeights.current.set(groupId, height);
-      listRef.current?.resetAfterIndex(index);
-    }
+    return () => { observer.disconnect(); window.removeEventListener("resize", measure); };
   }, []);
 
-  const getRowHeight = (index: number) => {
-    const group = groups[index];
-    return group ? rowHeights.current.get(group.group_id) ?? ESTIMATED_GROUP_HEIGHT : LOADER_HEIGHT;
-  };
-
-  const handleItemsRendered = useCallback(({ visibleStopIndex }: ListOnItemsRenderedProps) => {
-    setVisibleStopIndex(visibleStopIndex);
+  const measureRow = useCallback((_index: number, groupId: number, height: number) => {
+    if (height <= 0) return;
+    setRowHeights(previous => previous.get(groupId) === height ? previous : new Map(previous).set(groupId, height));
   }, []);
 
   useEffect(() => {
@@ -357,11 +350,13 @@ const clearList = useListStore(state => state.clearList);
     },
     onResolveRequested: resolver.request,
     measureRow,
+    measurementKey: layoutWidth,
+    headerOffset,
   };
 
   return (
     <GalleryPage title="Potential Duplicates" count={duplicateGroups.length}>
-      <Box ref={headerRef} sx={{ pb: 2 }}>
+      <Box sx={{ pb: 2 }}>
         <Box sx={{ display: "flex", alignItems: "baseline", gap: 2, flexWrap: "wrap", mb: 1 }}>
 
           <Typography variant="caption" color="text.secondary">
@@ -476,30 +471,17 @@ const clearList = useListStore(state => state.clearList);
         {statsError && <Alert severity="error" sx={{ mt: 1 }}>{statsError}</Alert>}
         <ListStateView error={listError} onRetry={handleRetryLoad} />
       </Box>
-      <Box ref={viewportRef} sx={{ position: "relative", overflow: "hidden", height: viewport.height }}>
-        {groups.length > 0 && viewport.width > 0 ? (
-          <VariableSizeList<GroupRowData>
-            ref={listRef}
-            outerRef={gridRef}
-            width={viewport.width}
-            height={viewport.height}
-            itemCount={groups.length + (hasMore ? 1 : 0)}
-            itemSize={getRowHeight}
-            estimatedItemSize={ESTIMATED_GROUP_HEIGHT}
-            itemKey={groupRowKey}
-            itemData={rowData}
-            overscanCount={1}
-            onItemsRendered={handleItemsRendered}
-          >
-            {GroupRow}
-          </VariableSizeList>
-        ) : isLoading ? (
-          <ListStateView loading />
-        ) : !listError && !hasMore ? (
+      <Box ref={gridRef} sx={{ position: "relative", height: totalHeight, overflowAnchor: "none" }}>
+        {virtualRows.map(({ index, top }) => (
+          <GroupRow key={groups[index].group_id} index={index} data={rowData}
+            style={{ position: "absolute", top, left: 0, width: "100%" }} />
+        ))}
+        <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
+      </Box>
+      <Box ref={sentinelRef} sx={{ minHeight: hasMore ? LOADER_HEIGHT : 1 }}>
+        {isLoading ? <ListStateView loading /> : !listError && !hasMore && groups.length === 0 ? (
           <ListStateView empty emptyMessage="No duplicates found." />
         ) : null}
-        {/* The overlay stays outside scrolling content so scrollTop does not offset the marquee. */}
-        <MarqueeSelectionBox container={viewportRef.current} rect={marqueeRect} />
       </Box>
       <Snackbar open={resolveError !== null} autoHideDuration={8000} onClose={() => setResolveError(null)}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
