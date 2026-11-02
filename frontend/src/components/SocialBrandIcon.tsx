@@ -1,24 +1,36 @@
 import { useEffect, useState } from 'react';
 import { Box, SvgIcon } from '@mui/material';
 import LinkIcon from '@mui/icons-material/Link';
-import type { SimpleIcon } from 'simple-icons';
 import { API } from '../config';
 import type { SocialLinkPreview } from '../types';
-let catalogue: Promise<Record<string, SimpleIcon>> | undefined;
-/** Keep the vector catalogue outside the initial application module graph. */
-function loadCatalogue() {
-  return catalogue ??= import('simple-icons').then(module => Object.fromEntries(Object.values(module).filter((value): value is SimpleIcon => !!value && typeof value === 'object' && 'slug' in value && 'path' in value).map(icon => [icon.slug, icon])));
+interface BrandVector { slug: string; path: string; hex?: string }
+// One lazily loaded module per brand SVG: a person page fetches only the icons
+// it shows (a few hundred bytes each) instead of the whole 5 MB catalogue.
+const vectors = import.meta.glob<string>('../../node_modules/simple-icons/icons/*.svg', { query: '?raw', import: 'default' });
+const loaded = new Map<string, Promise<BrandVector | null>>();
+function loadVector(slug: string): Promise<BrandVector | null> {
+  const key = `../../node_modules/simple-icons/icons/${slug}.svg`;
+  let pending = loaded.get(slug);
+  if (!pending) {
+    const load = vectors[key];
+    pending = load ? load().then(svg => {
+      const path = /<path[^>]*\sd="([^"]+)"/.exec(svg)?.[1];
+      return path ? { slug, path } : null;
+    }) : Promise.resolve(null);
+    loaded.set(slug, pending);
+  }
+  return pending;
 }
 export function SocialBrandIcon({ link }: { link: Pick<SocialLinkPreview, 'platform' | 'brand'> & { brand_domain?: string } }) {
   const [failedUrl, setFailedUrl] = useState('');
-  const [resolved, setResolved] = useState<SimpleIcon | null>(null);
+  const [resolved, setResolved] = useState<BrandVector | null>(null);
   const slug = link.brand?.simple_icons_slug || link.platform;
   const manual = link.brand?.source === 'manual';
   const icon = manual ? null : (resolved?.slug === slug ? resolved : null);
   useEffect(() => {
     if (manual || !link.brand?.simple_icons_slug) return;
     let active = true;
-    void loadCatalogue().then(all => { if (active) setResolved(all[slug] || null); }).catch(() => { /* Cached site icon or generic link remains available. */ });
+    void loadVector(slug).then(vector => { if (active) setResolved(vector); }).catch(() => { /* Cached site icon or generic link remains available. */ });
     return () => { active = false; };
   }, [slug, manual, link.brand?.simple_icons_slug]);
   const colour = link.brand?.colour || icon?.hex;

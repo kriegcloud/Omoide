@@ -69,3 +69,10 @@ test('narrow graph preset retains upstream core defaults and the configured beha
   }
   assert.equal(registrations.some(name => name.startsWith('plugin:') || name.startsWith('layout:')), false);
 });
+
+test('brand icons load one SVG per slug, never the whole simple-icons catalogue', () => {
+  const fs = require('node:fs'); const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, '../src/components/SocialBrandIcon.tsx'), 'utf8');
+  require('node:assert/strict').doesNotMatch(source, /import\(\s*['"]simple-icons['"]\s*\)|from\s+['"]simple-icons['"]/);
+  require('node:assert/strict').match(source, /import\.meta\.glob[^(]*\(\s*['"][^'"]*simple-icons\/icons\/\*\.svg['"]/);
+});

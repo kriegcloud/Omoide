@@ -236,7 +236,7 @@ export const hasOperationLookup = (id: string): boolean => lookups.has(id);
  * This releases legacy intent without claiming the original write succeeded. */
 export const canRefreshOperation = (id: string): boolean => {
   const command = callbacks.get(id);
-  return Boolean(command?.reconcileUnknownAfterRefresh && (command.refreshUnknown ?? command.refresh));
+  return Boolean(command && command.reconcileUnknownAfterRefresh !== false && (command.refreshUnknown ?? command.refresh));
 };
 export async function refreshOperation(id: string): Promise<OperationRecord> {
   const command = callbacks.get(id);
