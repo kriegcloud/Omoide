@@ -21,10 +21,10 @@ import {
   SimilarPerson,
   Tag,
 } from "../types";
-import { TimelineTab } from "./TimelineTab";
+const TimelineTab = React.lazy(() => import("./TimelineTab").then(module => ({ default: module.TimelineTab })));
 import MediaAppearances from "./MediaAppearances";
-import SimilarPersonCard from "./SimilarPersonCard";
-import { TagsSection } from "./TagsSection";
+const SimilarPersonCard = React.lazy(() => import("./SimilarPersonCard"));
+const TagsSection = React.lazy(() => import("./TagsSection").then(module => ({ default: module.TagsSection })));
 const PersonRelationshipGraph = React.lazy(
   () => import("./PersonRelationshipGraph")
 );
@@ -48,7 +48,7 @@ function TabPanel({ children, value, index, ...other }: TabPanelProps) {
       id={`person-tabpanel-${index}`}
       {...other}
     >
-      {value === index && <Box sx={{ pt: 3 }}>{children}</Box>}
+      {value === index && <Box sx={{ pt: 3 }}><Suspense fallback={<CircularProgress aria-label="Loading person tab" />}>{children}</Suspense></Box>}
     </div>
   );
 }
