@@ -53,9 +53,9 @@ test('focused Enter opens confirmation only and snapshots group, selected master
     '../hotkeys/useHotkey': { useHotkeys(bindings, handler, options) { keys.push({ bindings, handler, options }); } },
     '../services/duplicates': { resolveDuplicates: async (...args) => calls.push(args) },
   });
-  let resolved = 0;
+  const requested = [];
   let props = { group: { group_id: 10, items: [{ id: 101 }, { id: 102 }] }, focused: false,
-    masterId: 102, selectedIds: new Set(), onSelectMaster() {}, onFocusGroup() {}, onGroupResolved() { resolved++; } };
+    masterId: 102, selectedIds: new Set(), onSelectMaster() {}, onFocusGroup() {}, onResolveRequested(snapshot) { requested.push(snapshot); } };
   const render = () => rt.render(() => DuplicateGroup(props));
   const dialog = tree => nodes(tree, node => node.props.title === 'Confirm Action')[0];
   render();
@@ -75,10 +75,12 @@ test('focused Enter opens confirmation only and snapshots group, selected master
     enter.handler({ key: 'Enter' });
     assert.deepEqual(calls, []);
     assert.equal(dialog(render()).props.open, true);
-    props = { ...props, masterId: 101, group: { group_id: 99, items: [{ id: 201 }, { id: 202 }] }, onGroupResolved() { throw Error('wrong callback'); } };
-    await dialog(render()).props.onConfirm();
-    assert.deepEqual(calls, [[10, 'DELETE_FILES', 102, [101, 102]]]);
-    assert.equal(resolved, 1);
+    props = { ...props, masterId: 101, group: { group_id: 99, items: [{ id: 201 }, { id: 202 }] }, onResolveRequested() { throw Error('wrong callback'); } };
+    // Optimistic: confirm hands the snapshot taken at open to the page and closes at once.
+    dialog(render()).props.onConfirm();
+    assert.deepEqual(requested, [{ action: 'DELETE_FILES', groupId: 10, masterId: 102, memberIds: [101, 102] }]);
+    assert.deepEqual(calls, [], 'the group never awaits the server');
+    assert.equal(dialog(render()).props.open, false);
     rt.unmount();
   } finally { global.requestAnimationFrame = oldRequest; global.cancelAnimationFrame = oldCancel; }
 });

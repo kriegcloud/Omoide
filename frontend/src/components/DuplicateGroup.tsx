@@ -14,7 +14,7 @@ import {
 import Grid from "@mui/material/Grid";
 import { DuplicateGroup as GroupType } from "../types";
 import { DuplicateMediaCard } from "./DuplicateMediaCard";
-import { resolveDuplicates } from "../services/duplicates";
+import type { DuplicateResolveSnapshot } from "../services/duplicateResolver";
 import ConfirmDialog from "./ConfirmDialog";
 import { useHotkeys } from "../hotkeys/useHotkey";
 import config from "../config";
@@ -24,7 +24,8 @@ interface DuplicateGroupProps {
   group: GroupType;
   focused: boolean;
   onFocusGroup: () => void;
-  onGroupResolved: () => void;
+  /** Optimistic: the page removes the group now and resolves in the background. */
+  onResolveRequested: (snapshot: DuplicateResolveSnapshot) => void;
   selecting: boolean;
   selectedIds: Set<number>;
   masterId: number;
@@ -40,7 +41,7 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
   group,
   focused,
   onFocusGroup,
-  onGroupResolved,
+  onResolveRequested,
   selecting,
   selectedIds,
   masterId,
@@ -53,41 +54,27 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
     if (validMasterId !== undefined && validMasterId !== masterId) onSelectMaster(validMasterId);
   }, [validMasterId, masterId, onSelectMaster]);
   const selectedCount = group.items.filter((media) => selectedIds.has(media.id)).length;
-  const [isProcessing, setIsProcessing] = useState(false);
   const [confirmAction, setConfirmAction] =
-    useState<{ action: ExtendedActionType; groupId: number; masterId: number | undefined; memberIds: number[]; onResolved: () => void } | null>(null);
+    useState<(DuplicateResolveSnapshot & { onResolved: (snapshot: DuplicateResolveSnapshot) => void }) | null>(null);
   const openConfirm = (action: ExtendedActionType) => {
-    if (isProcessing || confirmAction || config.PRESENTATION_MODE) return;
+    if (confirmAction || config.PRESENTATION_MODE) return;
     setConfirmAction({ action, groupId: group.group_id, masterId: validMasterId,
-      memberIds: group.items.map(item => item.id), onResolved: onGroupResolved });
+      memberIds: group.items.map(item => item.id), onResolved: onResolveRequested });
   };
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const handleResolve = async () => {
+  // Non-blocking: hand the snapshot to the page and close at once. The page
+  // removes the group immediately and reports a failure if the server rejects.
+  const handleResolve = () => {
     if (!confirmAction) return;
-
-    setIsProcessing(true);
-
-    try {
-      const requiresMaster = confirmAction.action !== "MARK_NOT_DUPLICATE";
-      if (requiresMaster && confirmAction.masterId === undefined) throw new Error("This group has no remaining master. Refresh the list.");
-      await resolveDuplicates(
-        confirmAction.groupId,
-        confirmAction.action,
-        requiresMaster ? confirmAction.masterId : undefined,
-        confirmAction.memberIds,
-      );
-
-      confirmAction.onResolved();
-    } catch (error) {
-      console.error(`Failed to resolve group ${group.group_id}:`, error);
-      setErrorMessage(
-        error instanceof Error ? error.message : "Failed to resolve group"
-      );
-    } finally {
-      setIsProcessing(false);
+    const { onResolved, ...snapshot } = confirmAction;
+    if (snapshot.action !== "MARK_NOT_DUPLICATE" && snapshot.masterId === undefined) {
+      setErrorMessage("This group has no remaining master. Refresh the list.");
       setConfirmAction(null);
+      return;
     }
+    setConfirmAction(null);
+    onResolved(snapshot);
   };
 
   const actionText: Record<ExtendedActionType, string> = {
@@ -123,7 +110,7 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
       const media = group.items[Number(event.key) - 1];
       if (media) onSelectMaster(media.id);
     }
-  }, { scope: "page", enabled: focused && !confirmAction && !isProcessing && !config.PRESENTATION_MODE,
+  }, { scope: "page", enabled: focused && !confirmAction && !config.PRESENTATION_MODE,
     when: event => event.target === groupRef.current });
 
   return (
@@ -169,7 +156,6 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
             variant="contained"
             onClick={() => openConfirm("DELETE_FILES")}
             color="error"
-            disabled={isProcessing}
           >
             Keep Master, Delete Rest (Files)
           </Button>
@@ -178,7 +164,6 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
             variant="outlined"
             color="warning"
             onClick={() => openConfirm("DELETE_RECORDS")}
-            disabled={isProcessing}
           >
             Keep Master, Delete Rest (Records)
           </Button>
@@ -187,7 +172,6 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
             variant="outlined"
             color="secondary"
             onClick={() => openConfirm("BLACKLIST_RECORDS")}
-            disabled={isProcessing}
           >
             Keep Master, Blacklist Rest
           </Button>
@@ -196,7 +180,6 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
             variant="outlined"
             color="success"
             onClick={() => openConfirm("MARK_NOT_DUPLICATE")}
-            disabled={isProcessing}
           >
             Keep All, Not Duplicates
           </Button>
@@ -221,7 +204,7 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
       {/* Confirmation Dialog */}
       <ConfirmDialog open={!!confirmAction} onClose={() => setConfirmAction(null)}
         title="Confirm Action" message={confirmAction ? `${actionText[confirmAction.action]} This action cannot be undone.` : ""}
-        loading={isProcessing} onConfirm={handleResolve} />
+        onConfirm={handleResolve} />
       <Snackbar
         open={!!errorMessage}
         autoHideDuration={6000}

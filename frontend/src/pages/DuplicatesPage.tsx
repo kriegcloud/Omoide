@@ -23,9 +23,12 @@ import {
   InputLabel,
   Select,
   MenuItem,
+  Snackbar,
 } from "@mui/material";
 import { useListStore, defaultListState, type ListState } from "../stores/useListStore";
-import { getDuplicates, getDuplicateStats } from "../services/duplicates";
+import { getDuplicates, getDuplicateStats, resolveDuplicates } from "../services/duplicates";
+import { createDuplicateResolver, pruneDuplicateGroups, type DuplicateResolveSnapshot } from "../services/duplicateResolver";
+import { mutationBus } from "../stores/mutationBus";
 import { DuplicateGroup } from "../components/DuplicateGroup";
 import type { DuplicateGroup as GroupType, DuplicateStats } from "../types";
 import { useTaskCompletionVersion, useTaskEvents } from "../TaskEventsContext";
@@ -51,7 +54,7 @@ interface GroupRowData {
   onSelectMaster: (groupId: number, mediaId: number) => void;
   onSelectionClick: React.ComponentProps<typeof DuplicateGroup>["onSelectionClick"];
   onSelectGroup: (group: GroupType, checked: boolean) => void;
-  onGroupResolved: (groupId: number) => void;
+  onResolveRequested: (snapshot: DuplicateResolveSnapshot) => void;
   measureRow: (index: number, groupId: number, height: number) => void;
 }
 
@@ -100,7 +103,7 @@ function GroupRow({ index, style, data }: ListChildComponentProps<GroupRowData>)
             onSelectMaster={(mediaId) => data.onSelectMaster(group.group_id, mediaId)}
             onSelectionClick={data.onSelectionClick}
             onSelectGroup={(checked) => data.onSelectGroup(group, checked)}
-            onGroupResolved={() => data.onGroupResolved(group.group_id)}
+            onResolveRequested={data.onResolveRequested}
           />
         </Box>
       ) : (
@@ -289,6 +292,43 @@ const clearList = useListStore(state => state.clearList);
     setStatsVersion((previous) => previous + 1);
   };
 
+  // Optimistic resolution: the group leaves the list (and focus advances) the
+  // moment the user confirms; the server works in the background. Latest
+  // page state is read through a ref so the resolver is created once.
+  const [resolvingCount, setResolvingCount] = useState(0);
+  const [resolveError, setResolveError] = useState<string | null>(null);
+  const resolverState = useRef({ handleGroupResolved, listKey, sortBy, mt, minCount, folder });
+  resolverState.current = { handleGroupResolved, listKey, sortBy, mt, minCount, folder };
+  const resolver = useMemo(() => createDuplicateResolver({
+    resolve: resolveDuplicates,
+    removeGroup: (snapshot) => resolverState.current.handleGroupResolved(snapshot.groupId),
+    onSettled: () => setStatsVersion((previous) => previous + 1),
+    onError: (snapshot, error) => setResolveError(`Group ${snapshot.groupId} was not resolved: ${error.message}`),
+    refresh: () => {
+      const current = resolverState.current;
+      useListStore.getState().clearList(current.listKey);
+      void useListStore.getState().fetchInitial(current.listKey, () =>
+        getDuplicates(null, current.sortBy, current.mt, 10, current.minCount, current.folder));
+      setStatsVersion((previous) => previous + 1);
+    },
+    onPendingChange: setResolvingCount,
+  }), []);
+
+  // Media deleted anywhere (e.g. the selection bar's "Delete files…") must
+  // leave the loaded groups now, not after a refresh.
+  useEffect(() => mutationBus.subscribe((event) => {
+    if (event.type !== "media:deleted") return;
+    const key = resolverState.current.listKey;
+    const list = useListStore.getState().lists[key];
+    if (!list) return;
+    const { groups: pruned, changed } = pruneDuplicateGroups(list.items as GroupType[], event.ids);
+    if (!changed) return;
+    useListStore.setState((state) => ({
+      lists: { ...state.lists, [key]: { ...state.lists[key], items: pruned } },
+    }));
+    setStatsVersion((previous) => previous + 1);
+  }), []);
+
   const handleRetryLoad = () => {
     clearList(listKey);
     fetchInitial(listKey, () => getDuplicates(null, sortBy, mt, 10, minCount, folder));
@@ -314,7 +354,7 @@ const clearList = useListStore(state => state.clearList);
       beginSelecting();
       setSelected(next);
     },
-    onGroupResolved: handleGroupResolved,
+    onResolveRequested: resolver.request,
     measureRow,
   };
 
@@ -326,6 +366,13 @@ const clearList = useListStore(state => state.clearList);
           <Typography variant="caption" color="text.secondary">
             Selection covers loaded rows only
           </Typography>
+          {resolvingCount > 0 && (
+            <Typography variant="caption" color="primary" role="status" aria-live="polite"
+              sx={{ display: "inline-flex", alignItems: "center", gap: 0.75 }}>
+              <CircularProgress size={10} thickness={6} color="inherit" />
+              Resolving {resolvingCount} {resolvingCount === 1 ? "group" : "groups"}…
+            </Typography>
+          )}
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
           <Box sx={{ flexGrow: 1 }}>
@@ -453,6 +500,10 @@ const clearList = useListStore(state => state.clearList);
         {/* The overlay stays outside scrolling content so scrollTop does not offset the marquee. */}
         <MarqueeSelectionBox container={viewportRef.current} rect={marqueeRect} />
       </Box>
+      <Snackbar open={resolveError !== null} autoHideDuration={8000} onClose={() => setResolveError(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
+        <Alert severity="error" variant="filled" onClose={() => setResolveError(null)}>{resolveError}</Alert>
+      </Snackbar>
     </Box>
   );
 };
