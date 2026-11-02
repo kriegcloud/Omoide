@@ -543,7 +543,7 @@ export default function DatasetDetailPage() {
   return (
     <GalleryPage title={dataset.name} count={dataset.item_count ?? items.length} sx={{ pb: 12 }}
       tabs={      <Tabs value={tab} onChange={(_, value) => setTab(value)} sx={{ mb: 2 }}><Tab label={`Items (${dataset.item_count ?? items.length})`} /><Tab label="Analysis" /><Tab label={`Exports (${exports.length})`} /><Tab label={`Runs (${runs.length})`} /><Tab label="Captions" /></Tabs>}
-      sort={tab === 0 && (            <FormControl size="small" sx={{ minWidth: 180, ml: "auto" }}><InputLabel>Sort</InputLabel><Select label="Sort" value={sort} onChange={(event) => setSort(event.target.value)}><MenuItem value="position">Position</MenuItem><MenuItem value="sharpness">Sharpness</MenuItem><MenuItem value="frontality">Frontality</MenuItem><MenuItem value="face_ratio">Face ratio</MenuItem><MenuItem value="identity_distance">Identity distance</MenuItem><MenuItem value="brightness">Brightness</MenuItem></Select></FormControl>)}
+      sort={tab === 0 && (            <FormControl size="small" sx={{ minWidth: 180, ml: "auto" }}><InputLabel>Sort</InputLabel><Select inputProps={{ "aria-label": "Sort" }} label="Sort" value={sort} onChange={(event) => setSort(event.target.value)}><MenuItem value="position">Position</MenuItem><MenuItem value="sharpness">Sharpness</MenuItem><MenuItem value="frontality">Frontality</MenuItem><MenuItem value="face_ratio">Face ratio</MenuItem><MenuItem value="identity_distance">Identity distance</MenuItem><MenuItem value="brightness">Brightness</MenuItem></Select></FormControl>)}
       selection={tab === 0 && (<StickySelectionToolbar sx={{ p: 1, mb: 2 }} selectedCount={selection.selectedIds.size} onClearSelection={() => selection.setSelected([])}>          <Stack direction="row" spacing={1} alignItems="center"  flexWrap="wrap" useFlexGap>
             <Button variant="outlined" onClick={selection.toggleSelecting}>{selection.isSelecting ? "Cancel selection" : "Select items"}</Button>
             {selection.isSelecting && <Typography color="text.secondary">{selection.selectedIds.size} selected</Typography>}
@@ -561,14 +561,14 @@ export default function DatasetDetailPage() {
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2} mt={2}>
               <TextField label="Trigger word" value={dataset.trigger_word} onChange={(event) => setDataset({ ...dataset, trigger_word: event.target.value })} fullWidth />
               <TextField label="Class" value={dataset.class_token} onChange={(event) => setDataset({ ...dataset, class_token: event.target.value })} fullWidth />
-              <FormControl fullWidth><InputLabel>Caption source</InputLabel><Select label="Caption source" value={dataset.caption_source} onChange={(event) => setDataset({ ...dataset, caption_source: event.target.value as TrainingDataset["caption_source"] })}><MenuItem value="annotation">Annotation</MenuItem><MenuItem value="template">Template only</MenuItem><MenuItem value="none">None</MenuItem></Select></FormControl>
+              <FormControl fullWidth><InputLabel>Caption source</InputLabel><Select inputProps={{ "aria-label": "Caption source" }} label="Caption source" value={dataset.caption_source} onChange={(event) => setDataset({ ...dataset, caption_source: event.target.value as TrainingDataset["caption_source"] })}><MenuItem value="annotation">Annotation</MenuItem><MenuItem value="template">Template only</MenuItem><MenuItem value="none">None</MenuItem></Select></FormControl>
             </Stack>
             <TextField sx={{ mt: 2 }} label="Caption template" value={dataset.caption_template} onChange={(event) => setDataset({ ...dataset, caption_template: event.target.value })} fullWidth disabled={dataset.caption_source === "none"} />
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2} mt={2}>
               <TextField type="number" label="Target resolution" value={dataset.target_resolution} onChange={(event) => setDataset({ ...dataset, target_resolution: Number(event.target.value) })} />
               <TextField label="Buckets" value={bucketText} onChange={(event) => setBucketText(event.target.value)} helperText="Comma-separated long sides" />
               <TextField type="number" label="Repeats" value={dataset.repeats} onChange={(event) => setDataset({ ...dataset, repeats: Number(event.target.value) })} />
-              <FormControl sx={{ minWidth: 160 }}><InputLabel>Default layout</InputLabel><Select label="Default layout" value={dataset.export_layout} onChange={(event) => setDataset({ ...dataset, export_layout: event.target.value as DatasetExportLayout })}><MenuItem value="ai_toolkit">ai-toolkit</MenuItem><MenuItem value="kohya">Kohya</MenuItem><MenuItem value="onetrainer">OneTrainer</MenuItem></Select></FormControl>
+              <FormControl sx={{ minWidth: 160 }}><InputLabel>Default layout</InputLabel><Select inputProps={{ "aria-label": "Default layout" }} label="Default layout" value={dataset.export_layout} onChange={(event) => setDataset({ ...dataset, export_layout: event.target.value as DatasetExportLayout })}><MenuItem value="ai_toolkit">ai-toolkit</MenuItem><MenuItem value="kohya">Kohya</MenuItem><MenuItem value="onetrainer">OneTrainer</MenuItem></Select></FormControl>
             </Stack>
           </Box>
           <Button startIcon={<SaveIcon />} variant="contained" disabled={saving} onClick={() => void saveSettings()}>Save</Button>
@@ -640,7 +640,7 @@ export default function DatasetDetailPage() {
       {tab === 2 && (
         <Stack spacing={2}>
           <Stack direction="row" spacing={1} alignItems="center">
-            <FormControl size="small" sx={{ minWidth: 160 }}><InputLabel>Layout</InputLabel><Select label="Layout" value={exportLayout} onChange={(event) => setExportLayout(event.target.value as DatasetExportLayout)}><MenuItem value="ai_toolkit">ai-toolkit</MenuItem><MenuItem value="kohya">Kohya</MenuItem><MenuItem value="onetrainer">OneTrainer</MenuItem></Select></FormControl>
+            <FormControl size="small" sx={{ minWidth: 160 }}><InputLabel>Layout</InputLabel><Select inputProps={{ "aria-label": "Layout" }} label="Layout" value={exportLayout} onChange={(event) => setExportLayout(event.target.value as DatasetExportLayout)}><MenuItem value="ai_toolkit">ai-toolkit</MenuItem><MenuItem value="kohya">Kohya</MenuItem><MenuItem value="onetrainer">OneTrainer</MenuItem></Select></FormControl>
             <Button variant="contained" startIcon={<FileDownloadIcon />} onClick={createExport}>Export now</Button>
           </Stack>
           {exports.length === 0 ? <Typography color="text.secondary">No exports yet.</Typography> : exports.map((entry) => (
@@ -674,7 +674,7 @@ export default function DatasetDetailPage() {
           <TextField type="number" label="Minimum frontality" value={autoInput.min_frontality ?? ""} onChange={(event) => setAutoInput({ ...autoInput, min_frontality: event.target.value === "" ? undefined : Number(event.target.value) })} inputProps={{ min: 0, max: 1, step: 0.05 }} />
           <TextField type="number" label="Minimum sharpness" value={autoInput.min_sharpness ?? ""} onChange={(event) => setAutoInput({ ...autoInput, min_sharpness: event.target.value === "" ? undefined : Number(event.target.value) })} />
           <TextField type="number" label="Maximum other people" value={autoInput.max_other_people ?? ""} onChange={(event) => setAutoInput({ ...autoInput, max_other_people: event.target.value === "" ? undefined : Number(event.target.value) })} />
-          <FormControl><InputLabel>Duplicates</InputLabel><Select label="Duplicates" value={autoInput.drop_duplicates ? "drop" : "keep"} onChange={(event) => setAutoInput({ ...autoInput, drop_duplicates: event.target.value === "drop" })}><MenuItem value="drop">Keep only the best</MenuItem><MenuItem value="keep">Allow duplicates</MenuItem></Select></FormControl>
+          <FormControl><InputLabel>Duplicates</InputLabel><Select inputProps={{ "aria-label": "Duplicates" }} label="Duplicates" value={autoInput.drop_duplicates ? "drop" : "keep"} onChange={(event) => setAutoInput({ ...autoInput, drop_duplicates: event.target.value === "drop" })}><MenuItem value="drop">Keep only the best</MenuItem><MenuItem value="keep">Allow duplicates</MenuItem></Select></FormControl>
           {previewExcluded != null && <Alert severity="info">Preview: {autoInput.target_count} requested, {previewExcluded} items would be excluded.</Alert>}
         </Stack></DialogContent>
         <DialogActions><Button onClick={() => setAutoOpen(false)}>Cancel</Button><Button onClick={previewAuto}>Preview</Button><Button variant="contained" onClick={applyAuto}>Apply</Button></DialogActions>
@@ -682,7 +682,7 @@ export default function DatasetDetailPage() {
 
       <Dialog open={regularizationOpen} onClose={() => setRegularizationOpen(false)} fullWidth maxWidth="xs">
         <DialogTitle>Build regularization set</DialogTitle>
-        <DialogContent><Stack spacing={2} sx={{ mt: 1 }}><TextField type="number" label="Target count" value={regularizationCount} onChange={(event) => setRegularizationCount(Number(event.target.value))} /><FormControl><InputLabel>Gender</InputLabel><Select label="Gender" value={regularizationGender} onChange={(event) => setRegularizationGender(event.target.value)}><MenuItem value="">Subject default</MenuItem><MenuItem value="female">Woman</MenuItem><MenuItem value="male">Man</MenuItem></Select></FormControl></Stack></DialogContent>
+        <DialogContent><Stack spacing={2} sx={{ mt: 1 }}><TextField type="number" label="Target count" value={regularizationCount} onChange={(event) => setRegularizationCount(Number(event.target.value))} /><FormControl><InputLabel>Gender</InputLabel><Select inputProps={{ "aria-label": "Gender" }} label="Gender" value={regularizationGender} onChange={(event) => setRegularizationGender(event.target.value)}><MenuItem value="">Subject default</MenuItem><MenuItem value="female">Woman</MenuItem><MenuItem value="male">Man</MenuItem></Select></FormControl></Stack></DialogContent>
         <DialogActions><Button onClick={() => setRegularizationOpen(false)}>Cancel</Button><Button variant="contained" onClick={buildRegularization}>Build</Button></DialogActions>
       </Dialog>
 

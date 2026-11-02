@@ -547,7 +547,7 @@ export default function DatasetTriagePage() {
               <Button component={RouterLink} to={`/dataset/${datasetId}`} size="small">← Dataset</Button>
               <FormControl size="small" sx={{ minWidth: 125, ml: "auto" }}>
                 <InputLabel>Filter</InputLabel>
-                <Select label="Filter" value={filter} disabled={busy} onChange={(event) => setSearchParams(event.target.value === "all" ? {} : { filter: event.target.value })}>
+                <Select inputProps={{ "aria-label": "Filter" }} label="Filter" value={filter} disabled={busy} onChange={(event) => setSearchParams(event.target.value === "all" ? {} : { filter: event.target.value })}>
                   <MenuItem value="all">All</MenuItem>
                   <MenuItem value="findings">Findings</MenuItem>
                   <MenuItem value="excluded">Excluded</MenuItem>

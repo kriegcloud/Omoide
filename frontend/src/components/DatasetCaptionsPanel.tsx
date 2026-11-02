@@ -241,7 +241,7 @@ export default function DatasetCaptionsPanel({
         </Button>
         <FormControl size="small" sx={{ minWidth: 180 }}>
           <InputLabel>Filter</InputLabel>
-          <Select
+          <Select inputProps={{ "aria-label": "Filter" }}
             label="Filter"
             value={filter}
             onChange={(event) =>

@@ -1616,7 +1616,7 @@ export default function ConfigurationPage() {
           <Grid size={{ xs: 12, sm: 6 }}>
             <TextField
               label="Clip Model"
-              value={`${config.ai.clip_model} (${config.ai.clip_model_embedding_size}-d)`}
+              value={Number.isFinite(config.ai.clip_model_embedding_size) && config.ai.clip_model_embedding_size > 0 ? `${config.ai.clip_model} (${config.ai.clip_model_embedding_size}-d)` : config.ai.clip_model}
               fullWidth
               margin="normal"
               InputProps={{ readOnly: true }}

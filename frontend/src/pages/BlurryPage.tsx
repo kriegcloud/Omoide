@@ -186,7 +186,7 @@ const BlurryPage: React.FC = () => {
             <Typography variant="subtitle2" gutterBottom>
               Blur threshold: <strong>{pendingThreshold}</strong>
             </Typography>
-            <Slider
+            <Slider aria-label="Blur threshold"
               value={pendingThreshold}
               onChange={(_, v) => setPendingThreshold(v as number)}
               onChangeCommitted={applyThreshold}
@@ -205,7 +205,7 @@ const BlurryPage: React.FC = () => {
           </Box>
           <FormControl size="small" sx={{ minWidth: 140 }}>
             <InputLabel>Media type</InputLabel>
-            <Select
+            <Select inputProps={{ "aria-label": "Media type" }}
               label="Media type"
               value={mediaType}
               onChange={(e) => setMediaType(e.target.value as "" | "image" | "video")}

@@ -131,7 +131,7 @@ const ShortVideosPage: React.FC = () => {
         <Typography variant="subtitle2" gutterBottom>
           Max duration: <strong>{formatDuration(pendingDuration)}</strong>
         </Typography>
-        <Slider
+        <Slider aria-label="Maximum video duration"
           value={pendingDuration}
           onChange={(_, v) => setPendingDuration(v as number)}
           onChangeCommitted={(_, v) => setMaxDuration(v as number)}

@@ -603,7 +603,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
           <Stack spacing={2} sx={{ mt: 1 }}>
             <FormControl fullWidth>
               <InputLabel>Dataset export</InputLabel>
-              <Select label="Dataset export" value={exportId} onChange={(event) => setExportId(Number(event.target.value))}>
+              <Select inputProps={{ "aria-label": "Dataset export" }} label="Dataset export" value={exportId} onChange={(event) => setExportId(Number(event.target.value))}>
                 {completedExports.map((entry) => (
                   <MenuItem key={entry.id} value={entry.id}>
                     {new Date(entry.created_at).toLocaleString()} · {entry.item_count} items · {entry.layout}
@@ -613,7 +613,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
             </FormControl>
             <FormControl fullWidth>
               <InputLabel>Base model</InputLabel>
-              <Select label="Base model" value={baseModel} onChange={(event) => setBaseModel(event.target.value)}>
+              <Select inputProps={{ "aria-label": "Base model" }} label="Base model" value={baseModel} onChange={(event) => setBaseModel(event.target.value)}>
                 {presets.map((preset) => (
                   <MenuItem key={preset.id} value={preset.id} disabled={!preset.available}>
                     <Box>
@@ -682,7 +682,7 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
           <Stack spacing={2} sx={{ mt: 1 }}>
             <FormControl fullWidth>
               <InputLabel>Checkpoint</InputLabel>
-              <Select label="Checkpoint" value={evalCheckpoint} onChange={(event) => setEvalCheckpoint(event.target.value)}>
+              <Select inputProps={{ "aria-label": "Checkpoint" }} label="Checkpoint" value={evalCheckpoint} onChange={(event) => setEvalCheckpoint(event.target.value)}>
                 {(evalDialogRun?.checkpoints ?? []).map((checkpoint) => <MenuItem key={checkpoint} value={checkpoint}>{checkpoint}</MenuItem>)}
               </Select>
             </FormControl>

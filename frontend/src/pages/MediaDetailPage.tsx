@@ -515,8 +515,10 @@ export default function MediaDetailPage() {
         backdrop: { sx: { backgroundColor: (theme) => `rgba(0,0,0,${theme.palette.mode === 'dark' ? 0.85 : 0.8})` } },
         paper: {
           sx: {
-            mt: { xs: 0, sm: 4, md: 8 },
-            borderRadius: { xs: 0, sm: 2 },
+            // Full-screen (below md) must start at y=0 and fit the viewport; the
+            // sm margin pushed the bottom 32px off-screen at 600-899px (R3-04).
+            mt: isMobile ? 0 : { xs: 0, sm: 4, md: 8 },
+            borderRadius: isMobile ? 0 : { xs: 0, sm: 2 },
           },
         },
       }}

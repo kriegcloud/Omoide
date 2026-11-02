@@ -103,7 +103,7 @@ export default function RepairDialog({
         <Stack spacing={2} sx={{ mt: 0.5 }}>
           <FormControl fullWidth>
             <InputLabel>Repair</InputLabel>
-            <Select label="Repair" value={profile} onChange={(event) => setProfile(event.target.value as RepairProfile)}>
+            <Select inputProps={{ "aria-label": "Repair" }} label="Repair" value={profile} onChange={(event) => setProfile(event.target.value as RepairProfile)}>
               <MenuItem value="omoide-remove-text-v1">Remove overlays</MenuItem>
               <MenuItem value="omoide-upscale-v1">Upscale</MenuItem>
               {personId != null && <MenuItem value="omoide-remove-people-v1">Remove other people</MenuItem>}
@@ -129,7 +129,7 @@ export default function RepairDialog({
                   {prompts.length > 0 && (
                     <FormControl fullWidth>
                       <InputLabel>Prompt preset</InputLabel>
-                      <Select
+                      <Select inputProps={{ "aria-label": "Prompt preset" }}
                         label="Prompt preset"
                         value={prompts.includes(prompt) ? prompt : ""}
                         onChange={(event) => setPrompt(event.target.value)}

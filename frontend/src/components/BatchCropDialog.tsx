@@ -150,7 +150,7 @@ export default function BatchCropDialog({
           <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ sm: "center" }}>
             <FormControl size="small" sx={{ minWidth: 160 }}>
               <InputLabel>Aspect</InputLabel>
-              <Select label="Aspect" value={aspect} onChange={(event) => setAspect(event.target.value as CropAspect)}>
+              <Select inputProps={{ "aria-label": "Aspect" }} label="Aspect" value={aspect} onChange={(event) => setAspect(event.target.value as CropAspect)}>
                 {ASPECTS.map((value) => <MenuItem key={value} value={value}>{value === "free" ? "Free" : value}</MenuItem>)}
               </Select>
             </FormControl>

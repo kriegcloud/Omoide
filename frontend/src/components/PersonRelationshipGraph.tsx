@@ -1389,7 +1389,7 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
             >
               Force link distance: {spacingDraft}px
             </Typography>
-            <Slider
+            <Slider aria-label="Force link distance" getAriaValueText={(value) => `${value} px`}
               size="small"
               min={MIN_SPACING}
               max={MAX_SPACING}
@@ -1414,7 +1414,7 @@ const PersonRelationshipGraph: React.FC<PersonRelationshipGraphProps> = ({
             >
               Minimum shared photos: {minWeightDraft}
             </Typography>
-            <Slider
+            <Slider aria-label="Minimum shared photos"
               size="small"
               min={weightSummary.min}
               max={weightSummary.max}

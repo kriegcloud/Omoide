@@ -340,7 +340,7 @@ const MissingFilesPage: React.FC = () => {
             <TableHead>
               <TableRow>
                 <TableCell padding="checkbox">
-                  <Checkbox
+                  <Checkbox inputProps={{ "aria-label": "Select all visible missing files" }} disabled={items.length === 0}
                     indeterminate={
                       selectedCount > 0 && selectedCount < items.length
                     }
@@ -367,7 +367,7 @@ const MissingFilesPage: React.FC = () => {
                 return (
                   <TableRow key={item.id} hover selected={selected}>
                     <TableCell padding="checkbox">
-                      <Checkbox
+                      <Checkbox inputProps={{ "aria-label": `Select ${item.filename || `item ${item.id}`}` }}
                         checked={selected}
                         onChange={() => toggleSelection(item.id)}
                       />

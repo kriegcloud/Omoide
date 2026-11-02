@@ -126,7 +126,7 @@ const UntaggedPage: React.FC = () => {
         <Stack direction="row" spacing={2} alignItems="center">
           <FormControl size="small" sx={{ minWidth: 140 }}>
             <InputLabel>Media type</InputLabel>
-            <Select
+            <Select inputProps={{ "aria-label": "Media type" }}
               label="Media type"
               value={mediaType}
               onChange={(e) => setMediaType(e.target.value as "" | "image" | "video")}

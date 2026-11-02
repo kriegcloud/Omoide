@@ -178,7 +178,7 @@ const PersonReviewPage: React.FC<{ kind: "nofaces" | "nopersons" }> = ({ kind })
         <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ sm: "center" }}>
           {faces && <FormControl size="small" sx={{ minWidth: 200 }}>
             <InputLabel>Scope</InputLabel>
-            <Select
+            <Select inputProps={{ "aria-label": "Scope" }}
               label="Scope"
               value={scope}
               onChange={(e) => setFilter("scope", e.target.value)}
@@ -189,7 +189,7 @@ const PersonReviewPage: React.FC<{ kind: "nofaces" | "nopersons" }> = ({ kind })
           </FormControl>}
           <FormControl size="small" sx={{ minWidth: 140 }}>
             <InputLabel>Media type</InputLabel>
-            <Select
+            <Select inputProps={{ "aria-label": "Media type" }}
               label="Media type"
               value={mediaType}
               onChange={(e) => setFilter("media_type", e.target.value)}

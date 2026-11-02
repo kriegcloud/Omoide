@@ -277,7 +277,7 @@ const BrokenMediaPage: React.FC = () => {
             <TableHead>
               <TableRow>
                 <TableCell padding="checkbox">
-                  <Checkbox
+                  <Checkbox inputProps={{ "aria-label": "Select all visible broken media" }} disabled={items.length === 0}
                     indeterminate={selectedCount > 0 && !allVisibleSelected}
                     checked={allVisibleSelected}
                     onChange={() =>
@@ -298,7 +298,7 @@ const BrokenMediaPage: React.FC = () => {
                 return (
                   <TableRow key={item.id} hover selected={selected}>
                     <TableCell padding="checkbox">
-                      <Checkbox
+                      <Checkbox inputProps={{ "aria-label": `Select ${item.filename || `item ${item.id}`}` }}
                         checked={selected}
                         onChange={() => toggleSelection(item.id)}
                       />

@@ -397,7 +397,7 @@ const clearList = useListStore(state => state.clearList);
           />
           <FormControl size="small" sx={{ minWidth: 140 }}>
             <InputLabel>Media Type</InputLabel>
-            <Select
+            <Select inputProps={{ "aria-label": "Media Type" }}
               value={mediaType}
               label="Media Type"
               onChange={(e) => setMediaType(e.target.value as "" | "image" | "video")}
@@ -409,7 +409,7 @@ const clearList = useListStore(state => state.clearList);
           </FormControl>
           <FormControl size="small" sx={{ minWidth: 160 }}>
             <InputLabel>Sort By</InputLabel>
-            <Select
+            <Select inputProps={{ "aria-label": "Sort By" }}
               value={sortBy}
               label="Sort By"
               onChange={(e) => setSortBy(e.target.value as "count" | "size")}
@@ -420,7 +420,7 @@ const clearList = useListStore(state => state.clearList);
           </FormControl>
           <FormControl size="small" sx={{ minWidth: 160 }}>
             <InputLabel>Min. Copies</InputLabel>
-            <Select
+            <Select inputProps={{ "aria-label": "Min. Copies" }}
               value={minCount}
               label="Min. Copies"
               onChange={(e) => setMinCount(Number(e.target.value))}

@@ -162,7 +162,7 @@ const LowResolutionPage: React.FC = () => {
               Max resolution: <strong>{pendingMp.toFixed(pendingMp < 1 ? 2 : 1)} MP</strong>
               {" "}({Math.round(pendingMp * 1_000_000).toLocaleString()} px)
             </Typography>
-            <Slider
+            <Slider aria-label="Maximum resolution in megapixels"
               value={pendingMp}
               onChange={(_, v) => setPendingMp(v as number)}
               onChangeCommitted={(_, v) => setMaxMp(v as number)}
@@ -177,7 +177,7 @@ const LowResolutionPage: React.FC = () => {
           </Box>
           <FormControl size="small" sx={{ minWidth: 140 }}>
             <InputLabel>Media type</InputLabel>
-            <Select
+            <Select inputProps={{ "aria-label": "Media type" }}
               label="Media type"
               value={mediaType}
               onChange={(e) => setMediaType(e.target.value as "" | "image" | "video")}

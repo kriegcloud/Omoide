@@ -364,7 +364,7 @@ export function PersonContentTabs({
                 <Typography variant="caption" color="text.secondary">
                   Limit: {suggestedFacesLimit}
                 </Typography>
-                <Slider
+                <Slider aria-label="Suggestion limit"
                   value={suggestedFacesLimit}
                   min={10}
                   max={300}
