@@ -1,0 +1,27 @@
+[project]
+name = "omoide-vision"
+version = "0.1.0"
+description = "Isolated SigLIP 2 SO400M and TOPIQ-NR ROCm worker for Omoide"
+requires-python = "==3.12.*"
+dependencies = [
+  "torch @ https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2/torch-2.9.1%2Brocm7.2.0.lw.git7e1940d4-cp312-cp312-linux_x86_64.whl",
+  "torchvision @ https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2/torchvision-0.24.0%2Brocm7.2.0.gitb919bd0c-cp312-cp312-linux_x86_64.whl",
+  "triton @ https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2/triton-3.5.1%2Brocm7.2.0.gita272dfa8-cp312-cp312-linux_x86_64.whl",
+  "open_clip_torch==3.3.0",
+  "pyiqa==0.1.16",
+  "numpy",
+  "pillow",
+]
+
+[project.scripts]
+omoide-vision = "omoide_vision.service:main"
+
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["omoide_vision"]
+
+[tool.hatch.metadata]
+allow-direct-references = true

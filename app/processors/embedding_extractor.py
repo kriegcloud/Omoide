@@ -44,7 +44,10 @@ class EmbeddingExtractor(MediaProcessor):
 
             for i, img in enumerate(chunk):
                 try:
-                    preprocessed.append(self._clip.preprocess(img))
+                    # Validate decoding while retaining raw pixels for the socket path.
+                    if isinstance(img, Image.Image):
+                        img.load()
+                    preprocessed.append(img)
                     valid_in_chunk.append(i)
                 except OSError as e:
                     logger.error(
@@ -54,7 +57,7 @@ class EmbeddingExtractor(MediaProcessor):
             if not preprocessed:
                 continue
 
-            features_np = self._clip.encode_pixels(np.stack(preprocessed))
+            features_np = self._clip.encode_images(preprocessed)
 
             for feat_i, chunk_i in enumerate(valid_in_chunk):
                 results[chunk_start + chunk_i] = features_np[feat_i]

@@ -18,7 +18,7 @@ from pathlib import Path
 from urllib.request import urlopen
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 from app.accelerators import create_onnx_session
 from app.logger import logger
@@ -125,6 +125,9 @@ class ClipEncoder:
         )
 
         self.embedding_size = int(config["embed_dim"])
+        self._resize_mode = preprocess_cfg.get("resize_mode", "shortest")
+        if self._resize_mode not in ("squash", "shortest"):
+            raise ValueError(f"Unsupported CLIP resize mode: {self._resize_mode}")
         self._image_size = int(preprocess_cfg["size"][0])
         self._resample = _RESAMPLING[preprocess_cfg.get("interpolation", "bicubic")]
         self._mean = np.array(preprocess_cfg["mean"], dtype=np.float32)[:, None, None]
@@ -160,13 +163,15 @@ class ClipEncoder:
         self._textual_input = self._textual.get_inputs()[0]
 
     def preprocess(self, image: Image.Image | np.ndarray) -> np.ndarray:
-        """Resize the shortest side, center-crop and normalize to CHW float32."""
+        """Honor the export resize mode and normalize to CHW float32."""
         if not isinstance(image, Image.Image):
             image = Image.fromarray(image)
-        image = image.convert("RGB")
+        image = ImageOps.exif_transpose(image).convert("RGB")
         size = self._image_size
         width, height = image.size
-        if width <= height:
+        if getattr(self, "_resize_mode", "shortest") == "squash":
+            new_w, new_h = size, size
+        elif width <= height:
             new_w, new_h = size, int(size * height / width)
         else:
             new_w, new_h = int(size * width / height), size
@@ -211,6 +216,53 @@ class ClipEncoder:
         return _normalize(features)
 
 
+class ServiceClipEncoder:
+    """Model-checked sidecar routing with a lazy CPU ONNX fallback."""
+
+    def __init__(self, model, client, fallback_factory):
+        self.embedding_size = model.embedding_size
+        self._model = model
+        self._client = client
+        self._fallback_factory = fallback_factory
+        self._fallback_encoder = None
+        self._fallback_lock = threading.Lock()
+        self._warned = False
+
+    def _fallback(self):
+        with self._fallback_lock:
+            if self._fallback_encoder is None:
+                self._fallback_encoder = self._fallback_factory()
+            return self._fallback_encoder
+
+    def _encode(self, action, values):
+        from app.services.vision_client import VisionError
+
+        if not len(values):
+            return np.empty((0, self.embedding_size), dtype=np.float32)
+        if self._client.available(self._model.hf_repo, self.embedding_size):
+            try:
+                return getattr(self._client, action.replace("encode_", "embed_"))(values, self._model.hf_repo, self.embedding_size)
+            except (VisionError, OSError, ValueError):
+                self._client.invalidate()
+                if not self._warned:
+                    logger.warning("Vision inference failed; falling back to CPU ONNX")
+                    self._warned = True
+        return getattr(self._fallback(), action)(values)
+
+    def encode_images(self, images):
+        return self._encode("encode_images", images)
+
+    def encode_texts(self, texts):
+        return self._encode("encode_texts", texts)
+
+    def preprocess(self, image):
+        return self._fallback().preprocess(image)
+
+    def encode_pixels(self, pixels):
+        # Compatibility for callers holding already normalized ONNX pixels.
+        return self._fallback().encode_pixels(pixels)
+
+
 _clip_lock = threading.Lock()
 _clip_encoder: ClipEncoder | None = None
 
@@ -223,12 +275,19 @@ def get_clip_encoder() -> ClipEncoder:
             from app.config import settings
 
             logger.info("Loading CLIP encoder (lazy)...")
-            model_dir = ensure_model_files(
-                settings.ai.clip_model.hf_repo, settings.general.models_dir
-            )
-            _clip_encoder = ClipEncoder(
-                model_dir, prefer_gpu=settings.processors.prefer_gpu
-            )
+            from app.services.vision_client import get_vision_client
+
+            model = settings.ai.clip_model
+            models_dir = settings.general.models_dir
+
+            def fallback():
+                model_dir = ensure_model_files(model.hf_repo, models_dir)
+                return ClipEncoder(model_dir, prefer_gpu=False)
+
+            client = get_vision_client()
+            # Health is checked per encode call with a short cached TTL.
+            _clip_encoder = ServiceClipEncoder(model, client, fallback)
+
         return _clip_encoder
 
 

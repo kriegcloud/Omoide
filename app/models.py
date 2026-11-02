@@ -285,6 +285,7 @@ class Media(SQLModel, table=True):
 
     is_favorite: bool = Field(default=False)
     phash: str | None = Field(index=True)
+    quality_score: float | None = Field(default=None, nullable=True, index=True)
     laplacian_score: float | None = Field(
         default=None, nullable=True, index=True
     )

@@ -329,47 +329,52 @@ def ensure_vec_tables(*, target_engine=None, clip_model=None):
 
     target = target_engine if target_engine is not None else engine
     model = clip_model if clip_model is not None else settings.ai.clip_model
-    dim_media = model.embedding_size
     validate_clip_vector_space(model, target_engine=target)
     with target.begin() as conn:
-        conn.exec_driver_sql(
-            f"""
-            CREATE VIRTUAL TABLE IF NOT EXISTS media_embeddings
-            USING vec0(
-                media_id  integer primary key,
-                embedding float[{dim_media}]
-            );
-            """
-        )
-        conn.exec_driver_sql(
-            """
-            CREATE VIRTUAL TABLE IF NOT EXISTS face_embeddings
-            USING vec0(
-                face_id   integer primary key,
-                person_id integer,
-                embedding float[512]
-            );
-            """
-        )
-        conn.exec_driver_sql(
-            """
-            CREATE VIRTUAL TABLE IF NOT EXISTS person_embeddings
-            USING vec0(
-                person_id integer,
-                embedding float[512]
-               );
-            """
-        )
-        conn.exec_driver_sql(
-            f"""
-            CREATE VIRTUAL TABLE IF NOT EXISTS scene_embeddings
-            USING vec0(
-                scene_id integer primary key,
-                media_id integer,
-                embedding float[{dim_media}]
-            );
-            """
-        )
+        create_vec_tables(conn, model)
+
+
+def create_vec_tables(conn, model):
+    """Create vector tables inside an existing transaction (including rebuilds)."""
+    dim_media = model.embedding_size
+    conn.exec_driver_sql(
+        f"""
+        CREATE VIRTUAL TABLE IF NOT EXISTS media_embeddings
+        USING vec0(
+            media_id  integer primary key,
+            embedding float[{dim_media}]
+        );
+        """
+    )
+    conn.exec_driver_sql(
+        """
+        CREATE VIRTUAL TABLE IF NOT EXISTS face_embeddings
+        USING vec0(
+            face_id   integer primary key,
+            person_id integer,
+            embedding float[512]
+        );
+        """
+    )
+    conn.exec_driver_sql(
+        """
+        CREATE VIRTUAL TABLE IF NOT EXISTS person_embeddings
+        USING vec0(
+            person_id integer,
+            embedding float[512]
+           );
+        """
+    )
+    conn.exec_driver_sql(
+        f"""
+        CREATE VIRTUAL TABLE IF NOT EXISTS scene_embeddings
+        USING vec0(
+            scene_id integer primary key,
+            media_id integer,
+            embedding float[{dim_media}]
+        );
+        """
+    )
 
 
 def safe_commit(session, retries=5, delay=0.5):

@@ -69,6 +69,8 @@ def _media_processing_conditions() -> list:
     for name, column in flag_columns.items():
         if name in active_processors:
             conditions.append(column.is_(False))
+    if "quality" in active_processors:
+        conditions.append(col(Media.quality_score).is_(None))
     if "blur" in active_processors:
         conditions.append(col(Media.laplacian_score).is_(None))
     return conditions
@@ -200,7 +202,7 @@ def _process_one(proc, media: Media, scenes: list, session: Session, task_id: st
         if not proc.process(media, session, scenes=scenes):
             return _processor_failure(media, session, proc.name, media.processing_error or "processor returned failure")
         condition = getattr(proc, "get_pending_condition", lambda: None)()
-        if condition is not None:
+        if condition is not None and not getattr(proc, "allows_pending_result", False):
             session.flush()
             pending = session.exec(select(Media.id).where(Media.id == media.id, condition)).first()
             if pending is not None:
@@ -685,6 +687,8 @@ def edit_processor_names() -> list[str]:
         names.append("embedding_extractor")
     if settings.tagging.auto_tagging:
         names.append("auto_tagger")
+    if settings.processors.quality_processor_active:
+        names.append("quality")
     if settings.processors.blur_processor_active:
         names.append("blur")
     if settings.processors.exif_processor_active:

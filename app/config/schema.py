@@ -118,6 +118,10 @@ def _is_within(path: Path, base: Path) -> bool:
 
 
 class ClipModel(Enum):
+    SIGLIP2_SO400M = (
+        "ViT-SO400M-16-SigLIP2-384", 1152, "webli",
+        "immich-app/ViT-SO400M-16-SigLIP2-384__webli",
+    )
     ROBERTA_LARGE_VIT_H_14 = (
         "xlm-roberta-large-ViT-H-14",
         1024,
@@ -795,6 +799,7 @@ class ContentProcessorSettings(BaseModel):
     image_embedding_processor_active: bool = True
     # compute Laplacian variance for blur detection during media processing
     blur_processor_active: bool = True
+    quality_processor_active: bool = True
     # number of media rows processed per batch when running the heavy pipeline
     media_batch_size: int = 125
     # use GPU acceleration when available (CUDA/MPS for CLIP, CUDA/DML for InsightFace)
@@ -804,7 +809,14 @@ class ContentProcessorSettings(BaseModel):
     embedding_batch_size: int = 16
 
 
+class VisionSettings(BaseModel):
+    enabled: bool = True
+    socket_path: Path = Path("/app/data/run/omoide-vision.sock")
+    timeout: float = Field(default=60.0, gt=0, le=600)
+
+
 class AppSettings(BaseModel):
+    vision: VisionSettings = Field(default_factory=VisionSettings)
     general: GeneralSettings = Field(default_factory=GeneralSettings)
     scan: ScanSettings = Field(default_factory=ScanSettings)
     ai: AISettings = Field(default_factory=AISettings)
