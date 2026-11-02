@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { IconButton, Tooltip } from "@mui/material";
 import FavoriteIcon from "@mui/icons-material/Favorite";
 import FavoriteBorderIcon from "@mui/icons-material/FavoriteBorder";
+import PersonOutlineIcon from "@mui/icons-material/PersonOutline";
 import config from "../config";
 import { optimisticOperations, projectEntity } from "../stores/optimisticOperations";
 import { startPeopleMutation, setPersonFavorite } from "../services/personActions";
@@ -54,7 +55,9 @@ export default function PersonCard({
       patches: [{ kind: "fields", key: `person:${person.id}`, values: { is_favorite: next } }],
     });
   };
-  const fallbackName = person.name || "Unknown";
+  // Unnamed auto-clustered people get a distinguishable label instead of a wall of "Unknown".
+  const unnamed = !person.name;
+  const fallbackName = person.name || `Unnamed #${person.id}`;
 
   const thumbnail = useFaceThumbnail(projected?.profile_face);
   const thumbUrl = thumbnail.src;
@@ -104,8 +107,8 @@ export default function PersonCard({
       )}
       sx={{
         color: "common.white",
-        background: (themeParam) =>
-          `linear-gradient(135deg, ${themeParam.palette.primary.main}, ${themeParam.palette.primary.dark})`,
+        // Neutral backing: object-fit letterboxing showed the brand gradient as a green stripe.
+        bgcolor: (themeParam) => themeParam.palette.mode === "dark" ? "grey.900" : "grey.300",
       }}
     >
       {thumbUrl && (
@@ -123,9 +126,13 @@ export default function PersonCard({
             height: "100%",
           }}
         >
-          <Typography variant="h4" fontWeight="bold">
-            {getInitials(fallbackName)}
-          </Typography>
+          {unnamed ? (
+            <PersonOutlineIcon sx={{ fontSize: 56, color: "text.disabled" }} />
+          ) : (
+            <Typography variant="h4" fontWeight="bold" color="text.secondary">
+              {getInitials(fallbackName)}
+            </Typography>
+          )}
         </Box>
       )}
 
@@ -144,7 +151,7 @@ export default function PersonCard({
           p: 1,
         }}
       >
-        <Typography variant="subtitle1" fontWeight="bold" lineHeight={1.2}>
+        <Typography variant="subtitle1" fontWeight={unnamed ? 500 : "bold"} lineHeight={1.2} sx={unnamed ? { opacity: 0.75, fontStyle: "italic" } : undefined}>
           {fallbackName}
         </Typography>
         <Typography
