@@ -1,7 +1,8 @@
+import { startOperation, optimisticOperations, projectList, acknowledgeQuery, operationVersion } from "../stores/optimisticOperations";
 import GalleryPage from "../components/GalleryPage";
 import Gallery from "../components/Gallery";
 import { useMutationRefresh } from "../context/UndoContext";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   Alert,
   Box,
@@ -27,13 +28,18 @@ import { useGridSelection } from "../hooks/useMarqueeSelection";
 import { deleteAlbumsBulk } from "../services/albums";
 
 export default function AlbumsPage() {
-  const [albums, setAlbums] = useState<Album[]>([]);
+  const [baseAlbums, setAlbums] = useState<Album[]>([]);
+  useSyncExternalStore(optimisticOperations.subscribe, optimisticOperations.getSnapshot, optimisticOperations.getSnapshot);
+  const [pendingAlbums, setPendingAlbums] = useState<Album[]>([]);
+  const creating = useRef(false);
+  const nextTemporaryId = useRef(-1);
+  const albums = projectList("albums", "album", [...pendingAlbums, ...baseAlbums]).items;
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteTargets, setDeleteTargets] = useState<number[] | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
   const selection = useEntitySelection<number>();
@@ -50,10 +56,11 @@ export default function AlbumsPage() {
   const requestVersion = useRef(0);
   const load = useCallback(async () => {
     const version = ++requestVersion.current;
+    const fence = operationVersion();
     setIsLoading(true); setError(null);
     try {
       const albums = await getAlbums();
-      if (version === requestVersion.current) setAlbums(albums);
+      if (version === requestVersion.current) { setAlbums(albums); acknowledgeQuery("albums", fence); }
     } catch (err) {
       if (version === requestVersion.current) setError(err instanceof Error ? err.message : "Failed to load albums");
     } finally {
@@ -70,34 +77,51 @@ export default function AlbumsPage() {
     pruneTo(albums.map((album) => album.id));
   }, [albums, pruneTo]);
 
-  const handleCreate = async () => {
+  const handleCreate = () => {
     const trimmed = name.trim();
-    if (!trimmed) return;
-    setBusy(true);
-    try {
-      await createAlbum(trimmed);
-      setName("");
-      setCreateOpen(false);
-      load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create album");
-    } finally {
-      setBusy(false);
-    }
+    if (!trimmed || creating.current) return;
+    creating.current = true;
+    const provisional: Album = { id: nextTemporaryId.current--, name: trimmed, description: null,
+      created_at: new Date().toISOString(), media_count: 0, cover_thumbnail: null };
+    setPendingAlbums(previous => [provisional, ...previous]);
+    setCreateOpen(false); setName(""); setBusy(true);
+    const operation = startOperation({
+      label: `Create album ${trimmed}`, input: { name: trimmed },
+      resources: [`album:new:${trimmed}`], patches: [],
+      request: async input => {
+        const created = await createAlbum(input.name);
+        setAlbums(previous => [created, ...previous.filter(row => row.id !== created.id)]);
+        setPendingAlbums(previous => previous.filter(row => row.id !== provisional.id));
+        return created;
+      },
+    });
+    void operation.done.then(record => {
+      if (record.state === "rejected") setPendingAlbums(previous => previous.filter(row => row.id !== provisional.id));
+      creating.current = false; setBusy(false);
+    });
   };
 
-  const handleDeleteSelected = async () => {
+  const handleDeleteSelected = () => {
+    if (!deleteTargets?.length) return;
+    const ids = [...deleteTargets];
+    setDeleteTargets(null);
     setIsDeleting(true);
-    try {
-      const result = await deleteAlbumsBulk(Array.from(selection.selectedIds));
-      const deleted = new Set(result.deleted_ids);
-      setAlbums((previous) => previous.filter((album) => !deleted.has(album.id)));
-      setDeleteOpen(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete albums");
-    } finally {
-      setIsDeleting(false);
-    }
+    const operation = startOperation({
+      label: "Delete selected albums",
+      input: { ids }, resources: ids.map(id => `album:${id}` as const),
+      patches: ids.map(id => ({ kind: "remove" as const, key: `album:${id}` as const, query: "albums" })),
+      request: async (input, operationId) => {
+        const result = await deleteAlbumsBulk(input.ids);
+        setAlbums(previous => previous.filter(album => !result.deleted_ids.includes(album.id)));
+        return { result, operationId };
+      },
+      receipt: ({ result, operationId }) => ({
+        operation_id: operationId, state: result.skipped_ids.length ? "partial" : "succeeded",
+        applied: result.deleted_ids.map(id => `album:${id}`),
+        skipped: result.skipped_ids.map(id => ({ key: `album:${id}`, reason: "not_found" })), failed: [], unknown: [],
+      }),
+    });
+    void operation.done.then(() => setIsDeleting(false));
   };
 
   return (
@@ -129,7 +153,7 @@ export default function AlbumsPage() {
               color="error"
               size="small"
               disabled={selection.selectedIds.size === 0 || isDeleting}
-              onClick={() => setDeleteOpen(true)}
+              onClick={() => setDeleteTargets(Array.from(selection.selectedIds))}
             >
               Delete Selected
             </Button>
@@ -151,7 +175,7 @@ export default function AlbumsPage() {
         </Alert>
       )}
 
-      {isLoading ? (
+      {isLoading && albums.length === 0 ? (
         <Box textAlign="center" py={6}>
           <CircularProgress />
         </Box>
@@ -164,7 +188,9 @@ export default function AlbumsPage() {
       ) : (
         <Box ref={gridRef} sx={{ position: "relative" }}><Gallery>
           {albums.map((album) => (
-            <AlbumCard
+            album.id < 0 ? <Box key={album.id} role="status" sx={{ p: 2, color: "text.secondary" }}>
+              <CircularProgress size={16} sx={{ mr: 1 }} />{album.name} — Saving…
+            </Box> : <AlbumCard
               key={album.id}
               album={album}
               selecting={selection.selectionMode}
@@ -210,13 +236,13 @@ export default function AlbumsPage() {
         </DialogActions>
       </Dialog>
       <ConfirmDialog
-        open={deleteOpen}
+        open={deleteTargets !== null}
         title="Delete Selected Albums"
-        message={`Delete ${selection.selectedIds.size} selected album${selection.selectedIds.size === 1 ? "" : "s"}? The media itself will stay in your library.`}
+        message={`Delete ${deleteTargets?.length ?? 0} selected album${deleteTargets?.length === 1 ? "" : "s"}? The media itself will stay in your library.`}
         confirmLabel="Delete"
         loading={isDeleting}
         onConfirm={handleDeleteSelected}
-        onClose={() => setDeleteOpen(false)}
+        onClose={() => setDeleteTargets(null)}
       />
     </GalleryPage>
   );

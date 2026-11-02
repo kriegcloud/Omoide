@@ -1,6 +1,6 @@
 import { useUndo, useMutationRefresh } from "../context/UndoContext";
-import { getAlbumMemberIds } from "../services/albums";
-import React, { useEffect, useState } from "react";
+import { startOperation } from "../stores/optimisticOperations";
+import React, { useEffect, useState, useRef } from "react";
 import {
   Alert,
   Box,
@@ -40,6 +40,7 @@ export const AddToAlbumDialog: React.FC<Props> = ({
   const { push, refreshVisible } = useUndo();
   const [albums, setAlbums] = useState<Album[]>([]);
   const [loading, setLoading] = useState(false);
+  const submitting = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
@@ -61,54 +62,53 @@ export const AddToAlbumDialog: React.FC<Props> = ({
     return () => { active = false; };
   }, [open, revision]);
 
-  const offerUndo = (album: Album, addedIds: number[]) => {
+  const offerUndo = (album: Album, addedIds: number[], operationId: string) => {
     if (!addedIds.length) return;
     push({
       label: `Added ${addedIds.length} item(s) to ${album.name}`,
+      operationId,
       undo: async () => {
-        await removeMediaFromAlbum(album.id, addedIds);
-        await refreshVisible();
+        const result = await startOperation({
+          label: `Undo adding items to ${album.name}`, input: { id: album.id, ids: addedIds },
+          resources: [`album:${album.id}`, ...addedIds.map(id => `media:${id}` as const)], patches: [],
+          request: input => removeMediaFromAlbum(input.id, input.ids), refresh: refreshVisible,
+        }).done;
+        if (result.state !== "committed") throw new Error(result.error ?? "Album Undo needs reconciliation");
       },
     });
   };
 
-  const addTo = async (albumId: number) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const requestedIds = [...mediaIds];
-      const existing = await getAlbumMemberIds(albumId);
-      const album = await addMediaToAlbum(albumId, requestedIds);
-      const addedIds = requestedIds.filter((id) => !existing.has(id));
-      offerUndo(album, addedIds);
-      onAdded(album);
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add media");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const createAndAdd = async () => {
+  const submit = (albumId?: number) => {
     const name = newName.trim();
-    if (!name) return;
+    if (submitting.current || (albumId === undefined && !name)) return;
+    submitting.current = true;
+    const requestedIds = [...new Set(mediaIds)];
     setBusy(true);
-    setError(null);
-    try {
-      const album = await createAlbum(name);
-      const addedIds = [...mediaIds];
-      const updated = await addMediaToAlbum(album.id, addedIds);
-      offerUndo(updated, addedIds);
-      setNewName("");
-      onAdded(updated);
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create album");
-    } finally {
-      setBusy(false);
-    }
+    onClose();
+    const operation = startOperation({
+      label: albumId === undefined ? `Create album ${name} and add items` : "Add items to album",
+      input: { albumId, name, requestedIds },
+      resources: [`album:${albumId ?? `new:${name}`}`, ...requestedIds.map(id => `media:${id}` as const)],
+      patches: [],
+      request: async (input, operationId) => {
+        // A created album is retained if membership fails: it may already be shared.
+        const target = input.albumId ?? (await createAlbum(input.name)).id;
+        const album = await addMediaToAlbum(target, input.requestedIds);
+        offerUndo(album, album.added_ids, operationId);
+        onAdded(album);
+        return { album, operationId };
+      },
+      receipt: ({ album, operationId }) => ({
+        operation_id: operationId, state: album.skipped_ids.length ? (album.added_ids.length ? "partial" : "failed") : "succeeded",
+        applied: album.added_ids.map(id => `media:${id}`),
+        skipped: album.skipped_ids.map(id => ({ key: `media:${id}`, reason: "already_member_or_missing" })), failed: [], unknown: [],
+      }),
+    });
+    void operation.done.then(() => { submitting.current = false; setBusy(false); });
+    setNewName("");
   };
+  const addTo = (albumId: number) => submit(albumId);
+  const createAndAdd = () => submit();
 
   return (
     <Dialog open={open} onClose={busy ? undefined : onClose} fullWidth maxWidth="xs">

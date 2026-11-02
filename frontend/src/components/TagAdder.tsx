@@ -1,9 +1,10 @@
 import { useMutationRefresh } from "../context/UndoContext";
-import React, { useState, useEffect } from "react";
-import { TextField, Autocomplete, CircularProgress } from "@mui/material";
+import React, { useState, useEffect, useRef } from "react";
+import { TextField, Autocomplete, CircularProgress, Box, Chip } from "@mui/material";
 import { Tag } from "../types";
 import { getTags } from "../services/tag";
 import { searchTags } from "../services/search";
+import { startOperation } from "../stores/optimisticOperations";
 import { createTag, assignTag } from "../services/tagging";
 
 type OwnerType = "media" | "person";
@@ -30,6 +31,14 @@ export default function TagAdder({
 }: TagAdderProps) {
   // Options come from a server-side search of the typed input so the
   // duplicate check is not limited to the first page of tags.
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const pendingRef = useRef(new Map<string, Tag>());
+  const [pendingTags, setPendingTags] = useState(new Map<string, Tag>());
+  const nextTemporaryId = useRef(-1);
+  const latest = useRef({ ownerId, ownerType, onTagAdded });
+  latest.current = { ownerId, ownerType, onTagAdded };
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [options, setOptions] = useState<Tag[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [loading, setLoading] = useState(false);
@@ -48,10 +57,10 @@ export default function TagAdder({
           : getTags(null);
         request
           .then((page) => {
-            if (!cancelled) setOptions(page.items ?? []);
+            if (!cancelled) { setOptions(page.items ?? []); setLoadError(null); }
           })
           .catch((error) => {
-            if (!cancelled) console.error("Failed to load tags:", error);
+            if (!cancelled) setLoadError(error instanceof Error ? error.message : "Failed to load tags");
           })
           .finally(() => {
             if (!cancelled) setLoading(false);
@@ -96,26 +105,32 @@ export default function TagAdder({
       return;
     }
 
-    // Find the tag in the search results or create it
-    let tagToAssign = options.find(
-      (t) => t.name.toLowerCase() === finalTagName
-    );
-    if (!tagToAssign) {
-      try {
-        tagToAssign = await createTag(finalTagName);
-      } catch (error) {
-        console.error("Error creating tag:", error);
-        return;
-      }
-    }
-
-    // Assign the tag
-    try {
-      await assignTag(ownerType, ownerId, tagToAssign!.id);
-      onTagAdded(tagToAssign);
-    } catch (error) {
-      console.error("Error assigning tag:", error);
-    }
+    const token = `${ownerType}:${ownerId}:${finalTagName}`;
+    if (pendingRef.current.has(token)) return;
+    const known = (typeof newValue === "object" && newValue.id !== undefined
+      ? newValue as Tag : options.find(t => t.name.toLowerCase() === finalTagName));
+    const provisional = known ?? { id: nextTemporaryId.current--, name: finalTagName } as Tag;
+    pendingRef.current.set(token, provisional);
+    setPendingTags(new Map(pendingRef.current));
+    setInputValue("");
+    const operation = startOperation({
+      label: `Assign tag ${finalTagName}`,
+      input: { ownerType, ownerId, name: finalTagName, known },
+      resources: [`${ownerType}:${ownerId}`, `tag:${finalTagName}`], patches: [],
+      request: async (input) => {
+        const tag = input.known ?? await createTag(input.name);
+        // Resolve the provisional identity before assignment. Failed assignment
+        // never deletes the successfully created shared tag.
+        pendingRef.current.set(token, tag); setPendingTags(new Map(pendingRef.current));
+        await assignTag(input.ownerType, input.ownerId, tag.id);
+        const current = latest.current;
+        if (mounted.current && current.ownerId === input.ownerId && current.ownerType === input.ownerType) current.onTagAdded(tag);
+        return tag;
+      },
+    });
+    void operation.done.then(() => {
+      pendingRef.current.delete(token); setPendingTags(new Map(pendingRef.current));
+    });
   };
 
   const availableOptions = options.filter(
@@ -123,6 +138,10 @@ export default function TagAdder({
   );
 
   return (
+    <Box>
+    {[...pendingTags.entries()].filter(([token]) => token.startsWith(`${ownerType}:${ownerId}:`)).map(([token, tag]) => (
+      <Chip key={token} label={`${tag.name} — Saving…`} size="small" sx={{ mb: 1, mr: 1 }} />
+    ))}
     <Autocomplete
       fullWidth
       freeSolo
@@ -178,6 +197,8 @@ export default function TagAdder({
           variant="filled"
           size="small"
           placeholder="Add or create a tag..."
+          error={!!loadError}
+          helperText={loadError}
           InputProps={{
             ...params.InputProps,
             endAdornment: (
@@ -192,5 +213,6 @@ export default function TagAdder({
         />
       )}
     />
+    </Box>
   );
 }

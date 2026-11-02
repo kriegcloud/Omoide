@@ -1,3 +1,4 @@
+import { DefinitiveMutationError } from "../stores/optimisticOperations";
 import { mutationBus } from "../stores/mutationBus";
 import {
   Album,
@@ -63,6 +64,12 @@ export const getCameras = async (
 
 // ---------- albums ----------
 
+export interface AlbumMembershipResult extends Album {
+  added_ids: number[];
+  removed_ids: number[];
+  skipped_ids: number[];
+}
+
 export const getAlbums = async (signal?: AbortSignal): Promise<Album[]> =>
   apiFetch<Album[]>("/api/albums", {
     errorMessage: "Failed to load albums",
@@ -86,7 +93,7 @@ export const createAlbum = async (
     method: "POST",
     body: { name, description },
     errorMessage: "Failed to create album",
-  }).then((result) => {
+  }).catch(rejectValidation).then((result) => {
     mutationBus.emit({ type: "album:changed", ids: [result.id] });
     return result;
   });
@@ -99,7 +106,7 @@ export const updateAlbum = async (
     method: "PATCH",
     body: patch,
     errorMessage: "Failed to update album",
-  }).then((result) => {
+  }).catch(rejectValidation).then((result) => {
     mutationBus.emit({ type: "album:changed", ids: [id] });
     return result;
   });
@@ -108,7 +115,7 @@ export const deleteAlbum = async (id: number): Promise<void> =>
   apiFetch<void>(`/api/albums/${id}`, {
     method: "DELETE",
     errorMessage: "Failed to delete album",
-  }).then((result) => {
+  }).catch(rejectValidation).then((result) => {
     mutationBus.emit({ type: "album:changed", ids: [id] });
     return result;
   });
@@ -116,12 +123,12 @@ export const deleteAlbum = async (id: number): Promise<void> =>
 export const addMediaToAlbum = async (
   id: number,
   mediaIds: number[]
-): Promise<Album> =>
-  apiFetch<Album>(`/api/albums/${id}/media`, {
+): Promise<AlbumMembershipResult> =>
+  apiFetch<AlbumMembershipResult>(`/api/albums/${id}/media`, {
     method: "POST",
     body: { media_ids: mediaIds },
     errorMessage: "Failed to add media to album",
-  }).then((result) => {
+  }).catch(rejectValidation).then((result) => {
     mutationBus.emit({ type: "album:changed", ids: [id] });
     mutationBus.emit({ type: "list:invalidate", prefix: "" });
     return result;
@@ -130,12 +137,12 @@ export const addMediaToAlbum = async (
 export const removeMediaFromAlbum = async (
   id: number,
   mediaIds: number[]
-): Promise<Album> =>
-  apiFetch<Album>(`/api/albums/${id}/media`, {
+): Promise<AlbumMembershipResult> =>
+  apiFetch<AlbumMembershipResult>(`/api/albums/${id}/media`, {
     method: "DELETE",
     body: { media_ids: mediaIds },
     errorMessage: "Failed to remove media from album",
-  }).then((result) => {
+  }).catch(rejectValidation).then((result) => {
     mutationBus.emit({ type: "album:changed", ids: [id] });
     mutationBus.emit({ type: "list:invalidate", prefix: "" });
     return result;
@@ -252,3 +259,12 @@ export const startGeocodePlaces = async (): Promise<Task> =>
     method: "POST",
     errorMessage: "Failed to start geocoding",
   });
+
+/** These routes reject validation/permission/missing targets before any write.
+ * Commit/transport errors (including 409/500) remain uncertain. */
+function rejectValidation(error: unknown): never {
+  if (error instanceof Error && "status" in error && [400, 403, 404, 422].includes(Number(error.status))) {
+    throw new DefinitiveMutationError(error.message);
+  }
+  throw error;
+}

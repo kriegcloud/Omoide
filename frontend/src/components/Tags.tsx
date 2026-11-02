@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { startOperation } from "../stores/optimisticOperations";
 import { Link } from "react-router-dom";
 import { Media, Tag } from "../types";
 import { Person } from "../types";
@@ -17,28 +18,39 @@ export interface TagsProps {
 
 export function Tags({ media, person, onUpdate }: Readonly<TagsProps>) {
   const owner = media || person;
+  const ownerType = media ? "media" : "person";
+  const latest = useRef({ owner, ownerType, onUpdate });
+  latest.current = { owner, ownerType, onUpdate };
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const pendingRef = useRef(new Set<string>());
+  const [pending, setPending] = useState(new Set<string>());
   if (!owner) {
     return null;
   }
 
-  const handleRemove = async (tagToRemove: Tag) => {
-    try {
-      if (media) {
-        await removeTagFromMedia(media.id, tagToRemove.id);
-        onUpdate({
-          ...media,
-          tags: media.tags.filter((t) => t.id !== tagToRemove.id),
-        });
-      } else if (person) {
-        await removeTagFromPerson(person.id, tagToRemove.id);
-        onUpdate({
-          ...person,
-          tags: person.tags.filter((t) => t.id !== tagToRemove.id),
-        });
-      }
-    } catch (error) {
-      console.error("Failed to remove tag:", error);
-    }
+  const handleRemove = (tagToRemove: Tag) => {
+    const ownerType = media ? "media" : "person";
+    const target = owner.id;
+    const token = `${ownerType}:${target}:${tagToRemove.id}`;
+    if (pendingRef.current.has(token)) return;
+    pendingRef.current.add(token); setPending(new Set(pendingRef.current));
+    const operation = startOperation({
+      label: `Remove tag ${tagToRemove.name}`,
+      input: { target, tagId: tagToRemove.id },
+      resources: [`${ownerType}:${target}`, `tag:${tagToRemove.id}`], patches: [],
+      request: async ({ target, tagId }) => {
+        if (ownerType === "media") await removeTagFromMedia(target, tagId);
+        else await removeTagFromPerson(target, tagId);
+        const current = latest.current;
+        if (mounted.current && current.owner?.id === target && current.ownerType === ownerType) {
+          current.onUpdate({ ...current.owner, tags: (current.owner.tags ?? []).filter(t => t.id !== tagId) });
+        }
+      },
+    });
+    void operation.done.then(() => {
+      pendingRef.current.delete(token); setPending(new Set(pendingRef.current));
+    });
   };
   return (
     <Box component="section" sx={{ mt: 2 }}>
@@ -46,7 +58,7 @@ export function Tags({ media, person, onUpdate }: Readonly<TagsProps>) {
         Tags
       </Typography>
       <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
-        {(owner.tags ?? []).map((tag) => (
+        {(owner.tags ?? []).filter(tag => !pending.has(`${media ? "media" : "person"}:${owner.id}:${tag.id}`)).map((tag) => (
           <Chip
             key={tag.id}
             label={tag.name}
