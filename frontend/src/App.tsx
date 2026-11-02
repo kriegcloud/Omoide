@@ -1,3 +1,4 @@
+import GridImageEditor from "./components/GridImageEditor";
 import React, { useMemo } from "react";
 import { BrowserRouter as Router } from "react-router-dom";
 import { ThemeProvider as MuiThemeProvider, CssBaseline } from "@mui/material";
@@ -25,6 +26,7 @@ export default function App() {
               <HotkeyProvider>
                 <ScrollToTop />
                 <AppRoutes />
+                <GridImageEditor />
                 <MutationFeedback />
               </HotkeyProvider>
             </Router>

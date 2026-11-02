@@ -37,7 +37,7 @@ function harness(relative, overrides = {}) {
   const stubs = {
     react: {__esModule: true, default: react, ...react},
     'react/jsx-runtime': {jsx, jsxs: jsx},
-    'react-router-dom': {useParams: () => ({id: routeId}), useLocation: () => location, useNavigate: () => (...args) => navigations.push(args)},
+    'react-router-dom': {useParams: () => ({id: routeId}), useLocation: () => location, useNavigate: () => (...args) => navigations.push(args), useSearchParams: () => [new URLSearchParams(), () => {}]},
     '@mui/material': ui,
     '../stores/useListStore': {useListStore: (selector) => selector ? selector(store) : store},
     '../context/UndoContext': {useUndoRefresh: () => {}, useMutationRefresh: () => {}},
@@ -51,7 +51,16 @@ function harness(relative, overrides = {}) {
   };
   const code = ts.transpileModule(fs.readFileSync(path.join(root, relative), 'utf8'), {compilerOptions: {target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true}}).outputText;
   const module = {exports: {}};
-  const requireStub = (id) => stubs[id] || {__esModule: true, default: component(id.split('/').pop()), [id.split('/').pop()]: component(id.split('/').pop())};
+  const urlModule = {};
+  const loadUrl = (id) => {
+    if (urlModule[id]) return urlModule[id];
+    const file = path.join(root, 'frontend/src', id.replace('../', '') + '.ts');
+    const js = ts.transpileModule(fs.readFileSync(file, 'utf8'), {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}}).outputText;
+    const mod = {exports: {}};
+    new Function('require', 'module', 'exports', js)(requireStub, mod, mod.exports);
+    return urlModule[id] = mod.exports;
+  };
+  const requireStub = (id) => stubs[id] || (id === '../hooks/useEditorUrlState' || id === '../utils/editorUrlState' ? loadUrl(id) : null) || {__esModule: true, default: component(id.split('/').pop()), [id.split('/').pop()]: component(id.split('/').pop())};
   new Function('require', 'module', 'exports', 'document', code)(requireStub, module, module.exports, document);
   return {render(props) {cursor = 0; hotkeys.length = 0; return (module.exports.default || module.exports.MediaContentTabs || module.exports.SelectionActionBar)(props);}, state, media, deleted, removed, navigations, hotkeys, location, changeRoute(id) {routeId = String(id);}, openChild() {childOpen = true;}};
 }

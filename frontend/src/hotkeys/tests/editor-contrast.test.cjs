@@ -97,3 +97,28 @@ for (const mode of ['light', 'dark']) {
     });
   }
 }
+
+const { buildEditorTheme } = loadTypeScript('src/utils/editorTheme.ts');
+const colorSource = fs.readFileSync(path.join(frontend, 'node_modules/@scaleflex/ui/utils/types/palette/color.js'), 'utf8');
+const paletteKeys = [...colorSource.matchAll(/: '([^']+)'/g)].map(match => match[1]);
+for (const mode of ['light', 'dark']) {
+  test(`${mode} editor maps the installed Scaleflex palette and readable control states`, () => {
+    const theme = getTheme(mode);
+    const { palette: p, typography } = buildEditorTheme(theme);
+    for (const key of [...paletteKeys, 'bg-primary-active', 'icons-primary', 'access-primary']) {
+      assert.ok(p[key], `missing ${key}`);
+    }
+    assert.equal(typography.fontFamily, theme.typography.fontFamily);
+    for (const bg of ['bg-primary', 'bg-secondary', 'bg-stateless', 'bg-active', 'bg-hover', 'bg-primary-hover', 'bg-primary-active', 'bg-tooltip']) {
+      for (const fg of ['txt-primary', 'txt-secondary', 'txt-placeholder', 'btn-secondary-text', 'txt-warning', 'txt-error', 'txt-info', 'accent-primary-active']) {
+        assert.ok(contrast(p[fg], p[bg]) >= 4.5, `${fg} on ${bg}`);
+      }
+      for (const fg of ['icon-primary', 'icons-primary', 'icons-secondary', 'icons-primary-hover', 'icons-muted', 'borders-primary', 'borders-item', 'accent-primary-active']) {
+        assert.ok(contrast(p[fg], p[bg]) >= 3, `${fg} on ${bg}`);
+      }
+    }
+    for (const bg of ['accent-primary', 'accent-primary-hover', 'accent-primary-active']) {
+      assert.ok(contrast(p['btn-primary-text'], p[bg]) >= 4.5, `button text on ${bg}`);
+    }
+  });
+}

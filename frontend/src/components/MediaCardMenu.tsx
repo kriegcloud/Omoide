@@ -1,7 +1,8 @@
-import { lazy, Suspense, MouseEvent, useEffect, useRef, useState } from "react";
+import { useEditorUrlState } from "../hooks/useEditorUrlState";
+import { useLocation } from "react-router-dom";
+import { MouseEvent, useEffect, useRef, useState } from "react";
 import {
   Alert,
-  CircularProgress,
   Divider,
   IconButton,
   ListItemIcon,
@@ -25,7 +26,6 @@ import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
 import BuildIcon from "@mui/icons-material/Build";
 import config from "../config";
 import { Media, MediaPreview } from "../types";
-import { getMedia } from "../services/media";
 import {
   deleteMediaFile,
   deleteMediaRecord,
@@ -45,7 +45,6 @@ import RepairDialog from "./RepairDialog";
 import { startRepair } from "../services/repairs";
 import type { RepairProfile } from "../types";
 
-const ImageEditorDialog = lazy(() => import("./ImageEditorDialog"));
 
 export interface MediaPersonContext {
   personId: number;
@@ -84,7 +83,8 @@ export default function MediaCardMenu({
   } | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [favorite, setFavorite] = useState(!!media.is_favorite);
-  const [editorMedia, setEditorMedia] = useState<Media | null>(null);
+  const { patch: patchEditor } = useEditorUrlState();
+  const location = useLocation();
   const [snackbar, setSnackbar] = useState<{ message: string; severity: "success" | "error" } | null>(null);
 
   useEffect(() => setFavorite(!!media.is_favorite), [media.id, media.is_favorite]);
@@ -138,18 +138,9 @@ export default function MediaCardMenu({
     }
   };
 
-  const openEditor = async () => {
+  const openEditor = () => {
     closeMenu();
-    setBusy(true);
-    try {
-      const detail = await getMedia(String(media.id));
-      setEditorMedia(detail.media);
-      setDialog("edit");
-    } catch (error) {
-      fail(error, "Failed to load image editor");
-    } finally {
-      setBusy(false);
-    }
+    patchEditor({ edit: String(media.id) }, false, { ...location.state, editorListKey: mediaListKey });
   };
 
   const confirmRename = async (filename: string) => {
@@ -346,23 +337,6 @@ export default function MediaCardMenu({
         onClose={() => setDialog(null)}
         onConfirm={(filename) => void confirmRename(filename)}
       />
-      {editorMedia && dialog === "edit" && (
-        <Suspense fallback={<CircularProgress size={24} />}>
-          <ImageEditorDialog
-            open={dialog === "edit"}
-            media={editorMedia}
-            mediaListKey={mediaListKey}
-            onClose={() => setDialog(null)}
-            onSaved={(detail, mode) => {
-              if (mode === "overwrite") applyMedia(detail.media);
-              setSnackbar({
-                message: mode === "overwrite" ? "Original image updated" : "Edited copy saved",
-                severity: "success",
-              });
-            }}
-          />
-        </Suspense>
-      )}
       <FolderPickerDialog
         open={dialog === "move"}
         loading={busy}

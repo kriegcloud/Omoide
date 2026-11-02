@@ -1,3 +1,5 @@
+import { useEditorUrlState } from "../hooks/useEditorUrlState";
+import { positiveId } from "../utils/editorUrlState";
 import { useVisiblePolling } from "../hooks/useVisiblePolling";
 import { useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -176,7 +178,39 @@ export default function DatasetDetailPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [captionItem, setCaptionItem] = useState<DatasetItem | null>(null);
   const [caption, setCaption] = useState("");
-  const [cropItem, setCropItem] = useState<DatasetItem | null>(null);
+  const { params: editorParams, patch: patchEditor } = useEditorUrlState();
+  const cropIdParam = editorParams.get("crop");
+  const cropId = positiveId(cropIdParam);
+  const [resolvedCropItem, setResolvedCropItem] = useState<DatasetItem | null>(null);
+  const cropItem = resolvedCropItem?.id === cropId && resolvedCropItem.dataset_id === datasetId ? resolvedCropItem : null;
+  const setCropItem = (item: DatasetItem | null) => {
+    setResolvedCropItem(item);
+    patchEditor({ crop: item ? String(item.id) : null }, false);
+  };
+  useEffect(() => {
+    if (cropIdParam === null) return;
+    if (cropId === null) { patchEditor({ crop: null }); return; }
+    let active = true;
+    // Resolve against the dataset itself, including items beyond the first grid page.
+    void (async () => {
+      let cursor: string | null = null;
+      const seen = new Set<string | null>();
+      do {
+        seen.add(cursor);
+        const page = await getDatasetItems(datasetId, cursor);
+        if (!active) return;
+        const found = page.items.find(item => item.id === cropId);
+        if (found) {
+          if (typeof found.media.duration === "number") patchEditor({ crop: null });
+          else setResolvedCropItem(found);
+          return;
+        }
+        cursor = page.next_cursor ?? null;
+      } while (cursor && !seen.has(cursor));
+      if (active) patchEditor({ crop: null });
+    })().catch(() => { if (active) patchEditor({ crop: null }); });
+    return () => { active = false; };
+  }, [datasetId, cropIdParam, cropId, patchEditor]);
   const [exportLayout, setExportLayout] = useState<DatasetExportLayout>("ai_toolkit");
   const [autoOpen, setAutoOpen] = useState(false);
   const [autoInput, setAutoInput] = useState<AutoSelectInput>({ target_count: 30, drop_duplicates: true, dry_run: true });
@@ -227,7 +261,7 @@ export default function DatasetDetailPage() {
     setLoading(true);
     setLoadingMore(false);
     setSaving(false);
-    setCropItem(null);
+    setResolvedCropItem(null);
     setCaptionItem(null);
     setGapPreview(null);
     setBatchCropOpen(false);

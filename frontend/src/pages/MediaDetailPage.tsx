@@ -1,3 +1,4 @@
+import { useEditorUrlState } from "../hooks/useEditorUrlState";
 import React, { lazy, Suspense, useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
@@ -96,7 +97,16 @@ export default function MediaDetailPage() {
   const [dialogType, setDialogType] = useState<
     "convert" | "deleteRecord" | "deleteFile" | null
   >(null);
-  const [editorOpen, setEditorOpen] = useState(false);
+  const { params: editorParams, patch: patchEditor } = useEditorUrlState();
+  const editorOpen = editorParams.get("edit") === "1";
+  const setEditorOpen = (value: boolean) => patchEditor({ edit: value ? "1" : null }, false);
+  const setEditorOpenRef = useRef(setEditorOpen);
+  setEditorOpenRef.current = setEditorOpen;
+  useEffect(() => {
+    if (editorParams.has("edit") && (editorParams.get("edit") !== "1" || loadError || (detail && typeof detail.media.duration === "number"))) {
+      patchEditor({ edit: null });
+    }
+  }, [editorParams, patchEditor, loadError, detail]);
   const [actionTarget, setActionTarget] = useState<{ id: number; mediaListKey?: string } | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const actionBusyRef = useRef(false);
@@ -241,7 +251,7 @@ export default function MediaDetailPage() {
     detailRequest.current += 1;
     setDetail(null); setIsDetailLoading(false);
     setLoadError({ status: 404, message: "This media is no longer available." });
-    setDialogType(null); setEditorOpen(false); setActionTarget(null);
+    setDialogType(null); setEditorOpenRef.current(false); setActionTarget(null);
   }), []);
 
   useUndoRefresh(id ? `media-detail:${id}` : undefined, fetchDetail);

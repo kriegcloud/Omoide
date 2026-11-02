@@ -1,3 +1,6 @@
+import { useEditorUrlState } from "../hooks/useEditorUrlState";
+import { measureEditorImage, sameOverlay, type EditorStoreLike, type ImageOverlayLayout } from "../utils/editorOverlay";
+import { editorSelection, readEditorOptions } from "../utils/editorUrlState";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { getCurrentImgDataFunction } from "react-filerobot-image-editor";
 import {
@@ -41,6 +44,7 @@ import {
   type EditOp,
   type FilerobotDesignState,
 } from "../utils/editorOps";
+import { buildEditorTheme } from "../utils/editorTheme";
 import ConfirmDialog from "./ConfirmDialog";
 import { observeEditorFits } from "../utils/editorFitObserver";
 
@@ -51,6 +55,8 @@ interface LazyEditorProps {
   getCurrentImgDataFnRef: { current?: getCurrentImgDataFunction };
   updateStateFnRef: { current?: FilerobotUpdateState };
   theme: Record<string, unknown>;
+  defaultTabId: "Adjust" | "Finetune" | "Resize";
+  defaultToolId: string;
 }
 
 /**
@@ -66,6 +72,8 @@ type FilerobotUpdateState = (
 ) => void;
 
 interface FilerobotStoreState {
+  tabId?: string;
+  toolId?: string;
   omoideFitRevision?: number;
   pastDesignStates?: FilerobotDesignState[];
   futureDesignStates?: FilerobotDesignState[];
@@ -78,13 +86,6 @@ interface FilerobotStoreState {
   };
 }
 
-interface ImageOverlayLayout {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-  rotation: number;
-}
 
 const ASPECT_BUCKETS = [512, 768, 1024] as const;
 
@@ -141,8 +142,8 @@ const FilerobotImageEditor = lazy(async () => {
           editorModule.TABS.FINETUNE,
           editorModule.TABS.RESIZE,
         ]}
-        defaultTabId={editorModule.TABS.ADJUST}
-        defaultToolId={editorModule.TOOLS.CROP}
+        defaultTabId={props.defaultTabId}
+        defaultToolId={props.defaultToolId as React.ComponentProps<typeof Editor>["defaultToolId"]}
         Crop={{
           presetsItems: [
             { titleKey: "square", descriptionKey: "1:1", ratio: 1 },
@@ -159,6 +160,7 @@ const FilerobotImageEditor = lazy(async () => {
         Rotate={{ angle: 90, componentType: "buttons" }}
         useZoomPresetsMenu
         observePluginContainerSize
+        removeSaveButton
         disableSaveIfNoChanges
         onBeforeSave={() => false}
         onSave={() => undefined}
@@ -191,6 +193,11 @@ export default function ImageEditorDialog({
   onOpsReady,
 }: ImageEditorDialogProps) {
   const navigate = useNavigate();
+  const { params: editorParams, patch: patchEditor } = useEditorUrlState();
+  const urlOptions = readEditorOptions(editorParams);
+  const initialTool = useRef(urlOptions);
+  const appliedPreset = useRef<CropFraming | null>(null);
+  const setGuides = (bucket: boolean, face: boolean) => patchEditor({ guides: [bucket && "bucket", face && "face"].filter(Boolean).join(",") || null });
   const muiTheme = useTheme();
   const hotkeyScope = useDialogHotkeyScope(open);
   const addItem = useListStore((state) => state.addItem);
@@ -315,23 +322,63 @@ export default function ImageEditorDialog({
 
   const updateImageOverlay = useCallback(async () => {
     const live = await captureStoreState();
-    const shown = live?.shownImageDimensions;
     const host = editorHostRef.current;
     const canvas = host?.querySelector<HTMLElement>(".FIE_canvas-container");
-    if (!shown?.width || !shown.height || !host || !canvas) {
+    const stage = canvas?.querySelector<HTMLElement>(".konvajs-content") ?? canvas;
+    if (!host) {
       setImageOverlay(null);
       return;
     }
-    const hostRect = host.getBoundingClientRect();
-    const canvasRect = canvas.getBoundingClientRect();
-    setImageOverlay({
-      left: canvasRect.left - hostRect.left + (shown.x ?? 0),
-      top: canvasRect.top - hostRect.top + (shown.y ?? 0),
-      width: shown.width,
-      height: shown.height,
-      rotation: live?.adjustments?.rotation ?? 0,
-    });
+    const next = measureEditorImage(
+      live as unknown as EditorStoreLike | null,
+      host.getBoundingClientRect(),
+      stage?.getBoundingClientRect() ?? null,
+    );
+    setImageOverlay((previous) => (sameOverlay(previous, next) ? previous : next));
   }, [captureStoreState]);
+
+  // filerobot zooms/pans (wheel, +/- buttons, drag, pinch, tool/tab changes)
+  // without calling onModify; re-measure after any such interaction.
+  const overlayActive = faceGuides || aspectGuides;
+  useEffect(() => {
+    if (!open || !overlayActive) return;
+    const host = editorHostRef.current;
+    if (!host) return;
+    let frame = 0;
+    const timers = new Set<number>();
+    const measure = () => { void updateImageOverlay(); };
+    const schedule = () => {
+      if (!frame) frame = window.requestAnimationFrame(() => { frame = 0; measure(); });
+      const timer = window.setTimeout(() => { timers.delete(timer); measure(); }, 150);
+      timers.add(timer);
+    };
+    const events = ["wheel", "pointerup", "click", "keyup", "touchend"] as const;
+    events.forEach((name) => host.addEventListener(name, schedule, { passive: true }));
+    // The canvas sizes itself after mount (and on tab/tool panel changes):
+    // observe it so the first layout is measured without an interaction.
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+    const observeCanvas = () => {
+      const canvas = host.querySelector<HTMLElement>(".FIE_canvas-container");
+      const stage = canvas?.querySelector<HTMLElement>(".konvajs-content");
+      if (canvas) resizeObserver?.observe(canvas);
+      if (stage) resizeObserver?.observe(stage);
+    };
+    observeCanvas();
+    const mutationObserver = typeof MutationObserver === "undefined" ? null : new MutationObserver(() => { observeCanvas(); schedule(); });
+    mutationObserver?.observe(host, { childList: true, subtree: true });
+    [400, 1000].forEach((delay) => {
+      const timer = window.setTimeout(() => { timers.delete(timer); measure(); }, delay);
+      timers.add(timer);
+    });
+    schedule();
+    return () => {
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+      events.forEach((name) => host.removeEventListener(name, schedule));
+      if (frame) window.cancelAnimationFrame(frame);
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [open, overlayActive, updateImageOverlay]);
 
   const toggleFaceGuides = async (checked: boolean) => {
     setFaceGuides(checked);
@@ -347,7 +394,7 @@ export default function ImageEditorDialog({
     }
   };
 
-  const applyFramingPreset = async (framing: CropFraming) => {
+  const applyFramingPreset = async (framing: CropFraming, persist = true) => {
     setError(null);
     try {
       if (!media.width || !media.height) {
@@ -362,6 +409,8 @@ export default function ImageEditorDialog({
         throw new Error("The editor image is still loading. Try the preset again.");
       }
       const crop = suggestion.crop_op;
+      appliedPreset.current = framing;
+      if (persist) patchEditor({ preset: framing });
       updateStateRef.current({
         adjustments: {
           crop: {
@@ -387,21 +436,7 @@ export default function ImageEditorDialog({
     return () => window.removeEventListener("resize", onResize);
   }, [faceGuides, aspectGuides, compareHeld, comparePinned, updateImageOverlay]);
 
-  const editorTheme = useMemo(
-    () => ({
-      palette: {
-        "bg-primary": muiTheme.palette.background.paper,
-        "bg-secondary": muiTheme.palette.background.default,
-        "accent-primary": muiTheme.palette.primary.main,
-        "accent-primary-active": muiTheme.palette.primary.dark,
-        "icons-primary": muiTheme.palette.text.primary,
-        "icons-secondary": muiTheme.palette.text.secondary,
-        "borders-secondary": muiTheme.palette.divider,
-      },
-      typography: { fontFamily: muiTheme.typography.fontFamily },
-    }),
-    [muiTheme]
-  );
+  const editorTheme = useMemo(() => buildEditorTheme(muiTheme), [muiTheme]);
 
   const source = `${API}/originals/${encodeFilePath(media.path)}${
     media.cache_version ? `?v=${media.cache_version}` : ""
@@ -460,6 +495,45 @@ export default function ImageEditorDialog({
   const toggleAspectGuides = (visible: boolean) => {
     setAspectGuides(visible);
     if (visible) void updateImageOverlay();
+  };
+
+  // The public ref exposes the same store fields used by SELECT_TAB/SELECT_TOOL.
+  // Wait for the actual image dimensions before restoring guides or a face crop.
+  const restoreActions = useRef({ toggleFaceGuides, toggleAspectGuides, toggleCompare, applyFramingPreset });
+  restoreActions.current = { toggleFaceGuides, toggleAspectGuides, toggleCompare, applyFramingPreset };
+  const { tabId, toolId, face, bucket, compare, preset } = urlOptions;
+  useEffect(() => {
+    if (!open || !entered) return;
+    let cancelled = false;
+    let timer: number;
+    const restore = async () => {
+      const live = await captureStoreState();
+      if (cancelled) return;
+      if (!live?.shownImageDimensions?.width || !updateStateRef.current) {
+        timer = window.setTimeout(() => { void restore(); }, 80);
+        return;
+      }
+      updateStateRef.current({ tabId, toolId, selectionsIds: [] });
+      const actions = restoreActions.current;
+      actions.toggleCompare(compare);
+      actions.toggleAspectGuides(bucket);
+      await actions.toggleFaceGuides(face);
+      if (cancelled) return;
+      if (preset && appliedPreset.current !== preset) await actions.applyFramingPreset(preset, false);
+      if (!preset) appliedPreset.current = null;
+    };
+    void restore();
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [open, entered, tabId, toolId, face, bucket, compare, preset, captureStoreState]);
+
+  const captureToolSelection = () => {
+    window.setTimeout(() => {
+      void captureStoreState().then(live => {
+        if (!live?.tabId) return;
+        const tool = editorSelection(live.tabId, live.toolId ?? null);
+        if (tool !== editorSelection(tabId, toolId)) patchEditor({ tool });
+      });
+    }, 0);
   };
 
   const save = async (saveMode: "copy" | "overwrite") => {
@@ -674,7 +748,7 @@ export default function ImageEditorDialog({
                 startIcon={<CompareIcon />}
                 variant={comparePinned ? "contained" : "text"}
                 aria-pressed={comparePinned}
-                onClick={() => toggleCompare(!comparePinned)}
+                onClick={() => { toggleCompare(!comparePinned); patchEditor({ compare: !comparePinned ? "1" : null }); }}
                 sx={{ whiteSpace: "nowrap" }}
               >
                 Compare
@@ -684,18 +758,18 @@ export default function ImageEditorDialog({
                 startIcon={<GridOnIcon />}
                 variant={aspectGuides ? "contained" : "text"}
                 aria-pressed={aspectGuides}
-                onClick={() => toggleAspectGuides(!aspectGuides)}
+                onClick={() => { toggleAspectGuides(!aspectGuides); setGuides(!aspectGuides, faceGuides); }}
                 sx={{ whiteSpace: "nowrap" }}
               >
                 Bucket guides
               </Button>
               <FormControlLabel
-                control={<Switch size="small" checked={faceGuides} onChange={(event) => void toggleFaceGuides(event.target.checked)} />}
+                control={<Switch size="small" checked={faceGuides} onChange={(event) => { void toggleFaceGuides(event.target.checked); setGuides(aspectGuides, event.target.checked); }} />}
                 label="Face guides"
                 sx={{ whiteSpace: "nowrap", mr: 0.5 }}
               />
               {FRAMING_PRESETS.map((preset) => (
-                <Button key={preset.framing} size="small" variant="outlined" onClick={() => void applyFramingPreset(preset.framing)} sx={{ whiteSpace: "nowrap" }}>
+                <Button key={preset.framing} size="small" variant={urlOptions.preset === preset.framing ? "contained" : "outlined"} aria-pressed={urlOptions.preset === preset.framing} onClick={() => void applyFramingPreset(preset.framing)} sx={{ whiteSpace: "nowrap" }}>
                   {preset.label}
                 </Button>
               ))}
@@ -738,7 +812,7 @@ export default function ImageEditorDialog({
           </Box>
         </Popover>
 
-        <Box ref={editorHostRef} sx={{ flex: 1, minHeight: 0, bgcolor: "background.default", position: "relative" }}>
+        <Box ref={editorHostRef} onClickCapture={captureToolSelection} sx={{ flex: 1, minHeight: 0, bgcolor: "background.default", position: "relative" }}>
           <Suspense
             fallback={
               <Box
@@ -751,6 +825,8 @@ export default function ImageEditorDialog({
             {entered && (
             <FilerobotImageEditor
               source={source}
+              defaultTabId={initialTool.current.tabId}
+              defaultToolId={initialTool.current.toolId ?? "Crop"}
               loadableDesignState={initialDesignState}
               getCurrentImgDataFnRef={currentImgDataRef}
               updateStateFnRef={updateStateRef}
@@ -769,7 +845,8 @@ export default function ImageEditorDialog({
             )}
           </Suspense>
           {faceGuides && imageOverlay && media.width && media.height && ((imageOverlay.rotation % 360) + 360) % 360 === 0 && (
-            <Box sx={{ position: "absolute", pointerEvents: "none", zIndex: 5, left: imageOverlay.left, top: imageOverlay.top, width: imageOverlay.width, height: imageOverlay.height, overflow: "hidden" }}>
+            <Box sx={imageOverlay.clip ? { position: "absolute", pointerEvents: "none", zIndex: 5, left: imageOverlay.clip.left, top: imageOverlay.clip.top, width: imageOverlay.clip.width, height: imageOverlay.clip.height, overflow: "hidden" } : { display: "contents" }}>
+            <Box sx={{ position: "absolute", pointerEvents: "none", zIndex: 5, left: imageOverlay.left - (imageOverlay.clip?.left ?? 0), top: imageOverlay.top - (imageOverlay.clip?.top ?? 0), width: imageOverlay.width, height: imageOverlay.height, overflow: "hidden" }}>
               {(faceSuggestions ?? []).map((suggestion) => {
                 const [x, y, width, height] = suggestion.face_bbox;
                 return (
@@ -777,9 +854,11 @@ export default function ImageEditorDialog({
                 );
               })}
             </Box>
+            </Box>
           )}
           {aspectGuides && imageOverlay && media.width && media.height && ((imageOverlay.rotation % 360) + 360) % 360 === 0 && (
-            <Box sx={{ position: "absolute", pointerEvents: "none", zIndex: 5, left: imageOverlay.left, top: imageOverlay.top, width: imageOverlay.width, height: imageOverlay.height, overflow: "hidden" }}>
+            <Box sx={imageOverlay.clip ? { position: "absolute", pointerEvents: "none", zIndex: 5, left: imageOverlay.clip.left, top: imageOverlay.clip.top, width: imageOverlay.clip.width, height: imageOverlay.clip.height, overflow: "hidden" } : { display: "contents" }}>
+            <Box sx={{ position: "absolute", pointerEvents: "none", zIndex: 5, left: imageOverlay.left - (imageOverlay.clip?.left ?? 0), top: imageOverlay.top - (imageOverlay.clip?.top ?? 0), width: imageOverlay.width, height: imageOverlay.height, overflow: "hidden" }}>
               {ASPECT_BUCKETS.filter((bucket) => bucket <= Math.min(media.width!, media.height!)).map((bucket) => {
                 const width = bucket * imageOverlay.width / media.width!;
                 const height = bucket * imageOverlay.height / media.height!;
@@ -815,6 +894,7 @@ export default function ImageEditorDialog({
                   </Box>
                 );
               })}
+            </Box>
             </Box>
           )}
           {(compareHeld || comparePinned) && imageOverlay && (

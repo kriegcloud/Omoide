@@ -6,6 +6,7 @@ function hooks() {
   const slots = []; let cursor = 0; let dirty = false; let effects = [];
   const same = (a,b) => a && b && a.length === b.length && a.every((v,i) => Object.is(v,b[i]));
   const api = { ...React,
+    lazy: () => "LazyEditor",
     useRef(value) { return slots[cursor++] ??= { current: value }; },
     useState(initial) { const i = cursor++; if (!(i in slots)) slots[i] = typeof initial === 'function' ? initial() : initial;
       return [slots[i], value => { const next = typeof value === 'function' ? value(slots[i]) : value; if (!Object.is(next, slots[i])) { slots[i] = next; dirty = true; } }]; },
@@ -34,6 +35,7 @@ function load(relative, runtime, modules={}) {
     'react-intersection-observer':{useInView:()=>({ref:noop,inView:false})},
     ...modules,
   };
+  defaults['react-router-dom']={useSearchParams:()=>[new URLSearchParams(),()=>{}],useLocation:()=>({state:null}),...defaults['react-router-dom']};
   const source=fs.readFileSync(filename,'utf8').replace(/import\.meta\.env\.DEV/g,'false');
   const output=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true},fileName:filename}).outputText;
   const module={exports:{}};
@@ -43,6 +45,7 @@ function load(relative, runtime, modules={}) {
       if(name === "../stores/useListStore") return {readCachedList: (state, key) => state.lists[key], ...value};
       return value;
     }
+    if(name==='../hooks/useEditorUrlState'||name==='../utils/editorUrlState') return load(name.replace('../','')+'.ts',runtime,modules);
     if(name==='react/jsx-runtime')return require(name);
     if(name.startsWith('@mui/'))return {__esModule:true,default:name};
     return new Proxy({__esModule:true,default:name},{get:(target,key)=>target[key]??key});
