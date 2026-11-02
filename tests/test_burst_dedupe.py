@@ -251,7 +251,7 @@ class BurstDedupeTests(unittest.TestCase):
 
     def test_migration_head_is_single(self):
         script = ScriptDirectory.from_config(Config("alembic.ini"))
-        self.assertEqual(script.get_heads(), ["f1a2b3c4d5e6"])
+        self.assertEqual(script.get_heads(), ["a7b8c9d0e1f2"])
 
 
 if __name__ == "__main__":
