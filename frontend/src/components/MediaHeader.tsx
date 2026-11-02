@@ -20,6 +20,9 @@ import { setMediaFavorite } from "../services/mediaActions";
 import MediaCardMenu from "./MediaCardMenu";
 const ERROR_COLOR = "error.main";
 
+/** Heading id the viewer dialog names itself by (review R1-02). */
+export const MEDIA_VIEWER_TITLE_ID = "media-viewer-title";
+
 interface MediaHeaderProps {
   media: Media;
   onOpenDialog: (type: "convert" | "deleteRecord" | "deleteFile") => void;
@@ -79,6 +82,7 @@ export function MediaHeader({
         <Typography
           variant="h4"
           component="h1"
+          id={MEDIA_VIEWER_TITLE_ID}
           noWrap
           sx={{
             fontSize: "clamp(1.25rem, 4vw, 1.75rem)",

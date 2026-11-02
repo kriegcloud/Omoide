@@ -1,3 +1,4 @@
+import { EDITOR_A11Y_ATTR, observeEditorAccessibility } from "../utils/editorA11y";
 import { useEditorUrlState } from "../hooks/useEditorUrlState";
 import { measureEditorImage, sameOverlay, type EditorStoreLike, type ImageOverlayLayout } from "../utils/editorOverlay";
 import { editorSelection, readEditorOptions } from "../utils/editorUrlState";
@@ -267,6 +268,11 @@ export default function ImageEditorDialog({
   // dialog that container has no size yet, so mount the editor only after the
   // transition finished (and let Filerobot observe later resizes).
   const [entered, setEntered] = useState(false);
+  useEffect(() => {
+    const host = editorHostRef.current;
+    if (!open || !entered || !host) return;
+    return observeEditorAccessibility(host);
+  }, [open, entered]);
 
   // Filerobot does not notify onModify for automatic fits. Observe its live
   // store while mounted and keep an unchanged crop in the same
@@ -707,6 +713,7 @@ export default function ImageEditorDialog({
         ref={hotkeyScope}
         fullScreen
         open={open}
+        aria-labelledby="image-editor-title image-editor-filename"
         onClose={saving ? undefined : onClose}
         TransitionProps={{
           onEntered: () => setEntered(true),
@@ -724,10 +731,10 @@ export default function ImageEditorDialog({
               <CloseIcon />
             </IconButton>
             <Box sx={{ minWidth: 0 }}>
-              <Typography variant="h6" noWrap>
+              <Typography variant="h6" component="h2" id="image-editor-title" noWrap>
                 Edit image
               </Typography>
-              <Typography variant="caption" color="text.secondary" noWrap>
+              <Typography variant="caption" color="text.secondary" id="image-editor-filename" noWrap>
                 {media.filename}
               </Typography>
             </Box>
@@ -823,7 +830,8 @@ export default function ImageEditorDialog({
           />
         </Box>}
 
-        <Box ref={editorHostRef} onClickCapture={captureToolSelection} sx={{ ...buildEditorControlStyles(muiTheme), flex: 1, minHeight: 0, bgcolor: "background.default", position: "relative" }}>
+        <Box ref={editorHostRef} onClickCapture={captureToolSelection} sx={{ ...buildEditorControlStyles(muiTheme), flex: 1, minHeight: 0, bgcolor: "background.default", position: "relative",
+          [`& [${EDITOR_A11Y_ATTR}]:focus-visible`]: { outline: `2px solid ${muiTheme.palette.primary.main}`, outlineOffset: 2, borderRadius: "4px" } }}>
           <Suspense
             fallback={
               <Box

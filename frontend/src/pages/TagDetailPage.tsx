@@ -4,7 +4,7 @@ import { useListInvalidation } from "../stores/useListStore";
 import { useMutationRefresh } from "../context/UndoContext";
 import { readCachedList } from "../stores/useListStore";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, Link as RouterLink } from "react-router-dom";
+import { useParams, Link as RouterLink, useSearchParams } from "react-router-dom";
 import { useInView } from "react-intersection-observer";
 import { infiniteScrollObserver } from "../hooks/infiniteScroll";
 import {
@@ -36,7 +36,16 @@ export default function TagDetailPage() {
   const tag = loadedTag?.id === Number(id) ? loadedTag : null;
   const [tagError, setTagError] = useState<string | null>(null);
   const [retryTick, setRetryTick] = useState(0);
-  const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
+  // The media-type filter lives in the URL (?type=image|video) so reload, back/forward
+  // and shared links keep it (review R1-03).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const typeParam = searchParams.get("type");
+  const mediaFilter: MediaFilter = typeParam === "image" || typeParam === "video" ? typeParam : "all";
+  const setMediaFilter = (next: MediaFilter) => setSearchParams(previous => {
+    const params = new URLSearchParams(previous);
+    if (next === "all") params.delete("type"); else params.set("type", next);
+    return params;
+  });
   const { ref: loaderRef, inView } = useInView(infiniteScrollObserver);
   const mediaGridRef = useRef<HTMLDivElement>(null);
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();

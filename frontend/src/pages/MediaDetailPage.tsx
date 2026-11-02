@@ -1,3 +1,4 @@
+import { MEDIA_VIEWER_TITLE_ID } from "../components/MediaHeader";
 import { useEditorUrlState } from "../hooks/useEditorUrlState";
 import React, { lazy, Suspense, useEffect, useState, useMemo, useCallback, useRef, useSyncExternalStore } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
@@ -503,6 +504,10 @@ export default function MediaDetailPage() {
       ref={hotkeyScope}
       open={true}
       onClose={handleClose}
+      // MUI only fills its generated aria-labelledby from a DialogTitle; name the
+      // viewer by its filename heading, with a label while it is loading.
+      aria-labelledby={detail ? MEDIA_VIEWER_TITLE_ID : undefined}
+      aria-label={detail ? undefined : "Media viewer"}
       fullWidth
       maxWidth="xl"
       fullScreen={isMobile}

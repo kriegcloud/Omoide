@@ -1,3 +1,4 @@
+import { formatClock } from "../utils/duration";
 import React, { lazy, Suspense, useState, useRef, useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import {
@@ -40,12 +41,7 @@ export interface MediaDatasetContext {
 }
 
 function formatDuration(d?: number): string {
-  if (d == null) return "";
-  const m = Math.floor(d / 60);
-  const s = Math.round(d % 60)
-    .toString()
-    .padStart(2, "0");
-  return `${m}:${s}`;
+  return formatClock(d);
 }
 
 const WINDOWS_ABS_RE = /^[a-zA-Z]:[\\/]/;

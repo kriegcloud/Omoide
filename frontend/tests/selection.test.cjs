@@ -289,6 +289,7 @@ for (const page of ['Blurry', 'LowResolution', 'NoExifDate', 'ShortVideos', 'Unt
       '../components/SelectableMediaTile': { __esModule: true, default: 'Tile' },
       '../formatUtils': { formatBytes: String, formatDuration: String },
       '../stores/queryKeys': { queryKey: name => name },
+      '../utils/duration': { formatClock: seconds => String(seconds) },
       '../stores/optimisticOperations': {},
       '../stores/mutationBus': {},
       '../hotkeys/useHotkey': { useHotkey() {} },

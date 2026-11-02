@@ -1,3 +1,4 @@
+import { formatClock } from "../utils/duration";
 import { queryKey } from "../stores/queryKeys";
 import GalleryPage from "../components/GalleryPage";
 import React, { useCallback, useRef, useState } from "react";
@@ -30,9 +31,7 @@ const DEFAULT_MAX_DURATION = 10;
 
 const formatDuration = (seconds: number) => {
   if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const m = Math.floor(seconds / 60);
-  const s = (seconds % 60).toFixed(0).padStart(2, "0");
-  return `${m}:${s}`;
+  return formatClock(seconds);
 };
 
 const ShortVideosPage: React.FC = () => {

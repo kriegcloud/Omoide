@@ -19,8 +19,9 @@ export function formatTaskDuration(seconds?: number | null): string {
   if (seconds == null || !Number.isFinite(seconds)) return "—";
   if (seconds < 10) return `${seconds.toFixed(1)} s`;
   if (seconds < 60) return `${Math.round(seconds)} s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainder = Math.round(seconds % 60);
+  const total = Math.round(seconds); // round first so 119.6 s is "2 min", not "1 min 60 s"
+  const minutes = Math.floor(total / 60);
+  const remainder = total % 60;
   return remainder ? `${minutes} min ${remainder} s` : `${minutes} min`;
 }
 
