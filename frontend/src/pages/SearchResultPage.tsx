@@ -75,7 +75,7 @@ const emptyMediaState: MediaSearchState = {
 };
 
 export default function SearchResultsPage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const rawCategory = searchParams.get("category");
   const category: "media" | "tag" | "scene" =
     rawCategory === "tag" || rawCategory === "scene" ? rawCategory : "media";
@@ -110,7 +110,15 @@ export default function SearchResultsPage() {
   // ---- local state for the media/combined category -----------------------
   const [refreshedImageItems, setRefreshedImageItems] = useState<MediaPreview[] | null>(null);
   const [mediaState, setMediaState] = useState<MediaSearchState>(emptyMediaState);
-  const [orderBy, setOrderBy] = useState<"relevance" | "date">("relevance");
+  // Media type and ordering live in the URL (?type=, ?order=) so reload, back and
+  // shared links keep them (review R4-01); defaults are omitted from the URL.
+  const updateParam = (key: string, value: string | null) => setSearchParams(previous => {
+    const params = new URLSearchParams(previous);
+    if (value === null) params.delete(key); else params.set(key, value);
+    return params;
+  });
+  const orderBy: "relevance" | "date" = searchParams.get("order") === "date" ? "date" : "relevance";
+  const setOrderBy = (next: "relevance" | "date") => updateParam("order", next === "relevance" ? null : next);
   const [retryTick, setRetryTick] = useState(0);
   const revisionRef = useRef(new ListRevision());
   const refreshLocalRef = useRef<(prefix: string) => void>(() => {});
@@ -257,7 +265,9 @@ export default function SearchResultsPage() {
         : mediaState.media
       : [], [category, isImageSearch, refreshedImageItems, preloadedState?.items, mediaState.media]);
 
-  const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
+  const typeParam = searchParams.get("type");
+  const mediaFilter: MediaFilter = typeParam === "image" || typeParam === "video" ? typeParam : "all";
+  const setMediaFilter = (next: MediaFilter) => updateParam("type", next === "all" ? null : next);
   const filteredMediaItems = useMemo(() => {
     if (mediaFilter === "all") return rawMediaItems;
     if (mediaFilter === "video") return rawMediaItems.filter(isVideoMedia);
