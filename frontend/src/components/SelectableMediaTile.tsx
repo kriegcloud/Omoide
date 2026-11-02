@@ -10,6 +10,8 @@ import type { SelectionClickEvent } from "../hooks/useMarqueeSelection";
 export interface SelectableMediaTileProps {
   id: number;
   filename: string;
+  /** Optional viewer URL for review pages with query-backed filters/open item. */
+  href?: string;
   thumbnailPath: string | null;
   caption: string;
   selected: boolean;
@@ -24,6 +26,7 @@ export interface SelectableMediaTileProps {
 const SelectableMediaTile: React.FC<SelectableMediaTileProps> = ({
   id,
   filename,
+  href,
   thumbnailPath,
   caption,
   selected,
@@ -53,14 +56,14 @@ const SelectableMediaTile: React.FC<SelectableMediaTileProps> = ({
       selecting={selecting}
       selectionEnabled={Boolean(onSelectionClick || onToggle)}
       onSelectionClick={handleSelectionClick}
-      href={`/medium/${id}`}
+      href={href ?? `/medium/${id}`}
       linkState={{ backgroundLocation: location }}
       aspectRatio={aspectRatio}
       sx={{ minWidth: 0, cursor: "pointer" }}
       bottomRight={badgeLabel && (
         <Chip
           component={Link}
-          to={`/medium/${id}`}
+          to={href ?? `/medium/${id}`}
           state={{ backgroundLocation: location }}
           tabIndex={-1}
           draggable={false}
@@ -73,7 +76,7 @@ const SelectableMediaTile: React.FC<SelectableMediaTileProps> = ({
       footer={
         <Box
           component={Link}
-          to={`/medium/${id}`}
+          to={href ?? `/medium/${id}`}
           state={{ backgroundLocation: location }}
           tabIndex={selecting ? -1 : undefined}
           draggable={false}
@@ -82,7 +85,7 @@ const SelectableMediaTile: React.FC<SelectableMediaTileProps> = ({
           <Typography variant="caption" noWrap title={filename} sx={{ display: "block", fontSize: "0.7rem" }}>
             {filename}
           </Typography>
-          <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.65rem" }}>
+          <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.65rem", display: "block", overflowWrap: "anywhere" }}>
             {caption}
           </Typography>
         </Box>

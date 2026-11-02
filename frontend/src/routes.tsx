@@ -18,6 +18,8 @@ const SearchPage = lazy(() => import("./pages/SearchResultPage"));
 const BlurryPage = lazy(() => import("./pages/BlurryPage"));
 const DuplicatesPage = lazy(() => import("./pages/DuplicatesPage"));
 const MissingFilesPage = lazy(() => import("./pages/MissingFilesPage"));
+const NofacesPage = lazy(() => import("./pages/NofacesPage"));
+const WatermarksPage = lazy(() => import("./pages/WatermarksPage"));
 const NopersonsPage = lazy(() => import("./pages/NopersonsPage"));
 const UntaggedPage = lazy(() => import("./pages/UntaggedPage"));
 const ShortVideosPage = lazy(() => import("./pages/ShortVideosPage"));
@@ -146,9 +148,25 @@ export const AppRoutes = () => {
             }
           />
           <Route
+            path="/nofaces"
+            element={
+              <WriteModeBoundary description="No-face review is disabled while the system is in read-only mode.">
+                <NofacesPage />
+              </WriteModeBoundary>
+            }
+          />
+          <Route
+            path="/watermarks"
+            element={
+              <WriteModeBoundary description="Watermark review is disabled while the system is in read-only mode.">
+                <WatermarksPage />
+              </WriteModeBoundary>
+            }
+          />
+          <Route
             path="/nopersons"
             element={
-              <WriteModeBoundary description="No-persons review is disabled while the system is in read-only mode.">
+              <WriteModeBoundary description="No-people review is disabled while the system is in read-only mode.">
                 <NopersonsPage />
               </WriteModeBoundary>
             }

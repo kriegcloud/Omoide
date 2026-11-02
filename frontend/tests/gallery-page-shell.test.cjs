@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(__dirname, '../src');
-const pages = ['AlbumsPage', 'EventsPage', 'PlacesPage', 'TagPage', 'AlbumDetailPage', 'EventDetailPage', 'HighlightsPage', 'TagDetailPage', 'PersonDetailPage', 'OrphanFaces', 'NopersonsPage', 'MissingFilesPage', 'BrokenMediaPage', 'SearchResultPage', 'DatasetsPage', 'DatasetDetailPage', 'CurationReviewPage', 'DuplicatesPage', 'PlaceMediaPage', 'IndexPage', 'BlurryPage', 'LowResolutionPage', 'NoExifDatePage', 'ShortVideosPage', 'UntaggedPage'];
+const pages = ['AlbumsPage', 'EventsPage', 'PlacesPage', 'TagPage', 'AlbumDetailPage', 'EventDetailPage', 'HighlightsPage', 'TagDetailPage', 'PersonDetailPage', 'OrphanFaces', 'PersonReviewPage', 'MissingFilesPage', 'BrokenMediaPage', 'SearchResultPage', 'DatasetsPage', 'DatasetDetailPage', 'CurationReviewPage', 'DuplicatesPage', 'PlaceMediaPage', 'IndexPage', 'BlurryPage', 'LowResolutionPage', 'NoExifDatePage', 'ShortVideosPage', 'UntaggedPage'];
 for (const page of pages) test(`${page} uses the common gallery page shell`, () => {
   assert.ok(/<GalleryPage[\s>]/.test(fs.readFileSync(path.join(root, 'pages', `${page}.tsx`), 'utf8')), `${page} must render GalleryPage`);
 });
@@ -12,4 +12,8 @@ for (const component of ['MediaListPage', 'PeopleGrid', 'OrphanFaceSuggestions',
 });
 for (const [page, adapter] of [['ImagesPage', 'MediaListPage'], ['VideosPage', 'MediaListPage'], ['FavoritesPage', 'MediaListPage'], ['PeoplePage', 'PeopleGrid'], ['HiddenPeoplePage', 'PeopleGrid']]) test(`${page} uses the common ${adapter} adapter`, () => {
   assert.match(fs.readFileSync(path.join(root, 'pages', `${page}.tsx`), 'utf8'), new RegExp(`<${adapter}[\\s>]`));
+});
+
+for (const [page, kind] of [['NofacesPage', 'nofaces'], ['NopersonsPage', 'nopersons']]) test(`${page} uses the shared person review gallery adapter`, () => {
+  assert.match(fs.readFileSync(path.join(root, 'pages', `${page}.tsx`), 'utf8'), new RegExp(`<PersonReviewPage kind="${kind}"`));
 });

@@ -96,6 +96,8 @@ interface BulkResolveToolbarProps {
   onAssigned?: (mediaIds: number[], skippedCount: number) => void;
   onFeedback: (message: string, severity: FeedbackSeverity) => void;
   extraActions?: React.ReactNode;
+  /** The shared operation feedback owns settlement for non-blocking mutations. */
+  deferredFeedback?: boolean;
 }
 
 const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
@@ -111,6 +113,7 @@ const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
   onAssigned,
   onFeedback,
   extraActions,
+  deferredFeedback = false,
 }) => {
   const [pending, setPending] = useState<{ action: BulkResolveAction; selectAll: boolean } | null>(null);
   const [isActionLoading, setIsActionLoading] = useState(false);
@@ -142,6 +145,10 @@ const BulkResolveToolbar: React.FC<BulkResolveToolbarProps> = ({
           ? { action: pending.action, selectAll: true }
           : { action: pending.action, mediaIds: ids }
       );
+      if (deferredFeedback) {
+        setPending(null);
+        return;
+      }
       if (removed > 0) {
         onFeedback(`${removed} item(s) processed`, "success");
       } else {

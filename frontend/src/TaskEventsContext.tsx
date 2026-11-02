@@ -19,6 +19,7 @@ const INITIAL_COUNTERS: Record<TaskType, number> = {
   cluster_persons: 0,
   find_duplicates: 0,
   compute_blur_scores: 0,
+  detect_watermarks: 0,
   run_processor: 0,
   run_processor_for_media: 0,
   auto_tag_custom: 0,

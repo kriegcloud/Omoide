@@ -45,7 +45,9 @@ function FaceCard({
   const { src: thumbUrl, showsParent, dimensions, aspectRatio, onLoad, onError } = useFaceThumbnail(face);
 
   const handleCardClick = () => {
-    navigate(`/medium/${face.media_id}`, {
+    const reviewParams = location.pathname === "/orphanfaces" ? new URLSearchParams(location.search) : null;
+    reviewParams?.set("item", String(face.id));
+    navigate(`/medium/${face.media_id}${reviewParams ? `?${reviewParams}` : ""}`, {
       replace: !!location.state?.backgroundLocation,
       state: {
         backgroundLocation: location.state?.backgroundLocation || location,

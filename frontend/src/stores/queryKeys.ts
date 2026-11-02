@@ -1,5 +1,5 @@
 /** Stable, sorted query identity; snapshot filters at confirmation time. */
-export type EntityKind = "media" | "face" | "person" | "duplicate" | "album" | "tag" | "config";
+export type EntityKind = "watermark" | "media" | "face" | "person" | "duplicate" | "album" | "tag" | "config";
 export type EntityKey = `${EntityKind}:${string | number}`;
 export type QueryKey = string;
 export function queryKey(scope: string, filters: Readonly<Record<string, string | number | boolean | null | undefined>> = {}): QueryKey {
@@ -13,6 +13,7 @@ export function queryKey(scope: string, filters: Readonly<Record<string, string 
 export const entityKey = (kind: EntityKind, id: string | number): EntityKey => `${kind}:${id}`;
 /** Explicit kinds override this compatibility mapping for legacy cache names. */
 export function queryEntityKind(key: QueryKey): EntityKind | undefined {
+  if (/^watermarks/.test(key)) return "watermark";
   if (/duplicate/.test(key)) return "duplicate";
   if (/^(orphan|face)/.test(key) || key.includes('/faces')) return "face";
   if (/^people/.test(key) || /\/persons?(?:\?|$)/.test(key)) return "person";

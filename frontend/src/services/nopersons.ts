@@ -1,4 +1,4 @@
-import { mutationBus } from "../stores/mutationBus";
+import { DefinitiveMutationError } from "../stores/optimisticOperations";
 import { API } from "../config";
 import { NoPersonsPage } from "../types";
 import type { MediaResolveResult } from "../types";
@@ -10,7 +10,7 @@ export interface NoPersonsQuery {
   folder?: string | null;
   limit?: number;
   mediaType?: "image" | "video" | null;
-  scope?: "processed" | "all";
+  scope?: "processed" | "pending";
 }
 
 export const getNoPersonsMedia = async (options: NoPersonsQuery = {}): Promise<NoPersonsPage> => {
@@ -28,11 +28,12 @@ export const getNoPersonsMedia = async (options: NoPersonsQuery = {}): Promise<N
 
 export interface NoPersonsResolvePayload {
   action: NoPersonsResolveAction;
+  operation_id?: string;
   media_ids?: number[];
   select_all?: boolean;
   folder?: string | null;
   media_type?: "image" | "video";
-  scope?: "processed" | "all";
+  scope?: "processed" | "pending";
 }
 
 export const resolveNoPersons = async (
@@ -45,10 +46,10 @@ export const resolveNoPersons = async (
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || "Failed to resolve media");
+    const message = err.detail || "Failed to resolve media";
+    if ([400, 403, 422].includes(response.status)) throw new DefinitiveMutationError(message);
+    throw new Error(message);
   }
   const result = await response.json();
-  if (Array.isArray(result.processed_ids)) mutationBus.emit({ type: "media:deleted", ids: result.processed_ids });
-  else mutationBus.emit({ type: "list:invalidate", prefix: "" });
   return result;
 };

@@ -10,6 +10,7 @@ import numpy as np
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from sqlmodel import Session, select, text
+from sqlalchemy.orm import selectinload
 from threadpoolctl import threadpool_limits
 
 from app.models import Face, Person
@@ -155,7 +156,7 @@ def get_groups(session: Session):
             return _cache[key]
         ids, vectors, _ = load_unassigned_face_embeddings(session)
         groups = build_groups(vectors)
-        faces = {face.id: face for face in session.exec(select(Face).where(Face.person_id.is_(None), Face.ignored_at.is_(None))).all()}
+        faces = {face.id: face for face in session.exec(select(Face).where(Face.person_id.is_(None), Face.ignored_at.is_(None)).options(selectinload(Face.media))).all()}
         _, assigned = load_assigned_index(session)
         result = []
         for group in groups:
@@ -176,7 +177,7 @@ def get_groups(session: Session):
                 runner = float(means[ranked[1]]) if len(ranked) > 1 else -1.
                 if score >= .48:
                     candidate = dict(person_id=pid, person_name=assigned.names[pid], mean_cos=score, runner_up_person_cos=runner, margin=score-runner)
-            result.append(dict(**group, face_ids=group_ids, size=len(group_ids), media_count=len({f.media_id for f in members}), representative_face=FaceRead.model_validate(representative).model_dump(mode='json'), candidate=candidate))
+            result.append(dict(**group, face_ids=group_ids, size=len(group_ids), media_count=len({f.media_id for f in members}), representative_face=FaceRead.model_validate(representative).model_dump(mode='json'), member_faces=[FaceRead.model_validate(face).model_dump(mode='json') for face in members], candidate=candidate))
         if len(_cache)>=8:
             _cache.clear()
         _cache[key] = result

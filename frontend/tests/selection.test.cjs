@@ -280,12 +280,16 @@ for (const page of ['Blurry', 'LowResolution', 'NoExifDate', 'ShortVideos', 'Unt
       '../components/ReviewMediaGrid': { __esModule: true, default: 'Grid' },
       '../components/SelectableMediaTile': { __esModule: true, default: 'Tile' },
       '../formatUtils': { formatBytes: String, formatDuration: String },
+      '../stores/queryKeys': { queryKey: name => name },
+      '../stores/optimisticOperations': {},
+      '../stores/mutationBus': {},
+      '../hotkeys/useHotkey': { useHotkey() {} },
     };
-    for (const service of ['blur', 'lowresolution', 'noexifdate', 'shortVideos', 'shortvideos', 'untagged', 'nopersons', 'noPersons']) {
+    for (const service of ['blur', 'lowresolution', 'noexifdate', 'shortVideos', 'shortvideos', 'untagged', 'nopersons', 'noPersons', 'nofaces', 'taskActions']) {
       modules[`../services/${service}`] = {};
     }
-    const Page = load(`pages/${page}Page.tsx`, runtime, modules).default;
-    runtime.render(() => Page(), false);
+    const Page = load(page === 'Nopersons' ? 'pages/PersonReviewPage.tsx' : `pages/${page}Page.tsx`, runtime, modules).default;
+    runtime.render(() => page === 'Nopersons' ? Page({ kind: 'nopersons' }) : Page(), false);
     assert.equal(gridOptions.selecting, true);
     assert.equal(gridOptions.selectedIds, localSelected);
   });

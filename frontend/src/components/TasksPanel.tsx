@@ -64,6 +64,7 @@ const TASK_LABELS: TaskLabels = {
   cluster_persons: "Cluster Persons",
   find_duplicates: "Find Duplicates",
   compute_blur_scores: "Score Blur",
+  detect_watermarks: "Detect Watermarks",
   run_processor: "Run Processor",
   run_processor_for_media: "Rerun Processors (Selection)",
   auto_tag_custom: "Apply New Custom Tags",
@@ -99,6 +100,7 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 const PROCESSOR_ACTIONS = [
+  { name: "person_detection", label: "Person Detection", icon: <FaceIcon /> },
   { name: "faces", label: "Face Detection", icon: <FaceIcon /> },
   { name: "embedding_extractor", label: "Image Embeddings", icon: <BubbleChartIcon /> },
   { name: "auto_tagger", label: "Auto Tags", icon: <LabelIcon /> },

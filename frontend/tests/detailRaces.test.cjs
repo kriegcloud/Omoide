@@ -84,8 +84,17 @@ test('timeline registers a cache refresher for undo',()=>{
 function suggestionsPage(actions={}) {
   const runtime=hooks();const store=listStore();const item={id:11,face:{id:11,media_id:3},person_id:7,person_name:'Suggested',score:.7,pose_bin:'front'};
   store.state.lists['orphan-face-suggestions:0.50']={items:[item],isLoading:false,hasMore:false};
-  const Page=load('components/OrphanFaceSuggestions.tsx',runtime,{'../stores/useListStore':store.module,'../services/faceActions':actions}).default;
-  return {runtime,store,item,render:()=>runtime.render(()=>Page({minScore:.5,onMinScoreChange:noop}))};
+  const operations=[];
+  const startLegacyFaceReview=(label,ids,path,body)=>{
+    const key='orphan-face-suggestions:0.50', before=store.state.lists[key].items;
+    store.state.lists[key].items=before.filter(row=>!ids.includes(row.id));
+    const record={id:'test-operation',state:'pending'};operations.push(record);
+    const request=path.endsWith('/reject-suggestion')?()=>actions.rejectFaceSuggestion?.(ids[0],body.person_id):path==='assign'?()=>actions.assignFace?.(body.face_ids,body.person_id):()=>Promise.resolve();
+    const done=Promise.resolve().then(request).then(()=>{record.state='committed';record.receipt={applied:ids.map(id=>`face:${id}`)};return record;},error=>{store.state.lists[key].items=before;record.state='rejected';record.error=error.message;return record;});
+    return {id:record.id,done};
+  };
+  const Page=load('components/OrphanFaceSuggestions.tsx',runtime,{'../stores/useListStore':store.module,'../services/faceReview':{startLegacyFaceReview},'../services/faceActions':actions}).default;
+  return {runtime,store,item,operations,render:()=>runtime.render(()=>Page({minScore:.5,onMinScoreChange:noop}))};
 }
 function suggestionButton(page,text) {
   const grid=component(page.render(),'FaceGrid');const footer=grid.props.renderFooter(page.item.face);
@@ -119,9 +128,10 @@ test('the latest media refresh wins when same-route responses finish out of orde
 test('a rejected suggestion request failure restores the suggestion and shows an error',async()=>{
   const pending=deferred();const page=suggestionsPage({rejectFaceSuggestion:()=>pending.promise});
   const request=suggestionButton(page,'Not this person').props.onClick();assert.equal(component(page.render(),'FaceGrid').props.faces.length,0);
-  pending.reject(Error('Cannot save decision'));await request;
+  pending.reject(Error('Cannot save decision'));await request;await settle();
   assert.equal(component(page.render(),'FaceGrid').props.faces.length,1);
-  assert.ok(find(page.render(),node=>node.type==='Alert'&&node.props.children==='Cannot save decision'));
+  assert.equal(page.operations[0].state,'rejected');
+  assert.equal(page.operations[0].error,'Cannot save decision'); // App-level MutationFeedback owns shared-core errors.
 });
 test('confirming a captured delete target after navigation leaves the new detail visible',async()=>{
   const deleted=[];const page=mediaPage(async id=>media(Number(id)),{'../services/mediaActions':{deleteMediaRecord:async id=>deleted.push(id)}});

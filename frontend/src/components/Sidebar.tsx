@@ -22,6 +22,8 @@ import FaceIcon from "@mui/icons-material/Face";
 import MapIcon from "@mui/icons-material/Map";
 import AddLocationIcon from "@mui/icons-material/AddLocation";
 import SettingsIcon from "@mui/icons-material/Settings";
+import FaceRetouchingOffIcon from "@mui/icons-material/FaceRetouchingOff";
+import BrandingWatermarkIcon from "@mui/icons-material/BrandingWatermark";
 import PersonOffIcon from "@mui/icons-material/PersonOff";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 import CheckBoxOutlineBlankIcon from "@mui/icons-material/CheckBoxOutlineBlank";
@@ -81,15 +83,18 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
         { label: "People", to: "/people", icon: <PeopleIcon /> },
         { label: "Unassigned Faces", to: "/orphanfaces", icon: <FaceIcon /> },
         {
-          label: "No Persons Detected",
-          to: "/nopersons",
-          icon: <PersonOffIcon />,
-        },
-        {
           label: "Hidden People",
           to: "/people/hidden",
           icon: <VisibilityOffIcon />,
         },
+      ],
+    },
+    {
+      label: "Review",
+      items: [
+        { label: "No faces", to: "/nofaces", icon: <FaceRetouchingOffIcon /> },
+        { label: "No people", to: "/nopersons", icon: <PersonOffIcon /> },
+        { label: "Watermarks", to: "/watermarks", icon: <BrandingWatermarkIcon /> },
       ],
     },
     {
@@ -134,13 +139,16 @@ export function Sidebar({ variant = "permanent", onClose }: SidebarProps) {
     "/geotagger",
     "/duplicates",
     "/configuration",
+    "/watermarks",
     "/nopersons",
+    "/nofaces",
     "/people/hidden",
   ];
   const pathsToExcludeInPeopleDisabled: string[] = [
     "/people",
     "/orphanfaces",
     "/nopersons",
+    "/nofaces",
     "/people/hidden",
   ];
   const pathsToExcludeInEventsDisabled: string[] = ["/events"];

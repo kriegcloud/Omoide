@@ -42,7 +42,7 @@ function load(relative, runtime, modules={}) {
   new Function('require','module','exports',output)(name=>{
     if(name in defaults) {
       const value = defaults[name];
-      if(name === "../stores/useListStore") return {readCachedList: (state, key) => state.lists[key], ...value};
+      if(name === "../stores/useListStore") return {readCachedList: (state, key) => state.lists[key], useOptimisticCachedList: key => value.useListStore(state => state.lists[key]), ...value};
       return value;
     }
     if(name==='../hooks/useEditorUrlState'||name==='../utils/editorUrlState') return load(name.replace('../','')+'.ts',runtime,modules);

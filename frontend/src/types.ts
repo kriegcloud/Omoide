@@ -386,6 +386,7 @@ export type TaskType =
   | "find_duplicates"
   | "generate_hashes"
   | "compute_blur_scores"
+  | "detect_watermarks"
   | "run_processor"
   | "run_processor_for_media"
   | "auto_tag_custom"
@@ -1110,6 +1111,10 @@ export interface BlurPage {
 }
 
 export interface NoPersonsMediaItem {
+  person_score?: number | null;
+  person_siglip_margin?: number | null;
+  persons_detected?: boolean;
+  has_persons?: boolean | null;
   id: number;
   filename: string;
   path: string;

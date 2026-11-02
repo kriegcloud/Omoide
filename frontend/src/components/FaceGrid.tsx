@@ -1,3 +1,4 @@
+import { useSelection } from "../context/SelectionContext";
 import React, { useCallback, useMemo, useRef } from "react";
 import { Box } from "@mui/material";
 import Gallery from "./Gallery";
@@ -19,9 +20,11 @@ export const FaceGrid: React.FC<FaceGridProps> = ({
   faces,
   selectedFaceIds,
   onSelectionChange,
-  selecting = selectedFaceIds.length > 0,
+  selecting: selectingOverride,
   renderFooter,
 }) => {
+  const { isSelecting } = useSelection();
+  const selecting = selectingOverride ?? (isSelecting || selectedFaceIds.length > 0);
   const selectedIdSet = useMemo(
     () => new Set(selectedFaceIds),
     [selectedFaceIds]

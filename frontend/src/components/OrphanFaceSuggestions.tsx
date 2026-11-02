@@ -1,6 +1,9 @@
+import { appliedFaceIds, startLegacyFaceReview } from "../services/faceReview";
+import type { AssignSuggestedFacesResult } from "../types";
+import { useHotkey } from "../hotkeys/useHotkey";
 import GalleryPage from "./GalleryPage";
-import { readCachedList } from "../stores/useListStore";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useOptimisticCachedList } from "../stores/useListStore";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Box,
@@ -21,9 +24,7 @@ import {
 import { Link as RouterLink } from "react-router-dom";
 import { useInView } from "react-intersection-observer";
 import { useUndo, useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
-import { runOptimistic } from "../stores/mutationBus";
-import { assignSuggestedFaces, getOrphanFaceSuggestions } from "../services/face";
-import { assignFace, detachFace, rejectFaceSuggestion } from "../services/faceActions";
+import { getOrphanFaceSuggestions } from "../services/face";
 import { defaultListState, refreshCachedList, useListStore, useListInvalidation, type ListState } from "../stores/useListStore";
 import type { OrphanFaceSuggestion, SuggestedFaceAssignment, Person } from "../types";
 import ConfirmDialog from "./ConfirmDialog";
@@ -31,7 +32,7 @@ import { FaceGrid } from "./FaceGrid";
 import PersonPicker, { PERSON_PICKER_DIALOG_CONTENT_SX } from "./PersonPicker";
 import ListStatus from "./ListState";
 
-type SuggestionItem = OrphanFaceSuggestion & { id: number };
+type SuggestionItem = OrphanFaceSuggestion & { id: number; best_cos?: number; margin?: number; runner_up_person_cos?: number };
 const reviewLaterKey = "omoide:orphan-faces:review-later";
 function readReviewLater(): number[] {
   try {
@@ -40,28 +41,20 @@ function readReviewLater(): number[] {
   } catch { return []; }
 }
 
-const skippedReasons = {
-  unknown_face: "face no longer exists",
-  face_already_assigned: "face is already assigned",
-  unknown_person: "suggested person no longer exists",
-};
-
 export default function OrphanFaceSuggestions({ minScore, onMinScoreChange, tabs }: {
   tabs?: React.ReactNode;
   minScore: number;
   onMinScoreChange: (value: number) => void;
 }) {
   const listKey = `orphan-face-suggestions:${minScore.toFixed(2)}`;
-  const { items: cachedItems, hasMore, isLoading, error }: ListState<SuggestionItem> = useListStore(
-    (state) => readCachedList<SuggestionItem>(state, listKey) || defaultListState,
-  );
+  const { items: cachedItems, hasMore, isLoading, error }: ListState<SuggestionItem> = useOptimisticCachedList<SuggestionItem>(listKey, "face") || defaultListState;
   const clearList = useListStore((state) => state.clearList);
   const fetchInitial = useListStore((state) => state.fetchInitial);
   const loadMore = useListStore((state) => state.loadMore);
   useListInvalidation(listKey);
   const [reviewLaterIds, setReviewLaterIds] = useState<number[]>(readReviewLater);
-  const [dismissedPairs, setDismissedPairs] = useState<string[]>([]);
-  const [optimisticFaceIds, setOptimisticFaceIds] = useState<number[]>([]);
+  const [dismissedPairs] = useState<string[]>([]);
+  const [optimisticFaceIds] = useState<number[]>([]);
   const [alternativeFor, setAlternativeFor] = useState<SuggestionItem | null>(null);
   const items = useMemo(() => cachedItems.filter((item) =>
     !reviewLaterIds.includes(item.id) && !optimisticFaceIds.includes(item.id) && !dismissedPairs.includes(`${item.id}:${item.person_id}`)
@@ -69,8 +62,7 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange, tabs
   const { push, refreshVisible } = useUndo();
   const [sliderScore, setSliderScore] = useState(minScore);
   const [selectedFaceIds, setSelectedFaceIds] = useState<number[]>([]);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const processing = useRef(false);
+  const isProcessing = false;
   const [pendingAssignments, setPendingAssignments] = useState<SuggestedFaceAssignment[] | null>(null);
   const [snackbar, setSnackbar] = useState<{
     message: string;
@@ -119,70 +111,28 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange, tabs
   const actionsDisabled = isProcessing || sliderScore !== minScore;
 
   const accept = async (assignments: SuggestedFaceAssignment[]) => {
-    if (processing.current || !assignments.length) return;
-    processing.current = true;
-    setIsProcessing(true);
-    try {
-      const faceIds = assignments.map((item) => item.face_id);
-      const result = await runOptimistic({
-        apply: () => { setOptimisticFaceIds(faceIds); },
-        request: () => assignSuggestedFaces(assignments, "suggestion"),
-        rollback: () => { setOptimisticFaceIds([]); },
-      });
-      const skippedIds = new Set(result.skipped.map((item) => item.face_id));
-      const acceptedIds = assignments.map((item) => item.face_id).filter((id) => !skippedIds.has(id));
-      if (acceptedIds.length) {
-        push({
-          label: `Assigned ${result.assigned} face${result.assigned === 1 ? "" : "s"}`,
-          undo: async () => {
-            await detachFace(acceptedIds);
-            await refreshVisible();
-          },
-        });
-      }
-      setSelectedFaceIds([]);
-      const message = `Accepted ${result.assigned} suggestion(s).${result.skipped.length
-        ? ` Skipped ${result.skipped.length}: ${result.skipped.map((item) => `Face ${item.face_id}: ${skippedReasons[item.reason]}`).join("; ")}.`
-        : ""}`;
-      setSnackbar(result.skipped.length ? { message, severity: "warning" } : null);
-      try {
-        // The cursor is a ranking offset; assignment changes both membership and
-        // prototypes. Restart pagination instead of continuing a stale offset.
-        await refreshVisible();
-      } catch {
-        setSnackbar({ message: `${message} Could not refresh the list. Please retry.`, severity: "warning" });
-      }
-    } catch (reason) {
-      setSnackbar({
-        message: reason instanceof Error ? reason.message : "Failed to accept suggestions.",
-        severity: "error",
-      });
-    } finally {
-      setOptimisticFaceIds([]);
-      processing.current = false;
-      setIsProcessing(false);
-      setPendingAssignments(null);
-    }
+    if (!assignments.length) return;
+    const operation = startLegacyFaceReview<AssignSuggestedFacesResult>("Accept suggestions", assignments.map(item => item.face_id), "assign-suggested", { assignments, source: "suggestion" }, {
+      receipt: (result, operation_id) => {
+        const skipped = result.skipped.map(item => ({ key: `face:${item.face_id}`, reason: item.reason }));
+        const skippedIds = new Set(result.skipped.map(item => item.face_id));
+        const applied = assignments.filter(item => !skippedIds.has(item.face_id)).map(item => `face:${item.face_id}`);
+        return { operation_id, state: skipped.length ? applied.length ? "partial" : "failed" : "succeeded", applied, skipped, failed: [], unknown: [] };
+      },
+    });
+    setSelectedFaceIds([]);
+    setPendingAssignments(null);
+    const record = await operation.done;
+    if (record.receipt?.applied.length) push({ label: `Assigned ${record.receipt.applied.length} faces`, undo: async () => {
+      const undo = startLegacyFaceReview("Undo suggestion assignment", appliedFaceIds(record.receipt!), "detach", { face_ids: appliedFaceIds(record.receipt!) });
+      await undo.done;
+      await refreshVisible();
+    } });
   };
 
   const reject = async (suggestion: SuggestionItem) => {
-    if (processing.current) return;
-    processing.current = true;
-    setIsProcessing(true);
-    const pair = `${suggestion.id}:${suggestion.person_id}`;
-    try {
-      await runOptimistic({
-        apply: () => { setDismissedPairs((previous) => [...previous, pair]); },
-        request: () => rejectFaceSuggestion(suggestion.id, suggestion.person_id),
-        rollback: () => { setDismissedPairs((previous) => previous.filter((value) => value !== pair)); },
-      });
-      setSelectedFaceIds((previous) => previous.filter((id) => id !== suggestion.id));
-    } catch (reason) {
-      setSnackbar({ message: reason instanceof Error ? reason.message : "Failed to reject suggestion.", severity: "error" });
-    } finally {
-      processing.current = false;
-      setIsProcessing(false);
-    }
+    startLegacyFaceReview("Reject suggestion", [suggestion.id], `${suggestion.id}/reject-suggestion`, { person_id: suggestion.person_id }, { query: listKey });
+    setSelectedFaceIds(previous => previous.filter(id => id !== suggestion.id));
   };
 
   const reviewLater = (faceId: number) => {
@@ -195,30 +145,16 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange, tabs
   };
 
   const chooseAnother = async (person: Person) => {
-    if (!alternativeFor || processing.current) return;
+    if (!alternativeFor) return;
     const faceId = alternativeFor.id;
-    processing.current = true;
-    setIsProcessing(true);
-    try {
-      await runOptimistic({
-        apply: () => { setOptimisticFaceIds([faceId]); },
-        request: () => assignFace([faceId], person.id),
-        rollback: () => { setOptimisticFaceIds([]); },
-      });
-      setAlternativeFor(null);
-      setSelectedFaceIds((previous) => previous.filter((id) => id !== faceId));
-      push({
-        label: `Assigned face to ${person.name || `Person ${person.id}`}`,
-        undo: async () => { await detachFace([faceId]); await refreshVisible(); },
-      });
+    const operation = startLegacyFaceReview("Assign face", [faceId], "assign", { face_ids: [faceId], person_id: person.id, source: "manual" });
+    setAlternativeFor(null);
+    setSelectedFaceIds(previous => previous.filter(id => id !== faceId));
+    const record = await operation.done;
+    if (record.receipt?.applied.length) push({ label: `Assigned face to ${person.name || `Person ${person.id}`}`, undo: async () => {
+      await startLegacyFaceReview("Undo face assignment", [faceId], "detach", { face_ids: [faceId] }).done;
       await refreshVisible();
-    } catch (reason) {
-      setSnackbar({ message: reason instanceof Error ? reason.message : "Failed to assign face.", severity: "error" });
-    } finally {
-      setOptimisticFaceIds([]);
-      processing.current = false;
-      setIsProcessing(false);
-    }
+    } });
   };
 
   const retry = () => {
@@ -229,26 +165,29 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange, tabs
   const toAssignments = (suggestions: SuggestionItem[]): SuggestedFaceAssignment[] =>
     suggestions.map((item) => ({ face_id: item.id, person_id: item.person_id }));
 
-  return (
-    <GalleryPage id="unassigned-faces" title="Suggested Matches" tabs={tabs} count={items.length} countLabel="faces">
+  useHotkey({ key: "a" }, () => void accept(toAssignments(selectedItems)), { scope: "page", enabled: selectedItems.length > 0 && !actionsDisabled, description: "Accept selected face suggestions" });
+  useHotkey({ key: "r" }, () => { if (selectedItems[0]) void reject(selectedItems[0]); }, { scope: "page", enabled: selectedItems.length === 1 && !actionsDisabled, description: "Reject selected face suggestion" });
+  useHotkey({ key: "l" }, () => selectedItems.forEach(item => reviewLater(item.id)), { scope: "page", enabled: selectedItems.length > 0 && !actionsDisabled, description: "Review selected suggestions later" });
 
-      <Box sx={{ maxWidth: 400, px: 1, mb: 2 }}>
+  return (
+    <GalleryPage id="unassigned-faces" title="Suggested Matches" tabs={tabs} count={items.length} countLabel="faces" filters={(<Box sx={{ maxWidth: 400, px: 1, mb: 2 }}>
         <Typography id="suggestions-min-score">Minimum score: {sliderScore.toFixed(2)}</Typography>
         <Slider
           aria-labelledby="suggestions-min-score"
           getAriaValueText={(value) => value.toFixed(2)}
-          min={0.4}
-          max={0.8}
+          min={0.48}
+          max={1}
           step={0.01}
           value={sliderScore}
           valueLabelDisplay="auto"
           valueLabelFormat={(value) => value.toFixed(2)}
-          marks={[{ value: 0.4, label: "0.40" }, { value: 0.8, label: "0.80" }]}
+          marks={[{ value: 0.48, label: "0.48" }, { value: 1, label: "1.00" }]}
           disabled={isProcessing || pendingAssignments !== null}
           onChange={(_, value) => setSliderScore(value as number)}
           onChangeCommitted={(_, value) => onMinScoreChange(value as number)}
         />
-      </Box>
+      </Box>)}>
+
       <Paper elevation={2} sx={{ p: 1.5, mb: 2 }}>
         <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" alignItems="center">
           <Typography role="status" variant="body2">
@@ -316,7 +255,9 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange, tabs
                 />
               </Tooltip>
               <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.25 }}>
-                {suggestion.pose_bin}
+                {suggestion.pose_bin} · best cosine {(suggestion.best_cos ?? suggestion.score).toFixed(2)}
+                {suggestion.margin != null && ` · margin ${suggestion.margin.toFixed(2)}`}
+                {suggestion.runner_up_person_cos != null && ` · runner-up ${suggestion.runner_up_person_cos.toFixed(2)}`}
               </Typography>
               <Stack data-tile-control data-no-marquee spacing={0.5} sx={{ mt: 0.75 }}>
                 <Button size="small" disabled={actionsDisabled} onClick={() => reject(suggestion)}>Not this person</Button>

@@ -1,10 +1,11 @@
+import { FaceGroups, IgnoredFaces } from "../components/FaceReviewViews";
+import { appliedFaceIds, startFaceReview, startLegacyFaceReview } from "../services/faceReview";
 import GalleryPage from "../components/GalleryPage";
-import { readCachedList } from "../stores/useListStore";
+import { useOptimisticCachedList } from "../stores/useListStore";
 import config from "../config";
 import { useHotkey } from "../hotkeys/useHotkey";
 import { SelectionHotkeyDialogs } from "../hotkeys/SelectionHotkeyDialogs";
 import { useUndo, useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
-import { runOptimistic } from "../stores/mutationBus";
 import ListState from "../components/ListState";
 import { refreshCachedList } from "../stores/useListStore";
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -29,13 +30,6 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useInView } from "react-intersection-observer";
 import { useListStore, defaultListState, useListInvalidation } from "../stores/useListStore";
 import { getOrphanFaces, getOrphanFaceCount } from "../services/face";
-import {
-  assignFace,
-  detachFace,
-  createPersonFromFaces,
-  deleteFace,
-  deleteAllOrphanFaces,
-} from "../services/faceActions";
 import PersonPicker, { PERSON_PICKER_DIALOG_CONTENT_SX } from "../components/PersonPicker";
 import { FaceRead, Person } from "../types";
 import { FaceGrid } from "../components/FaceGrid"; // Import our DUMB grid component
@@ -45,12 +39,13 @@ import { StickySelectionToolbar } from "../components/BulkResolveToolbar";
 
 export default function OrphanFacesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const view = searchParams.get("view") === "suggestions" ? "suggestions" : "all";
+  const requestedView = searchParams.get("view");
+  const view = ["groups", "suggestions", "ignored"].includes(requestedView ?? "") ? requestedView : "all";
   const rawMin = searchParams.get("min");
   const parsedMin = rawMin?.trim() ? Number(rawMin) : NaN;
   const minScore = Number.isFinite(parsedMin)
-    ? Math.round(Math.min(0.8, Math.max(0.4, parsedMin)) * 100) / 100
-    : 0.5;
+    ? Math.round(Math.min(1, Math.max(0.48, parsedMin)) * 100) / 100
+    : 0.48;
 
   const tabs = (
         <ToggleButtonGroup
@@ -65,10 +60,12 @@ export default function OrphanFacesPage() {
           }}
         >
           <ToggleButton value="all">All</ToggleButton>
+          <ToggleButton value="groups">Groups</ToggleButton>
           <ToggleButton value="suggestions">Suggestions</ToggleButton>
+          <ToggleButton value="ignored">Ignored</ToggleButton>
         </ToggleButtonGroup>
   );
-  return (view === "suggestions" ? (
+  return (view === "groups" ? <FaceGroups tabs={tabs} /> : view === "ignored" ? <IgnoredFaces tabs={tabs} /> : view === "suggestions" ? (
         <OrphanFaceSuggestions
           tabs={tabs}
           minScore={minScore}
@@ -82,7 +79,7 @@ export default function OrphanFacesPage() {
   );
 }
 
-function AllOrphanFaces({ tabs }: { tabs: React.ReactNode }) {
+export function AllOrphanFaces({ tabs }: { tabs: React.ReactNode }) {
   const navigate = useNavigate();
   const listKey = "orphan-faces";
   useListInvalidation(listKey);
@@ -95,15 +92,14 @@ function AllOrphanFaces({ tabs }: { tabs: React.ReactNode }) {
     hasMore,
     isLoading,
     error,
-  } = useListStore((state) => readCachedList<FaceRead>(state, listKey) || defaultListState);
+  } = useOptimisticCachedList<FaceRead>(listKey, "face") || defaultListState;
   const fetchInitial = useListStore((state) => state.fetchInitial);
   const loadMore = useListStore((state) => state.loadMore);
   const clearList = useListStore((state) => state.clearList);
-  const [optimisticFaceIds, setOptimisticFaceIds] = useState<number[]>([]);
-  const orphans = storedOrphans.filter((face) => !optimisticFaceIds.includes(face.id));
+  const orphans = storedOrphans;
 
   // All UI state is now managed directly by the page
-  const [isProcessing, setIsProcessing] = useState(false);
+  const isProcessing = false;
   const [selectedFaceIds, setSelectedFaceIds] = useState<number[]>([]);
   const [orphanCount, setOrphanCount] = useState<number | null>(null);
   const [countError, setCountError] = useState<string | null>(null);
@@ -120,13 +116,6 @@ function AllOrphanFaces({ tabs }: { tabs: React.ReactNode }) {
     message: string;
     severity: "success" | "error";
   }>({ open: false, message: "", severity: "success" });
-
-  const showMessage = (
-    message: string,
-    severity: "success" | "error" = "success"
-  ) => {
-    setSnackbar({ open: true, message, severity });
-  };
 
   // --- Infinite Scroll ---
   const { ref: loaderRef, inView } = useInView({
@@ -168,95 +157,54 @@ function AllOrphanFaces({ tabs }: { tabs: React.ReactNode }) {
     await Promise.all([refreshCount(), refreshCachedList(listKey)]);
   });
 
-  const optimisticallyRemoveFaces = <T,>(faceIds: number[], request: () => Promise<T>) => runOptimistic({
-    apply: () => { setOptimisticFaceIds((previous) => [...new Set([...previous, ...faceIds])]); },
-    request,
-    rollback: () => { setOptimisticFaceIds((previous) => previous.filter((id) => !faceIds.includes(id))); },
-  });
-
-  // --- Action Handlers ---
   const handleDeleteAll = async () => {
-    setIsProcessing(true);
-    try {
-      const { deleted } = await deleteAllOrphanFaces();
-      setSelectedFaceIds([]);
-      showMessage(`Deleted ${deleted.toLocaleString()} unassigned face${deleted === 1 ? "" : "s"}.`);
-    } catch (reason) {
-      showMessage(reason instanceof Error ? reason.message : "Failed to delete all unassigned faces.", "error");
-    } finally {
-      setIsProcessing(false);
-      setConfirmDeleteAllOpen(false);
-    }
+    startLegacyFaceReview("Delete all unassigned faces", orphans.map(face => face.id), "orphans", {}, { method: "DELETE" });
+    setSelectedFaceIds([]);
+    setConfirmDeleteAllOpen(false);
   };
-
   const handleBulkDelete = async () => {
-    const faceIds = [...selectedFaceIds];
-    setIsProcessing(true);
-    try {
-      await optimisticallyRemoveFaces(faceIds, () => deleteFace(faceIds));
-      setSelectedFaceIds([]);
-      showMessage(
-        `Deleted ${faceIds.length} face${faceIds.length === 1 ? "" : "s"}.`
-      );
-    } catch (err) {
-      console.error("Failed to delete faces:", err);
-      showMessage("Failed to delete faces.", "error");
-    } finally {
-      setOptimisticFaceIds((previous) => previous.filter((id) => !faceIds.includes(id)));
-      setIsProcessing(false);
-      setConfirmDeleteOpen(false);
-    }
+    const params = new URLSearchParams();
+    selectedFaceIds.forEach(id => params.append("face_ids", String(id)));
+    startLegacyFaceReview("Delete faces", selectedFaceIds, `?${params}`, {}, { method: "DELETE" });
+    setSelectedFaceIds([]);
+    setConfirmDeleteOpen(false);
   };
-
   const handleBulkCreate = async () => {
     if (!newPersonName.trim()) return;
-    const faceIds = [...selectedFaceIds];
-    setIsProcessing(true);
-    try {
-      const newPerson = await optimisticallyRemoveFaces(faceIds, () => createPersonFromFaces(faceIds, newPersonName));
-      if (!newPerson?.id) {
-        throw new Error("Failed to get ID for newly created person.");
-      }
-      setSelectedFaceIds([]);
-      setCreateDialogOpen(false);
-      navigate(`/person/${newPerson.id}`, { state: { forceRefresh: true } });
-    } catch (err) {
-      console.error("Failed to create and navigate to new person:", err);
-      showMessage("Failed to create new person.", "error");
-    } finally {
-      setOptimisticFaceIds((previous) => previous.filter((id) => !faceIds.includes(id)));
-      setIsProcessing(false);
-    }
+    startLegacyFaceReview<Person | { person: Person }>("Create person", selectedFaceIds, "create_person", { face_ids: selectedFaceIds, name: newPersonName.trim() }, {
+      onResult: result => { const person = "person" in result ? result.person : result; if (person.id) navigate(`/person/${person.id}`, { state: { forceRefresh: true } }); },
+    });
+    setSelectedFaceIds([]);
+    setCreateDialogOpen(false);
   };
-
-  const openAssignDialog = () => {
-    setAssignDialogOpen(true);
-  };
-
+  const openAssignDialog = () => { setAssignDialogOpen(true); };
   const handleConfirmAssign = async (person: Person | null) => {
     if (!person) return;
     const faceIds = [...selectedFaceIds];
-    setIsProcessing(true);
-    try {
-      await optimisticallyRemoveFaces(faceIds, () => assignFace(faceIds, person.id));
-      setSnackbar((previous) => ({ ...previous, open: false }));
-      push({
-        label: `Assigned ${faceIds.length} face${faceIds.length === 1 ? "" : "s"} to ${person.name || `Person ${person.id}`}`,
-        undo: async () => {
-          await detachFace(faceIds);
-          await refreshVisible();
-        },
-      });
-      setSelectedFaceIds([]);
-      setAssignDialogOpen(false);
-    } catch (err) {
-      console.error("Failed to assign faces:", err);
-      showMessage("Failed to assign faces.", "error");
-    } finally {
-      setOptimisticFaceIds((previous) => previous.filter((id) => !faceIds.includes(id)));
-      setIsProcessing(false);
-    }
+    const operation = startLegacyFaceReview("Assign faces", faceIds, "assign", { face_ids: faceIds, person_id: person.id, source: "manual" });
+    setSelectedFaceIds([]);
+    setAssignDialogOpen(false);
+    const record = await operation.done;
+    if (record.receipt?.applied.length) push({ label: `Assigned faces to ${person.name || `Person ${person.id}`}`, undo: async () => {
+      const ids = appliedFaceIds(record.receipt!);
+      await startLegacyFaceReview("Undo assignment", ids, "detach", { face_ids: ids }).done;
+      await refreshVisible();
+    } });
   };
+
+  const ignore = (ids: number[]) => {
+    if (config.PRESENTATION_MODE || !ids.length) return;
+    const rows = orphans.filter(face => ids.includes(face.id));
+    const operation = startFaceReview("ignore", ids, {}, rows);
+    setSelectedFaceIds([]);
+    void operation.done.then(record => {
+      if (record.receipt?.applied.length) push({ label: "Ignored faces", undo: async () => {
+        await startFaceReview("unignore", appliedFaceIds(record.receipt!), {}, rows).done;
+        await refreshVisible();
+      } });
+    });
+  };
+  useHotkey({ key: "i" }, () => ignore(selectedFaceIds), { scope: "page", enabled: selectedFaceIds.length > 0 && !config.PRESENTATION_MODE, description: "Ignore selected faces" });
 
   const handleRetry = () => {
     clearList(listKey);
@@ -271,6 +219,8 @@ function AllOrphanFaces({ tabs }: { tabs: React.ReactNode }) {
     }
   };
 
+  useHotkey({ key: "n" }, () => setCreateDialogOpen(true), { scope: "page", enabled: selectedFaceIds.length > 0 && !config.PRESENTATION_MODE, description: "Create person from selected faces…" });
+  useHotkey({ key: "Delete" }, () => setConfirmDeleteOpen(true), { scope: "page", enabled: selectedFaceIds.length > 0 && !config.PRESENTATION_MODE, description: "Delete selected faces…" });
   useHotkey({ key: "a" }, openAssignDialog, { scope: "page", enabled: selectedFaceIds.length > 0 && !isProcessing && !config.PRESENTATION_MODE, description: "Assign selected faces…" });
   useHotkey({ key: "Escape" }, () => setSelectedFaceIds([]), { scope: "page", enabled: selectedFaceIds.length > 0, description: "Clear face selection" });
 
@@ -291,6 +241,7 @@ function AllOrphanFaces({ tabs }: { tabs: React.ReactNode }) {
           </Button>
           {selectedFaceIds.length > 0 && (
             <>
+              <Button size="small" disabled={config.PRESENTATION_MODE} onClick={() => ignore(selectedFaceIds)}>Ignore</Button>
               <Button
                 variant="contained"
                 size="small"
@@ -346,6 +297,7 @@ function AllOrphanFaces({ tabs }: { tabs: React.ReactNode }) {
           faces={orphans}
           selectedFaceIds={selectedFaceIds}
           onSelectionChange={setSelectedFaceIds}
+          renderFooter={face => <Button data-tile-control data-no-marquee size="small" disabled={config.PRESENTATION_MODE} onClick={() => ignore([face.id])}>Ignore</Button>}
         />
       )}
 
@@ -357,7 +309,7 @@ function AllOrphanFaces({ tabs }: { tabs: React.ReactNode }) {
       )}
       {hasMore && <Box ref={loaderRef} sx={{ height: "50px" }} />}
 
-      <SelectionHotkeyDialogs includeDelete enabled={!isProcessing}
+      <SelectionHotkeyDialogs enabled={!isProcessing}
         mediaIds={[...new Set(orphans.filter(face => selectedFaceIds.includes(face.id)).map(face => face.media_id))]}
         onProcessed={() => setSelectedFaceIds([])} />
 
