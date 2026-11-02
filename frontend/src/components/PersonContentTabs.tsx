@@ -315,7 +315,7 @@ export function PersonContentTabs({
 
         <TabPanel value={faceTabValue} index={0}>
           <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1 }}>
-            <Select
+            <Select inputProps={{ "aria-label": "Sort confirmed faces" }}
               size="small"
               value={facesSortBy}
               onChange={(e) => onFacesSortChange(e.target.value)}
