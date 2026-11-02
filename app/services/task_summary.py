@@ -80,6 +80,16 @@ def summarize_task(task: ProcessingTask) -> str:
             return summary
         return _plural(task.processed, "new file")
 
+    if task_type == "run_processor_for_media" and task.total:
+        # processed/total count processor x media pairs, not files (review R7-01).
+        media_ids = (task.params or {}).get("media_ids") or []
+        files = len({str(media_id) for media_id in media_ids}) if isinstance(media_ids, list) else 0
+        summary = (_plural(files, "file") + " · " if files else "") + _plural(task.processed, "processor run")
+        matched = _count(result.get("faces_matched")) or 0
+        if matched:
+            summary += ", " + _plural(matched, "face") + " matched to people"
+        return summary
+
     if task_type in ("process_media", "run_processor", "run_processor_for_media"):
         summary = "Nothing to do" if task.total == 0 else _plural(task.processed, "file") + " processed"
         matched = _count(result.get("faces_matched")) or 0

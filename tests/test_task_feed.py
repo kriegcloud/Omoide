@@ -56,6 +56,15 @@ class TaskSummaryTests(unittest.TestCase):
             "Nothing to do",
         )
 
+    def test_rerun_processors_counts_files_not_processor_operations(self) -> None:
+        # R7-01: six processors on one photo used to read "6 files processed".
+        task = self.task(
+            "run_processor_for_media", total=6, processed=6,
+            result={"faces_matched": 1},
+            params={"media_ids": [5624], "processor_names": ["faces", "embedding_extractor", "quality", "person_detection", "blur", "exif"]},
+        )
+        self.assertEqual(summarize_task(task), "1 file · 6 processor runs, 1 face matched to people")
+
     def test_cluster_persons_uses_nonzero_parts(self) -> None:
         self.assertEqual(
             summarize_task(
