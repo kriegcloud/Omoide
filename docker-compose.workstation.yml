@@ -19,6 +19,10 @@ services:
         required: true
     environment:
       HOME: /app/data/.home
+      OMP_NUM_THREADS: "8"
+      MKL_NUM_THREADS: "8"
+      OPENBLAS_NUM_THREADS: "8"
+      OMOIDE_ONNX_THREADS: "8"
       OMOIDE_DUPLICATES__DUPLICATE_AUTO_HANDLING: keep
       OMOIDE_GENERAL__DOCKER_MEDIA_READ_ONLY: "false"
       OMOIDE_GENERAL__MEDIA_EXPORT_HOST_ROOT_T7: "${HOST_MEDIA_DIR_T7}"

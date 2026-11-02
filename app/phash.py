@@ -7,7 +7,7 @@ from typing import Literal
 import cv2
 import imagehash
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 from app.logger import logger
 from app.models import Media
@@ -121,7 +121,7 @@ def generate_perceptual_hash(
     try:
         if type == "image":
             with Image.open(media.path) as img:
-                return str(imagehash.phash(img))
+                return str(imagehash.phash(ImageOps.exif_transpose(img)))
         if type == "video":
             return _generate_video_perceptual_hash(media)
     except Exception:

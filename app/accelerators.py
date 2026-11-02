@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -116,7 +117,6 @@ def resolve_onnx_providers(prefer_gpu: bool) -> tuple[list[str], bool]:
     available = ort.get_available_providers()
     gpu_priority = [
         "CUDAExecutionProvider",
-        "ROCMExecutionProvider",
         "TensorrtExecutionProvider",
         "MIGraphXExecutionProvider",
         "DirectMLExecutionProvider",
@@ -143,6 +143,16 @@ def create_onnx_session(model_path: Path, prefer_gpu: bool):
         # Load CUDA/cuDNN from the nvidia-* wheels (onnxruntime-gpu[cuda,cudnn])
         ort.preload_dlls()
     options = ort.SessionOptions()
+    try:
+        threads = int(os.environ.get("OMOIDE_ONNX_THREADS", "8"))
+        if threads < 1:
+            raise ValueError("thread count must be positive")
+    except ValueError:
+        logger.warning("Invalid OMOIDE_ONNX_THREADS; using 8")
+        threads = 8
+    options.intra_op_num_threads = threads
+    options.inter_op_num_threads = 1
+    options.add_session_config_entry("session.intra_op.allow_spinning", "0")
     if "DmlExecutionProvider" in providers:
         # DirectML does not support memory patterns or parallel execution.
         options.enable_mem_pattern = False
@@ -160,7 +170,7 @@ def create_onnx_session(model_path: Path, prefer_gpu: bool):
             exc,
         )
         session = ort.InferenceSession(
-            str(model_path), providers=["CPUExecutionProvider"]
+            str(model_path), sess_options=options, providers=["CPUExecutionProvider"]
         )
     logger.info(
         "Loaded %s/%s with providers %s",

@@ -8,7 +8,7 @@ from app.concurrency import heavy_writer
 from app.logger import logger
 from app.models import DuplicateGroup, DuplicateMedia, ProcessingTask
 from app.processors.duplicates import DuplicateProcessor
-from .hashes import generate_hashes
+from .hashes import generate_hashes, rehash_images
 from .common import _start_task
 
 __all__ = ["run_duplicate_detection"]
@@ -28,6 +28,10 @@ def run_duplicate_detection(task_id: str, threshold: int) -> None:
     with heavy_writer(name="find_duplicates", cancelled=is_cancelled) as acquired:
         if not acquired or is_cancelled():
             return
+        with Session(db.engine) as session:
+            task = session.get(ProcessingTask, task_id)
+            if task and (task.params or {}).get("recompute_images"):
+                rehash_images(session, cancelled=is_cancelled)
         generate_hashes(task_id)
         if is_cancelled():
             return

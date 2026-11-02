@@ -115,3 +115,29 @@ def generate_hashes(task_id: int | None = None) -> None:
                     task.processed = processed_so_far
                     session.add(task)
                     session.commit()
+
+
+def rehash_images(session: Session, cancelled=None) -> int:
+    """Recompute every still-image hash, committing bounded batches.
+
+    Caller owns writer exclusion. Failures retain the old hash and are logged
+    by generate_perceptual_hash. Videos and their hashes are untouched.
+    """
+    last_id = 0
+    updated = 0
+    while True:
+        if cancelled and cancelled():
+            return updated
+        batch = session.exec(select(Media).where(
+            Media.duration.is_(None), Media.id > last_id
+        ).order_by(Media.id).limit(200)).all()
+        if not batch:
+            return updated
+        for media in batch:
+            value = generate_perceptual_hash(media, "image")
+            if value:
+                media.phash = value
+                session.add(media)
+                updated += 1
+        last_id = batch[-1].id
+        session.commit()

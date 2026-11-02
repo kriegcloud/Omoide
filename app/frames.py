@@ -482,20 +482,41 @@ def _split_by_frames(media: Media) -> list[tuple[Scene, cv2.typing.MatLike]]:
                 duration = 0.0
 
     max_frames = max(1, int(settings.video.max_frames_per_video))
-    timestamps: list[float] = []
-    if duration and duration > 0:
-        step = duration / max_frames
-        min_step = 2
-        step = max(step, min_step)
-        timestamps = [max(0.0, i * step) for i in range(max_frames)]
-        # Seeks at or past EOF never return a frame; don't spawn ffmpeg for them.
-        timestamps = [ts for ts in timestamps if ts < duration]
-        if timestamps and timestamps[-1] + 1.0 < duration:
-            timestamps.append(duration)
-    else:
-        timestamps = [float(i) for i in range(max_frames)]
+    if duration <= 0:
+        return _extract_frames_at(media, [float(i) for i in range(max_frames)], duration)
 
-    return _extract_frames_at(media, timestamps, duration)
+    # The former uniform path produced ceil(duration / max(2, duration/cap))
+    # usable seeks. Never seek exactly at EOF (the old extra seek failed).
+    count = min(max_frames, max(1, math.ceil(duration / max(2.0, duration / max_frames))))
+    window = duration / count
+    timestamps = [(i + fraction) * window for i in range(count)
+                  for fraction in (0.2, 0.5, 0.8)]
+    candidates = _extract_frames_at(media, timestamps, duration)
+    from app.sharpness import laplacian_score
+
+    selected = {}
+    for scene, frame in candidates:
+        index = min(count - 1, int(scene.start_time / window))
+        score = laplacian_score(frame)
+        if index not in selected or score > selected[index][0]:
+            selected[index] = (score, scene, frame)
+    # Candidates that lost their window wrote thumbnails too; remove them so
+    # only the kept frame of each window leaves a file behind.
+    kept = {id(entry[1]) for entry in selected.values()}
+    for scene, _frame in candidates:
+        if id(scene) in kept or not scene.thumbnail_path:
+            continue
+        try:
+            (settings.general.thumb_dir / scene.thumbnail_path).unlink(missing_ok=True)
+        except OSError as exc:
+            logger.debug("Could not remove discarded frame thumbnail %s: %s", scene.thumbnail_path, exc)
+    result = []
+    for index in sorted(selected):
+        _, scene, frame = selected[index]
+        scene.start_time = index * window
+        scene.end_time = (index + 1) * window
+        result.append((scene, frame))
+    return result
 
 
 def _limit_scene_results(

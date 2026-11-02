@@ -12,7 +12,7 @@ import imagehash
 import piexif
 import pillow_heif
 from dateutil import parser as date_parser
-from PIL import ExifTags, Image, UnidentifiedImageError
+from PIL import ExifTags, Image, ImageOps, UnidentifiedImageError
 
 from app.config import settings
 from app.logger import logger
@@ -233,7 +233,7 @@ def process_file(filepath: Path) -> tuple[Media | None, Image.Image | None, str 
                     width, height = im.size
                     taken_at = _exif_taken_date(im, filepath)
                     try:
-                        phash = str(imagehash.phash(im))
+                        phash = str(imagehash.phash(ImageOps.exif_transpose(im)))
                     except Exception:
                         logger.warning(
                             "Failed to generate perceptual hash for %s",

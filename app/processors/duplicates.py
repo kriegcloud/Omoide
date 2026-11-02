@@ -16,6 +16,46 @@ from app.config import settings
 from app.config.schema import DuplicateHandlingRule, DuplicateKeepRule
 from app.records import delete_file, delete_record
 import imagehash
+import numpy as np
+
+
+def image_hash_pairs(hashes: np.ndarray, threshold: int):
+    """Yield all index pairs within radius using exact pigeonhole bands.
+
+    Store O(N * (radius + 1)) band entries, never an N-by-N distance matrix.
+    Candidates are verified in bounded vector batches. A radius >= 64 matches
+    everything; practical pHash radii are 0--8.
+    """
+    if threshold < 0:
+        return
+    hashes = np.asarray(hashes, dtype=np.uint64)
+    bands = min(threshold + 1, 64)
+    widths = [64 // bands + (i < 64 % bands) for i in range(bands)]
+    indexes = [{} for _ in widths]
+    for i, value in enumerate(hashes):
+        keys = []
+        offset = 0
+        candidates = set()
+        for index, width in zip(indexes, widths):
+            key = (int(value) >> offset) & ((1 << width) - 1)
+            candidates.update(index.get(key, ()))
+            keys.append(key)
+            offset += width
+        if threshold >= 64:
+            candidates = range(i)
+        candidates = list(candidates)
+        for start in range(0, len(candidates), 8192):
+            batch = np.asarray(candidates[start:start + 8192], dtype=np.intp)
+            xor = np.bitwise_xor(hashes[batch], value)
+            if hasattr(np, "bitwise_count"):
+                distances = np.bitwise_count(xor)
+            else:
+                distances = np.unpackbits(xor.view(np.uint8).reshape(-1, 8), axis=1).sum(axis=1)
+            for j in batch[distances <= threshold]:
+                yield int(j), i
+        for index, key in zip(indexes, keys):
+            index.setdefault(key, []).append(i)
+
 
 class UnionFind:
     def __init__(self, elements, ignored_pairs=()):
@@ -39,11 +79,13 @@ class UnionFind:
         if root_i != root_j:
             # Check whole components: skipping only the A/B edge still joins
             # an ignored pair transitively through a third item C.
-            if any(self.forbidden[member] & self.members[root_j]
-                   for member in self.members[root_i]):
+            if self.forbidden[root_i] & self.members[root_j]:
                 return
+            if len(self.members[root_i]) < len(self.members[root_j]):
+                root_i, root_j = root_j, root_i
             self.parent[root_j] = root_i
             self.members[root_i].update(self.members.pop(root_j))
+            self.forbidden[root_i].update(self.forbidden.pop(root_j))
 
 
 class DuplicateProcessor:
@@ -223,6 +265,9 @@ class DuplicateProcessor:
         if len(media_ids) < 2:
             return []
 
+        media_id_set = set(media_ids)
+        if not any(a in media_id_set and b in media_id_set for a, b in ignored_pairs):
+            return [list(media_ids)]
         uf = UnionFind(media_ids, ignored_pairs)
         ordered_ids = list(media_ids)
         for idx in range(len(ordered_ids)):
@@ -287,16 +332,13 @@ class DuplicateProcessor:
                     )
                     media_items = session.exec(media_with_same_hash_stmt).all()
                     media_by_id = {m.id: m for m in media_items}
-                    image_ids = [
-                        m.id for m in media_items if m.duration is None
-                    ]
                     video_ids = [
                         m.id for m in media_items if m.duration is not None
                     ]
 
-                    image_groups = self._partition_non_ignored_groups(
-                        image_ids, ignored_pairs
-                    )
+                    # Handle images once below, across exact AND near matches,
+                    # so auto-resolution selects the master of the full group.
+                    image_groups = []
                     video_groups = self._partition_non_ignored_groups(
                         video_ids, ignored_pairs
                     )
@@ -336,6 +378,56 @@ class DuplicateProcessor:
                 logger.info(
                     f"Completed grouping {len(duplicate_hashes)} sets of identical media hashes."
                 )
+
+                # Images use the same Hamming radius as videos. Collapse exact
+                # hashes first so repeated copies do not inflate the band index.
+                image_rows = session.exec(select(Media.id, Media.phash).where(
+                    Media.duration.is_(None), Media.phash.is_not(None)
+                ).order_by(Media.id)).all()
+                by_hash = {}
+                for media_id, phash in image_rows:
+                    try:
+                        if len(phash) != 16:
+                            continue
+                        value = int(phash, 16)
+                        if not 0 <= value < 2**64:
+                            continue
+                    except (ValueError, TypeError):
+                        continue
+                    by_hash.setdefault(value, []).append(media_id)
+                uf_images = UnionFind([mid for ids in by_hash.values() for mid in ids], ignored_pairs)
+                for ids in by_hash.values():
+                    for group in self._partition_non_ignored_groups(ids, ignored_pairs):
+                        for mid in group[1:]:
+                            uf_images.union(group[0], mid)
+                values = list(by_hash)
+                progress_total += len(values)
+                for pair_no, (a, b) in enumerate(image_hash_pairs(np.array(values, dtype=np.uint64), self.threshold)):
+                    if not ignored_pairs:
+                        uf_images.union(by_hash[values[a]][0], by_hash[values[b]][0])
+                    else:
+                        # Exact copies already form safe components. Compare
+                        # component representatives, not every pair of copies.
+                        left_roots = {uf_images.find(mid) for mid in by_hash[values[a]]}
+                        right_roots = {uf_images.find(mid) for mid in by_hash[values[b]]}
+                        for left in sorted(left_roots):
+                            for right in sorted(right_roots):
+                                uf_images.union(left, right)
+                    if pair_no % 1000 == 0 and self._update_task_progress_and_check_status(
+                        session, progress_processed, progress_total
+                    ):
+                        return
+                image_groups = {}
+                for ids in by_hash.values():
+                    for mid in ids:
+                        image_groups.setdefault(uf_images.find(mid), []).append(mid)
+                for ids in image_groups.values():
+                    if len(ids) > 1:
+                        if settings.duplicates.duplicate_auto_handling is DuplicateHandlingRule.KEEP:
+                            self._create_or_update_group(session, ids)
+                        else:
+                            self._auto_resolve_duplicates_by_ids(session, ids)
+                progress_processed += len(values)
 
                 near_duplicate_groups = 0
                 if self.threshold and self.threshold > 0:

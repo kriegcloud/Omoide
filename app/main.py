@@ -15,6 +15,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
 
+# Establish native-library defaults before processor imports (no eager Torch import).
+for _thread_env in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+    os.environ.setdefault(_thread_env, "8")
+
 # Keep the alternate PyInstaller entry point safe as well. On Windows a
 # multiprocessing worker re-executes the frozen application; this must happen
 # before importing Torch/OpenCLIP or creating a webview window.
@@ -556,7 +560,11 @@ async def lifespan(app: FastAPI):
     # gates uvicorn's socket bind, which is what the frozen binary's loading
     # screen polls for.
     logger.info("lifespan: loading processors...")
+    import cv2
+    cv2.setNumThreads(4)
     load_processors()
+    if "torch" in sys.modules:
+        sys.modules["torch"].set_num_threads(8)
     logger.info("lifespan: processors loaded")
     if settings.processors.image_embedding_processor_active:
         threading.Thread(
