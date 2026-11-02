@@ -45,6 +45,7 @@ function harness(relative, overrides = {}) {
     '../TaskEventsContext': {useTaskCompletionVersion: () => 0},
     '../config': {__esModule: true, default: {PRESENTATION_MODE: false}},
     '../services/mediaActions': {deleteMediaFile: async (id) => deleted.push(id), deleteMediaRecord: async (id) => deleted.push(id)},
+    './tileContextMenu': {useTileContextMenu: () => {}},
     '../hotkeys/keymap': {getTopModal: () => childOpen ? {} : viewerRoot},
     '../hotkeys/useHotkey': {useHotkeyHelp: () => () => {}, useDialogHotkeyScope: () => ({current: viewerRoot}), useHotkey: (binding, handler, options) => hotkeys.push({binding, handler, options}), useHotkeys: (bindings, handler, options) => hotkeys.push({bindings, handler, options})},
     ...overrides,

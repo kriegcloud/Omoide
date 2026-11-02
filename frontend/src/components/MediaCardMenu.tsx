@@ -44,6 +44,7 @@ import AddToDatasetDialog from "./AddToDatasetDialog";
 import RepairDialog from "./RepairDialog";
 import { startRepair } from "../services/repairs";
 import type { RepairProfile } from "../types";
+import { useTileContextMenu, type TileMenuPoint } from "./tileContextMenu";
 
 
 export interface MediaPersonContext {
@@ -72,6 +73,11 @@ export default function MediaCardMenu({
 }: MediaCardMenuProps) {
   useUndoRefresh(mediaListKey ? `cache:${mediaListKey}` : undefined, () => refreshCachedList(mediaListKey!));
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  const [anchorPoint, setAnchorPoint] = useState<TileMenuPoint | null>(null);
+  useTileContextMenu((point) => {
+    setAnchorEl(null);
+    setAnchorPoint(point);
+  });
   const [repairAnchorEl, setRepairAnchorEl] = useState<HTMLElement | null>(null);
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [busy, setBusy] = useState(false);
@@ -93,7 +99,10 @@ export default function MediaCardMenu({
     event.preventDefault();
     event.stopPropagation();
   };
-  const closeMenu = () => setAnchorEl(null);
+  const closeMenu = () => {
+    setAnchorEl(null);
+    setAnchorPoint(null);
+  };
   const openDialog = (kind: DialogKind) => {
     closeMenu();
     setDialogError(null);
@@ -220,6 +229,7 @@ export default function MediaCardMenu({
           size="small"
           onClick={(event) => {
             stop(event);
+            setAnchorPoint(null);
             setAnchorEl(event.currentTarget);
           }}
           sx={{
@@ -232,8 +242,10 @@ export default function MediaCardMenu({
         </IconButton>
       </Tooltip>
       <Menu
+        anchorReference={anchorPoint ? "anchorPosition" : "anchorEl"}
+        anchorPosition={anchorPoint ?? undefined}
         anchorEl={anchorEl}
-        open={Boolean(anchorEl)}
+        open={Boolean(anchorEl) || Boolean(anchorPoint)}
         onClose={closeMenu}
         onClick={(event) => event.stopPropagation()}
       >

@@ -13,11 +13,21 @@ import EditNoteIcon from "@mui/icons-material/EditNote";
 import CropIcon from "@mui/icons-material/Crop";
 import RemoveCircleOutlineIcon from "@mui/icons-material/RemoveCircleOutline";
 import type { MediaDatasetContext } from "./MediaCard";
+import { useTileContextMenu, type TileMenuPoint } from "./tileContextMenu";
 
 export default function DatasetItemMenu({ context }: { context: MediaDatasetContext }) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
-  const action = (callback: () => void) => {
+  const [point, setPoint] = useState<TileMenuPoint | null>(null);
+  useTileContextMenu((next) => {
     setAnchor(null);
+    setPoint(next);
+  });
+  const close = () => {
+    setAnchor(null);
+    setPoint(null);
+  };
+  const action = (callback: () => void) => {
+    close();
     callback();
   };
   return (
@@ -29,6 +39,7 @@ export default function DatasetItemMenu({ context }: { context: MediaDatasetCont
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
+            setPoint(null);
             setAnchor(event.currentTarget);
           }}
           sx={{ color: "common.white", bgcolor: "rgba(0,0,0,0.48)", "&:hover": { bgcolor: "rgba(0,0,0,0.68)" } }}
@@ -36,7 +47,14 @@ export default function DatasetItemMenu({ context }: { context: MediaDatasetCont
           <MoreVertIcon fontSize="small" />
         </IconButton>
       </Tooltip>
-      <Menu anchorEl={anchor} open={Boolean(anchor)} onClose={() => setAnchor(null)}>
+      <Menu
+        anchorReference={point ? "anchorPosition" : "anchorEl"}
+        anchorPosition={point ?? undefined}
+        anchorEl={anchor}
+        open={Boolean(anchor) || Boolean(point)}
+        onClose={close}
+        onClick={(event) => event.stopPropagation()}
+      >
         <MenuItem onClick={() => action(context.onToggleExcluded)}>
           <ListItemIcon>{context.excluded ? <CheckCircleOutlineIcon /> : <BlockIcon />}</ListItemIcon>
           {context.excluded ? "Include" : "Exclude"}

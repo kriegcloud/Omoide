@@ -82,6 +82,14 @@ function load(relative, runtime, overrides = {}) {
     '../utils/faceBox': { uprightFaceDimensions: (width, height) => [width, height] },
     '../components/GalleryPage': { default: 'GalleryPage', __esModule: true },
     './SelectableTileFrame': { default: 'SelectableTileFrame', __esModule: true },
+    // Right-click menu registry: the frame provides it; menus are mocked here.
+    './tileContextMenu': {
+      __esModule: true,
+      TileContextMenuContext: { Provider: 'TileContextMenuProvider' },
+      createTileContextMenuRegistry: () => { let h = null; return { register: (next) => { h = next; return () => {}; }, current: () => h }; },
+      tileMenuPoint: () => null,
+      useTileContextMenu() {},
+    },
     // Hotkey registry is exercised by src/hotkeys/tests; here it is a no-op that returns an unsubscribe.
     '../hotkeys/useHotkey': { __esModule: true, useHotkeyRegistry: () => () => () => {}, useHotkey() {}, useHotkeys() {} },
     '../hooks/useMarqueeSelection': { ...loadHookHelpers(), __esModule: true },

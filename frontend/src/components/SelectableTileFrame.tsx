@@ -4,6 +4,7 @@ import OpenInFullIcon from "@mui/icons-material/OpenInFull";
 import type { SxProps, Theme } from "@mui/material";
 import { Link as RouterLink, useNavigate } from "react-router-dom";
 import type { SelectionClickEvent } from "../hooks/useMarqueeSelection";
+import { TileContextMenuContext, createTileContextMenuRegistry, tileMenuPoint, type TileContextMenuRegistry } from "./tileContextMenu";
 
 interface SelectableTileFrameProps
   extends Omit<HTMLAttributes<HTMLDivElement>, "id" | "children" | "onClick"> {
@@ -106,6 +107,9 @@ export default function SelectableTileFrame({
   const isSelecting = selectionEnabled && selecting;
   const isCheckbox = selectionEnabled && (selecting || keyboardReview);
   const content = <Box sx={{ position: "relative", aspectRatio }}>{children}</Box>;
+  const contextMenuRef = useRef<TileContextMenuRegistry | null>(null);
+  contextMenuRef.current ??= createTileContextMenuRegistry();
+  const contextMenu = contextMenuRef.current;
 
   return (
     <Box
@@ -168,6 +172,15 @@ export default function SelectableTileFrame({
           event.currentTarget.contains(target) && !target.closest(CONTROL_SELECTOR) && onOpen
         ) onOpen();
       }}
+      onContextMenu={(event) => {
+        const handler = contextMenu.current();
+        const point = tileMenuPoint(event, event.currentTarget.getBoundingClientRect(), !!handler);
+        if (!handler || !point) return;
+        event.preventDefault();
+        event.stopPropagation();
+        firstClickUndo.current = null;
+        handler(point);
+      }}
       onKeyDown={(event) => {
         const target = event.target;
         if (event.defaultPrevented || !(target instanceof Element) ||
@@ -213,6 +226,7 @@ export default function SelectableTileFrame({
         ...(Array.isArray(sx) ? sx : [sx]),
       ]}
     >
+      <TileContextMenuContext.Provider value={contextMenu}>
       <Box sx={{ position: "relative" }}>
         {href ? (
           <RouterLink
@@ -293,7 +307,7 @@ export default function SelectableTileFrame({
           </Box>
         )}
         {!isSelecting && menu && (
-          <Box data-tile-control data-no-marquee sx={{ ...scrim, right: inset }}>
+          <Box data-tile-control data-no-marquee sx={{ position: "absolute", top: inset, right: inset, zIndex: 20 }}>
             {menu}
           </Box>
         )}
@@ -312,6 +326,7 @@ export default function SelectableTileFrame({
           {footer}
         </RouterLink>
       ) : footer}
+      </TileContextMenuContext.Provider>
     </Box>
   );
 }
