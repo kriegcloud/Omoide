@@ -67,6 +67,18 @@ for url in sorted(parser.urls):
     print(url)
 PYTHON
 
+# Reject stale/corrupt sidecars before publishing any generation.
+python3 - "$src_dir/frontend/dist" <<'PYTHON'
+import gzip
+import sys
+from pathlib import Path
+
+for sidecar in Path(sys.argv[1]).rglob("*.gz"):
+    original = Path(str(sidecar)[:-3])
+    if not original.is_file() or gzip.decompress(sidecar.read_bytes()) != original.read_bytes():
+        raise SystemExit(f"invalid compressed asset: {sidecar.name}")
+PYTHON
+
 mkdir -p "$static_dir"
 # Retention begins when a generation is retired, not at its original build time.
 # The first run has no generation manifest: grant every preexisting chunk one grace period.
@@ -81,6 +93,10 @@ if manifest.exists():
     outgoing = [static / relative for relative in json.loads(manifest.read_text(encoding="utf-8"))]
 else:
     outgoing = list((static / "assets").rglob("*"))
+# Older generation manifests predate sidecars. Give those representations the
+# same retirement window as the logical file when upgrading this script.
+for asset in list(outgoing):
+    outgoing.extend(Path(str(asset) + suffix) for suffix in (".gz",))
 for asset in outgoing:
     if asset.is_file() and not asset.is_symlink() and asset.resolve().is_relative_to(static / "assets"):
         asset.touch()

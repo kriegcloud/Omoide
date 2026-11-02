@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import io
 import json
 import logging
@@ -6,6 +7,7 @@ import math
 import mimetypes
 import multiprocessing
 import os
+import re
 import sys
 import threading
 import time
@@ -94,6 +96,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import Headers, MutableHeaders
+from starlette.middleware.gzip import GZipMiddleware, GZipResponder
+from starlette.staticfiles import NotModifiedResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from PIL import Image, ImageOps
 from sqlalchemy import and_, or_
 from sqlmodel import Session, select
@@ -764,28 +770,128 @@ app.include_router(datasets.router, prefix="/api/datasets", tags=["datasets"])
 app.include_router(repairs.router, prefix="/api/repairs", tags=["repairs"])
 
 
+def _accepts_encoding(value: str, encoding: str) -> bool:
+    """Respect explicit exclusions, including gzip;q=0 with a wildcard."""
+    qualities = {}
+    for part in value.lower().split(","):
+        token, *parameters = part.strip().split(";")
+        quality = 1.0
+        for parameter in parameters:
+            key, _, raw = parameter.strip().partition("=")
+            if key == "q":
+                try:
+                    quality = float(raw)
+                except ValueError:
+                    quality = 0.0
+        qualities[token] = quality if 0 <= quality <= 1 else 0.0
+    return qualities.get(encoding, qualities.get("*", 0.0)) > 0
+
+
+def _is_compressible_text(content_type: str) -> bool:
+    content_type = content_type.split(";")[0]
+    return content_type != "text/event-stream" and (
+        content_type.startswith("text/")
+        or content_type in {"application/json", "application/javascript", "application/xml"}
+        or content_type.endswith("+json")
+    )
+
+
+class TextGZipResponder(GZipResponder):
+    async def send_with_compression(self, message):
+        await super().send_with_compression(message)
+        if message["type"] == "http.response.start":
+            # Do not recompress images, video, archives or SSE.
+            content_type = Headers(raw=message["headers"]).get("content-type", "")
+            self.content_type_is_excluded = not _is_compressible_text(content_type)
+
+
+class TextGZipMiddleware(GZipMiddleware):
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        async def send_with_vary(message):
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(raw=message["headers"])
+                if (_is_compressible_text(headers.get("content-type", ""))
+                        and "accept-encoding" not in headers.get("vary", "").lower()):
+                    headers.add_vary_header("Accept-Encoding")
+            await send(message)
+
+        headers = Headers(scope=scope)
+        if ("range" not in headers
+                and _accepts_encoding(headers.get("accept-encoding", ""), "gzip")):
+            responder = TextGZipResponder(self.app, self.minimum_size, compresslevel=self.compresslevel)
+            await responder(scope, receive, send_with_vary)
+        else:
+            await self.app(scope, receive, send_with_vary)
+
+
+class TransportStaticFiles(StaticFiles):
+    """Serve build sidecars without changing logical URLs or old chunk retention."""
+    async def get_response(self, path, scope):
+        headers = Headers(scope=scope)
+        response = None
+        encoded = False
+        if (path.endswith((".js", ".css", ".json", ".svg", ".html", ".txt"))
+                and "range" not in headers
+                and _accepts_encoding(headers.get("accept-encoding", ""), "gzip")):
+            try:
+                response = await super().get_response(path + ".gz", scope)
+                encoded = response.status_code in {200, 304}
+            except StarletteHTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+        if not encoded:
+            response = await super().get_response(path, scope)
+        if response.status_code in {200, 206, 304}:
+            hashed = re.fullmatch(r"assets/.+-[A-Za-z0-9_-]{8,}\.[^.]+", path)
+            response.headers["Cache-Control"] = (
+                "private, max-age=31536000, immutable" if hashed else "private, no-cache"
+            )
+            response.headers["Vary"] = "Accept-Encoding"
+            if encoded:
+                response.headers["Content-Encoding"] = "gzip"
+                if response.status_code != 304:
+                    response.headers["Content-Type"] = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        return response
+
+
+app.add_middleware(TextGZipMiddleware, minimum_size=1000, compresslevel=6)
+
+
 @app.get("/thumbnails/{file_path:path}", include_in_schema=False)
-async def serve_thumbnail(file_path: str):
-    base = settings.general.thumb_dir
-    requested = Path(file_path)
-    # Prevent path traversal by resolving and ensuring base is a parent
-    try:
-        full_path = (base / requested).resolve()
-        full_path.relative_to(base.resolve())
-    except Exception:
-        raise HTTPException(status_code=404, detail="File not found")
+async def serve_thumbnail(file_path: str, request: Request):
+    def _response():
+        base = settings.general.thumb_dir.resolve()
+        try:
+            full_path = (base / file_path).resolve()
+            full_path.relative_to(base)
+            stat_result = full_path.stat()
+            if not full_path.is_file():
+                raise ValueError("not a file")
+        except (OSError, RuntimeError, ValueError):
+            raise HTTPException(status_code=404, detail="File not found")
+        # Nanosecond timestamps + inode distinguish in-place edits and atomic
+        # replacement, including equal-size rewrites with a preserved mtime.
+        version = f"{stat_result.st_dev}:{stat_result.st_ino}:{stat_result.st_size}:{stat_result.st_mtime_ns}:{stat_result.st_ctime_ns}"
+        etag = '"' + hashlib.sha256(version.encode()).hexdigest() + '"'
+        response = FileResponse(
+            full_path, stat_result=stat_result,
+            media_type=mimetypes.guess_type(full_path)[0] or "application/octet-stream",
+            headers={"Cache-Control": "private, no-cache", "ETag": etag, "Accept-Ranges": "bytes"},
+        )
+        # If-None-Match takes precedence over dates; '*' also matches an existing file.
+        matches = request.headers.get("if-none-match")
+        not_modified = (
+            any(tag.strip().removeprefix("W/") in {etag, "*"} for tag in matches.split(","))
+            if matches is not None else StaticFiles.is_not_modified(None, response.headers, request.headers)
+        )
+        if not_modified:
+            return NotModifiedResponse(response.headers)
+        return response
 
-    if not full_path.is_file():
-        raise HTTPException(status_code=404, detail="File not found")
-
-    # Guess MIME
-    mime_type, _ = mimetypes.guess_type(full_path)
-    if mime_type is None:
-        mime_type = "application/octet-stream"
-
-    resp = FileResponse(full_path, media_type=mime_type)
-    resp.headers["Accept-Ranges"] = "bytes"
-    return resp
+    return await to_thread.run_sync(_response)
 
 
 @app.get("/originals/{file_path:path}", include_in_schema=False)
@@ -870,7 +976,7 @@ async def serve_original_media(file_path: str):
 
 app.mount(
     "/static",
-    StaticFiles(directory=str(settings.general.static_dir), html=True),
+    TransportStaticFiles(directory=str(settings.general.static_dir), html=True),
     name="static",
 )
 # app.mount(
@@ -977,7 +1083,7 @@ async def spa_catch_all(full_path: str):
 
     return HTMLResponse(
         content=modified_html,
-        headers={"Cache-Control": "no-cache, max-age=0, must-revalidate"},
+        headers={"Cache-Control": "private, no-cache, max-age=0, must-revalidate"},
     )
 
 

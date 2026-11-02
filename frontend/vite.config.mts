@@ -1,9 +1,34 @@
 /// <reference types="vite/client" />
 /// <reference types="vite/types/importMeta.d.ts" />
 
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
+import { readFile, writeFile } from "node:fs/promises";
+import { gzipSync } from "node:zlib";
+
+// BEGIN transport precompression
+function precompressTextAssets(): Plugin {
+  return {
+    name: "omoide-precompress-text",
+    apply: "build",
+    async writeBundle(options, bundle) {
+      // Emit alongside the exact hashed generation, including lazy chunks.
+      // No package/plugin dependency and no compression work on an asset GET.
+      for (const filename of Object.keys(bundle)) {
+        if (!/\.(js|css|json|svg|txt)$/.test(filename)) continue;
+        const target = path.resolve(options.dir || "dist", filename);
+        const original = await readFile(target);
+        if (original.length < 1000) continue;
+        const compressed = gzipSync(original, { level: 9 });
+        if (compressed.length < original.length) {
+          await writeFile(`${target}.gz`, compressed);
+        }
+      }
+    },
+  };
+}
+// END transport precompression
 
 export default defineConfig(({ mode, command }) => {
   const domain = process.env.DOMAIN || "http://localhost:8123/";
@@ -19,7 +44,7 @@ export default defineConfig(({ mode, command }) => {
 
   return {
     base: base,
-    plugins: [react()],
+    plugins: [react(), precompressTextAssets()],
     server: {
       port: 5173,
       proxy: {
