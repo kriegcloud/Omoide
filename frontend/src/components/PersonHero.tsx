@@ -267,6 +267,7 @@ export function PersonHero({
           }}
         >
           <PersonEditForm
+            key={person.id}
             initialPersonData={{ name: person.name ?? "" }}
             onSave={onSave}
             saving={saving}

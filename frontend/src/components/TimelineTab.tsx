@@ -57,7 +57,7 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia,
     await refreshCachedList(listKey);
   };
   useUndoRefresh(`cache:${listKey}`, refreshTimeline);
-  useMutationRefresh(["face:assigned", "face:detached", "face:deleted", "media:deleted", "media:updated", "person:changed"], refreshTimeline);
+  useMutationRefresh(["face:assigned", "face:detached", "face:deleted", "media:deleted", "media:updated", "person:changed", "media:moved", "list:invalidate", "tag:changed"], refreshTimeline);
   const { ref, inView } = useInView({
     threshold: 0.5,
     skip: isLoading || !hasMore,

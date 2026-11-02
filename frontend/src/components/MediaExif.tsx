@@ -1,3 +1,4 @@
+import { useMutationRefresh } from "../context/UndoContext";
 import ListState from "./ListState";
 import React, { useState, useEffect } from "react";
 import {
@@ -32,6 +33,8 @@ export function MediaExif({ mediaId }: MediaExifProps) {
   );
   const [retry, setRetry] = useState(0);
   const [exif, setExif] = useState<ExifData | null>(null);
+
+  useMutationRefresh(["media:updated", "media:moved", "media:deleted", "list:invalidate"], () => setRetry(value => value + 1));
 
   useEffect(() => {
     // This effect runs only when the component is first mounted (i.e., when the tab is clicked)

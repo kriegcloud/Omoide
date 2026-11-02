@@ -1,5 +1,6 @@
+import { useListInvalidation } from "../stores/useListStore";
 import { readCachedList } from "../stores/useListStore";
-import { useUndoRefresh } from "../context/UndoContext";
+import { useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
 import { refreshCachedList } from "../stores/useListStore";
 import React, { useState, useEffect, useRef } from "react";
 import { Box, CircularProgress, Autocomplete, TextField } from "@mui/material";
@@ -55,6 +56,7 @@ export default function MediaAppearances({
   );
   const fetchInitial = useListStore(state => state.fetchInitial);
   const loadMore = useListStore(state => state.loadMore);
+  useListInvalidation(mediaListKey);
   const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
 
   useUndoRefresh(`cache:${mediaListKey}`, () => refreshCachedList(mediaListKey));
@@ -73,14 +75,19 @@ export default function MediaAppearances({
     onSelectionChange: setSelected,
   });
 
+  const [optionsRevision, setOptionsRevision] = useState(0);
+  useMutationRefresh(["person:changed", "person:created", "face:assigned", "face:detached", "face:deleted", "media:deleted", "tag:changed", "list:invalidate"], () => setOptionsRevision(value => value + 1));
+
   useEffect(() => {
+    let active = true;
     getPeople()
       .then((data) => {
         const options = data.items.filter((p) => p.id !== person.id);
-        setPersonOptions(options);
+        if (active) setPersonOptions(options);
       })
       .catch((err) => console.error("Failed to fetch person options:", err));
-  }, [person.id]);
+    return () => { active = false; };
+  }, [person.id, optionsRevision]);
 
   useEffect(() => {
     let active = true;
@@ -102,7 +109,7 @@ export default function MediaAppearances({
     return () => {
       active = false;
     };
-  }, [tagQuery]);
+  }, [tagQuery, optionsRevision]);
 
   useEffect(() => {
     const filterIds = filterPeople.map((p) => p.id);

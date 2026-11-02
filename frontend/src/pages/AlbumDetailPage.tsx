@@ -1,3 +1,4 @@
+import { useMutationRefresh } from "../context/UndoContext";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { useUndo, useUndoRefresh } from "../context/UndoContext";
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -56,10 +57,23 @@ export default function AlbumDetailPage() {
   const [refreshToken, setRefreshToken] = useState(0);
   const [snackbar, setSnackbar] = useState("");
 
+  const metadataRequest = useRef(0);
+  useMutationRefresh(["album:changed", "media:deleted", "media:updated", "media:moved", "list:invalidate"], async () => {
+    const request = ++metadataRequest.current;
+    const version = generation.current;
+    try {
+      const data = await getAlbum(albumId);
+      if (request === metadataRequest.current && generation.current === version && routeId.current === albumId) setAlbum(data);
+    } catch (error) {
+      if (request === metadataRequest.current && generation.current === version && routeId.current === albumId) setError(error instanceof Error ? error.message : "Failed to refresh album");
+    }
+  });
+
   useEffect(() => {
     const version = ++generation.current;
+    const request = ++metadataRequest.current;
     const controller = new AbortController();
-    const current = () => !controller.signal.aborted && generation.current === version && routeId.current === albumId;
+    const current = () => request === metadataRequest.current && !controller.signal.aborted && generation.current === version && routeId.current === albumId;
     setAlbum(null); setError(null); actionBusy.current = false; setBusy(false);
     setRenameOpen(false); setDeleteTarget(null);
     if (Number.isFinite(albumId)) getAlbum(albumId, controller.signal)
@@ -75,9 +89,10 @@ export default function AlbumDetailPage() {
   );
 
   useUndoRefresh(`album-info:${albumId}`, async () => {
+    const request = ++metadataRequest.current;
     const version = generation.current;
     const result = await getAlbum(albumId);
-    if (routeId.current === albumId && generation.current === version) setAlbum(result);
+    if (routeId.current === albumId && generation.current === version && request === metadataRequest.current) setAlbum(result);
   });
 
   const handleRename = async () => {

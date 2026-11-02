@@ -9,7 +9,7 @@ test('cursor grid receives card deletion and blocks stale page resurrection',asy
   '../context/SelectionContext':{useSelection:()=>({selectedIds:new Set(),setSelected:noop,beginSelecting:noop,clear:noop})},
   '../hooks/useMarqueeSelection':{useGridSelection:()=>({})},
  }).CursorMediaGrid;
- const fetcher=()=>pending.promise;const render=()=>runtime.render(()=>Component({listKey:'album-1',fetcher}));
+ let calls=0;const fetcher=()=>++calls===1?pending.promise:Promise.resolve({items:calls===2?[{id:8}]:[],next_cursor:null});const render=()=>runtime.render(()=>Component({listKey:'album-1',fetcher}));
  render();events.emit({type:'media:deleted',ids:[7]});pending.resolve({items:[{id:7},{id:8}],next_cursor:null});await settle();
  const view=render();const grid=component(view,'react-masonry-css');const cards=[grid.props.children].flat();assert.deepEqual(cards.map(n=>n.props.children.props.media.id),[8]);
  events.emit({type:'media:deleted',ids:[8]});assert.equal(component(render(),'react-masonry-css'),undefined);
@@ -44,7 +44,7 @@ test('cursor pagination does not restore the old total after a deletion in an ea
   '../stores/mutationBus':{mutationBus:events},'../stores/listReconciliation':requireTranspiled('stores/listReconciliation.ts'),
   'react-intersection-observer':{useInView:()=>({ref:noop,inView:visible})},
  }).useCursorList;
- const fetcher=cursor=>cursor?pending.promise:Promise.resolve({items:[{id:1}],next_cursor:'next',total:10});const render=()=>runtime.render(()=>hook(fetcher));
+ let initialReads=0;const fetcher=cursor=>cursor?pending.promise:Promise.resolve(++initialReads===1?{items:[{id:1}],next_cursor:'next',total:10}:{items:[],next_cursor:null,total:9});const render=()=>runtime.render(()=>hook(fetcher));
  render();await settle();assert.equal(render().total,10);visible=true;render();events.emit({type:'media:deleted',ids:[1]});assert.equal(render().total,9);
  pending.resolve({items:[{id:2}],next_cursor:null,total:10});await settle();assert.equal(render().total,9);
 });

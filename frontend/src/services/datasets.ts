@@ -1,3 +1,4 @@
+import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
 import type {
   DatasetExport,
@@ -70,20 +71,33 @@ export const getDatasets = () => fetch(`${API}/api/datasets`).then(json<Training
 export const getDataset = (id: number) => fetch(`${API}/api/datasets/${id}`).then(json<TrainingDataset>);
 export const createDataset = (input: DatasetInput) => fetch(`${API}/api/datasets`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
-}).then(json<TrainingDataset>);
+}).then(json<TrainingDataset>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [result.id] });
+    return result;
+  });
 export const updateDataset = (id: number, input: Partial<TrainingDataset>) => fetch(`${API}/api/datasets/${id}`, {
   method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
-}).then(json<TrainingDataset>);
+}).then(json<TrainingDataset>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [id] });
+    return result;
+  });
 export const deleteDataset = async (id: number): Promise<void> => {
   const response = await fetch(`${API}/api/datasets/${id}`, { method: "DELETE" });
   if (!response.ok) throw new Error(`Failed to delete dataset (${response.status})`);
+  mutationBus.emit({ type: "dataset:changed", ids: [id] });
 };
 export const addDatasetItems = (id: number, mediaIds: number[]) => fetch(`${API}/api/datasets/${id}/items`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ media_ids: mediaIds }),
-}).then(json<{ added_ids: number[]; skipped_ids: number[] }>);
+}).then(json<{ added_ids: number[]; skipped_ids: number[] }>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [id] });
+    return result;
+  });
 export const removeDatasetItems = (id: number, mediaIds: number[]) => fetch(`${API}/api/datasets/${id}/items`, {
   method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ media_ids: mediaIds }),
-}).then(json<{ added_ids: number[]; skipped_ids: number[] }>);
+}).then(json<{ added_ids: number[]; skipped_ids: number[] }>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [id] });
+    return result;
+  });
 export const getDatasetItems = (id: number, cursor?: string | null, sort = "position") => {
   const params = new URLSearchParams({ limit: "500" });
   if (cursor) params.set("cursor", cursor);
@@ -96,11 +110,17 @@ export const updateDatasetItem = (datasetId: number, itemId: number, input: {
   weight?: number; position?: number; reviewed_at?: string | null;
 }) => fetch(`${API}/api/datasets/${datasetId}/items/${itemId}`, {
   method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
-}).then(json<DatasetItem>);
+}).then(json<DatasetItem>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [datasetId] });
+    return result;
+  });
 export const reviewDatasetItem = (datasetId: number, itemId: number) => fetch(
   `${API}/api/datasets/${datasetId}/items/${itemId}/review`,
   { method: "POST" },
-).then(json<DatasetItem>);
+).then(json<DatasetItem>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [datasetId] });
+    return result;
+  });
 export const getDatasetTriage = (
   id: number,
   filter: DatasetTriageFilter,
@@ -114,17 +134,26 @@ export const getDatasetTriage = (
 };
 export const createDatasetExport = (id: number, layout?: DatasetExportLayout) => fetch(`${API}/api/datasets/${id}/export`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ layout }),
-}).then(json<DatasetExport>);
+}).then(json<DatasetExport>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [id] });
+    return result;
+  });
 export const getDatasetExports = (id: number) => fetch(`${API}/api/datasets/${id}/exports`).then(json<DatasetExport[]>);
 export const getTrainingRuns = (id: number) => fetch(`${API}/api/datasets/${id}/runs`).then(json<TrainingRun[]>);
 export const getTrainingHealth = () => fetch(`${API}/api/datasets/training/health`).then(json<TrainingHealth>);
 export const getTrainingPresets = () => fetch(`${API}/api/datasets/training/presets`).then(json<TrainingPreset[]>);
 export const createTrainingRun = (id: number, input: TrainingRunInput) => fetch(`${API}/api/datasets/${id}/train`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
-}).then(json<TrainingRun>);
+}).then(json<TrainingRun>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [id] });
+    return result;
+  });
 export const cancelTrainingRun = (runId: number) => fetch(`${API}/api/datasets/runs/${runId}/cancel`, {
   method: "POST",
-}).then(json<TrainingRun>);
+}).then(json<TrainingRun>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [] });
+    return result;
+  });
 export const getTrainingSamples = (runId: number) => fetch(`${API}/api/datasets/runs/${runId}/samples`).then(json<TrainingSample[]>);
 export const getTrainingRunLikeness = (runId: number) => fetch(`${API}/api/datasets/runs/${runId}/likeness`).then(json<RunLikeness>);
 export const getDatasetRunLikeness = (id: number, runIds?: number[]) => {
@@ -133,29 +162,53 @@ export const getDatasetRunLikeness = (id: number, runIds?: number[]) => {
 };
 export const rescoreTrainingRun = (runId: number) => fetch(`${API}/api/datasets/runs/${runId}/rescore`, {
   method: "POST",
-}).then(json<{ queued: number }>);
+}).then(json<{ queued: number }>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [] });
+    return result;
+  });
 export const trainingSampleImageUrl = (runId: number, sampleId: number) => `${API}/api/datasets/runs/${runId}/samples/${sampleId}/image`;
 export const createEvalBatch = (runId: number, input: EvalBatchInput) => fetch(`${API}/api/datasets/runs/${runId}/eval`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
-}).then(json<EvalBatch>);
+}).then(json<EvalBatch>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [] });
+    return result;
+  });
 export const getEvalBatches = (runId: number) => fetch(`${API}/api/datasets/runs/${runId}/evals`).then(json<EvalBatch[]>);
 export const getEvalBatch = (batchId: number) => fetch(`${API}/api/datasets/evals/${batchId}`).then(json<EvalBatch>);
-export const cancelEvalBatch = (batchId: number) => fetch(`${API}/api/datasets/evals/${batchId}/cancel`, { method: "POST" }).then(json<EvalBatch>);
+export const cancelEvalBatch = (batchId: number) => fetch(`${API}/api/datasets/evals/${batchId}/cancel`, { method: "POST" }).then(json<EvalBatch>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [] });
+    return result;
+  });
 export const evalSampleImageUrl = (batchId: number, sampleId: number) => `${API}/api/datasets/evals/${batchId}/samples/${sampleId}/image`;
-export const createDatasetFromPerson = (personId: number) => fetch(`${API}/api/datasets/from-person/${personId}`, { method: "POST" }).then(json<TrainingDataset>);
+export const createDatasetFromPerson = (personId: number) => fetch(`${API}/api/datasets/from-person/${personId}`, { method: "POST" }).then(json<TrainingDataset>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [result.id] });
+    return result;
+  });
 export const datasetManifestUrl = (exportId: number) => `${API}/api/datasets/exports/${exportId}/manifest`;
 export const getDatasetAnalysis = (id: number) => fetch(`${API}/api/datasets/${id}/analysis`).then(json<DatasetAnalysis>);
 export const dedupeDataset = (id: number, input: DatasetDedupeInput) => fetch(`${API}/api/datasets/${id}/dedupe`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
-}).then(json<DatasetDedupeResult>);
+}).then(json<DatasetDedupeResult>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [id] });
+    return result;
+  });
 export const reincludeDatasetItems = (id: number, reason?: "burst" | "duplicate") => fetch(`${API}/api/datasets/${id}/items/reinclude`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }),
-}).then(json<{ included: number }>);
+}).then(json<{ included: number }>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [id] });
+    return result;
+  });
 export const getDatasetGaps = (id: number) => fetch(`${API}/api/datasets/${id}/gaps`).then(json<CompositionGap[]>);
 export const fillDatasetGaps = (id: number, input: { max_add: number; dimensions?: string[] }) => fetch(`${API}/api/datasets/${id}/fill-gaps`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
-}).then(json<{ added_ids: number[] }>);
-export const backfillDatasetPose = (id: number) => fetch(`${API}/api/datasets/${id}/pose-backfill`, { method: "POST" }).then(json<{ id: string }>);
+}).then(json<{ added_ids: number[] }>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [id] });
+    return result;
+  });
+export const backfillDatasetPose = (id: number) => fetch(`${API}/api/datasets/${id}/pose-backfill`, { method: "POST" }).then(json<{ id: string }>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [id] });
+    return result;
+  });
 export const getFrameMiningCandidates = (
   id: number,
   input: { video_media_id?: number; min_face_px?: number; fps?: number; max_candidates?: number } = {},
@@ -175,13 +228,22 @@ export const mineDatasetFrames = (id: number, input: {
   selected_timestamps_ms?: Record<number, number[]>;
 }) => fetch(`${API}/api/datasets/${id}/mine-frames`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
-}).then(json<Task>);
+}).then(json<Task>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [id] });
+    return result;
+  });
 export const autoSelectDataset = (id: number, input: AutoSelectInput) => fetch(`${API}/api/datasets/${id}/auto-select`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
-}).then(json<AutoSelectResult>);
+}).then(json<AutoSelectResult>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [id] });
+    return result;
+  });
 export const buildRegularizationDataset = (id: number, input: { target_count: number; gender?: string }) => fetch(`${API}/api/datasets/${id}/regularization`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
-}).then(json<TrainingDataset>);
+}).then(json<TrainingDataset>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [result.id] });
+    return result;
+  });
 export const batchCropDatasetItems = (id: number, input: {
   item_ids?: number[];
   framing: CropFraming;
@@ -189,7 +251,10 @@ export const batchCropDatasetItems = (id: number, input: {
   overwrite_existing_ops: boolean;
 }) => fetch(`${API}/api/datasets/${id}/items/batch-crop`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
-}).then(json<DatasetBatchCropResult>);
+}).then(json<DatasetBatchCropResult>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [id] });
+    return result;
+  });
 
 export const getDatasetCaptions = (
   id: number,
@@ -212,18 +277,27 @@ export const updateDatasetCaption = (
   method: "PATCH",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ text }),
-}).then(json<DatasetItem>);
+}).then(json<DatasetItem>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [datasetId] });
+    return result;
+  });
 
 export const markDatasetCaptionReviewed = (
   datasetId: number,
   itemId: number,
 ) => fetch(`${API}/api/datasets/${datasetId}/items/${itemId}/caption/reviewed`, {
   method: "POST",
-}).then(json<{ item_id: number; caption_reviewed_at: string }>);
+}).then(json<{ item_id: number; caption_reviewed_at: string }>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [datasetId] });
+    return result;
+  });
 
 export const generateDatasetCaptions = (id: number, onlyMissing = true) =>
   fetch(`${API}/api/datasets/${id}/captions/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ only_missing: onlyMissing }),
-  }).then(json<Task>);
+  }).then(json<Task>).then((result) => {
+    mutationBus.emit({ type: "dataset:changed", ids: [id] });
+    return result;
+  });

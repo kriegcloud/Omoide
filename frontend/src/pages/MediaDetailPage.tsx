@@ -236,8 +236,16 @@ export default function MediaDetailPage() {
     [id]
   );
 
+  useEffect(() => mutationBus.subscribe(event => {
+    if (event.type !== "media:deleted" || !event.ids.includes(Number(routeId.current))) return;
+    detailRequest.current += 1;
+    setDetail(null); setIsDetailLoading(false);
+    setLoadError({ status: 404, message: "This media is no longer available." });
+    setDialogType(null); setEditorOpen(false); setActionTarget(null);
+  }), []);
+
   useUndoRefresh(id ? `media-detail:${id}` : undefined, fetchDetail);
-  useMutationRefresh(["face:assigned", "face:detached", "face:deleted", "person:changed", "media:updated"], fetchDetail);
+  useMutationRefresh(["face:assigned", "face:detached", "face:deleted", "person:changed", "media:updated", "media:moved", "list:invalidate", "tag:changed"], fetchDetail);
 
   useEffect(() => {
     const controller = new AbortController();

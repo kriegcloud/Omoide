@@ -1,3 +1,4 @@
+import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
 import type { BulkDeleteResult } from "./albums";
 
@@ -10,5 +11,7 @@ export const deleteEventsBulk = async (
     body: JSON.stringify({ event_ids: eventIds }),
   });
   if (!response.ok) throw new Error("Failed to delete selected events");
-  return response.json();
+  const result = await response.json();
+  mutationBus.emit({ type: "events:changed", ids: result.deleted_ids });
+  return result;
 };

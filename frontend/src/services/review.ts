@@ -1,3 +1,4 @@
+import { mutationBus } from "../stores/mutationBus";
 import { apiFetch, Query } from "./api";
 import { PageResponse } from "../stores/useListStore";
 
@@ -36,7 +37,7 @@ export const resolveReview = (
   action: ReviewResolveAction,
   target: { mediaIds: number[] } | { selectAll: true }
 ) =>
-  apiFetch<{ removed: number }>(`${endpoint}/resolve`, {
+  apiFetch<{ removed: number; processed_ids?: number[]; skipped_ids?: number[] }>(`${endpoint}/resolve`, {
     method: "POST",
     body: {
       ...filters,
@@ -46,4 +47,12 @@ export const resolveReview = (
         : { media_ids: target.mediaIds }),
     },
     errorMessage: "Failed to resolve media",
+  }).then((result) => {
+    mutationBus.emit({ type: "review:changed", scope: endpoint });
+    if (Array.isArray(result.processed_ids)) {
+      mutationBus.emit({ type: "media:deleted", ids: result.processed_ids });
+    } else {
+      mutationBus.emit({ type: "list:invalidate", prefix: "" });
+    }
+    return result;
   });

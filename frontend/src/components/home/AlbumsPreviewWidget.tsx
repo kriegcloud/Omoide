@@ -1,3 +1,4 @@
+import { useMutationRefresh } from "../../context/UndoContext";
 import React, { useEffect, useState } from "react";
 import { Box, Typography } from "@mui/material";
 import PhotoAlbumIcon from "@mui/icons-material/PhotoAlbum";
@@ -13,6 +14,9 @@ export function AlbumsPreviewWidget() {
   const [albums, setAlbums] = useState<Album[]>([]);
   const [loaded, setLoaded] = useState(false);
 
+  const [revision, setRevision] = useState(0);
+  useMutationRefresh(["media:deleted", "media:updated", "media:moved", "list:invalidate", "album:changed"], () => setRevision(value => value + 1));
+
   useEffect(() => {
     let alive = true;
     getAlbums()
@@ -26,7 +30,7 @@ export function AlbumsPreviewWidget() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [revision]);
 
   if (loaded && albums.length === 0) return null;
 

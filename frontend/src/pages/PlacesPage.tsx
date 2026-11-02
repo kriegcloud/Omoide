@@ -1,3 +1,4 @@
+import { useMutationRefresh } from "../context/UndoContext";
 import React, { useEffect, useState } from "react";
 import {
   Alert,
@@ -28,15 +29,21 @@ export default function PlacesPage() {
   const [snackbar, setSnackbar] = useState("");
   const refreshKey = useTaskCompletionVersion(["geocode_places"]);
 
+  const [revision, setRevision] = useState(0);
+  useMutationRefresh(["media:deleted", "media:updated", "media:moved", "list:invalidate"], () => setRevision(value => value + 1));
+
   useEffect(() => {
+    let active = true;
+    setError(null);
     setIsLoading(true);
     getPlaces()
-      .then(setPlaces)
+      .then(data => { if (active) setPlaces(data); })
       .catch((err) =>
-        setError(err instanceof Error ? err.message : "Failed to load places")
+        active && setError(err instanceof Error ? err.message : "Failed to load places")
       )
-      .finally(() => setIsLoading(false));
-  }, [refreshKey]);
+      .finally(() => { if (active) setIsLoading(false); });
+    return () => { active = false; };
+  }, [refreshKey, revision]);
 
   const handleGeocode = async () => {
     try {

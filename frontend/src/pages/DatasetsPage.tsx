@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useMutationRefresh } from "../context/UndoContext";
+import { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -28,9 +29,20 @@ export default function DatasetsPage() {
   const [error, setError] = useState<string | null>(null);
   const [newOpen, setNewOpen] = useState(false);
 
+  const [revision, setRevision] = useState(0);
+  const requestVersion = useRef(0);
+  useMutationRefresh(["dataset:changed", "media:deleted", "media:updated", "media:moved", "person:changed", "tag:changed", "list:invalidate"], () => {
+    requestVersion.current += 1;
+    setRevision(value => value + 1);
+  });
   useEffect(() => {
-    getDatasets().then(setDatasets).catch((reason) => setError(reason instanceof Error ? reason.message : "Failed to load datasets")).finally(() => setLoading(false));
-  }, []);
+    const version = ++requestVersion.current;
+    setError(null);
+    getDatasets().then(next => { if (version === requestVersion.current) setDatasets(next); })
+      .catch(reason => { if (version === requestVersion.current) setError(reason instanceof Error ? reason.message : "Failed to load datasets"); })
+      .finally(() => { if (version === requestVersion.current) setLoading(false); });
+    return () => { requestVersion.current += 1; };
+  }, [revision]);
 
   return (
     <Container maxWidth="xl" sx={{ minHeight: "100vh", py: 4 }}>

@@ -1,3 +1,4 @@
+import { useMutationRefresh } from "../context/UndoContext";
 import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -63,19 +64,26 @@ export default function EventsPage() {
     onSelectionChange: selection.setSelected,
   });
 
+  const requestVersion = useRef(0);
+  const [revision, setRevision] = useState(0);
+  useMutationRefresh(["events:changed", "media:deleted", "media:updated", "media:moved", "list:invalidate"], () => { requestVersion.current += 1; setRevision(value => value + 1); });
+
   const loadPage = async (fromCursor: string | null, replace: boolean) => {
+    const version = replace ? ++requestVersion.current : requestVersion.current;
     setIsLoading(true);
     setError(null);
     try {
       const page = await getEvents(fromCursor);
+      if (version !== requestVersion.current) return;
       setItems((prev) => (replace ? page.items : [...prev, ...page.items]));
       setCursor(page.next_cursor);
       setHasMore(page.next_cursor !== null);
     } catch (err) {
+      if (version !== requestVersion.current) return;
       setError(err instanceof Error ? err.message : "Failed to load events");
       setHasMore(false);
     } finally {
-      setIsLoading(false);
+      if (version === requestVersion.current) setIsLoading(false);
     }
   };
 
@@ -84,7 +92,8 @@ export default function EventsPage() {
     setCursor(null);
     setHasMore(true);
     void loadPage(null, true);
-  }, [refreshKey]);
+    return () => { requestVersion.current += 1; };
+  }, [refreshKey, revision]);
 
   useEffect(() => {
     if (inView && hasMore && !isLoading && !error) {

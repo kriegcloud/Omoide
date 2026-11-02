@@ -141,7 +141,7 @@ export default function StatisticsPage() {
   const [stats, setStats] = useState<LibraryStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
-  useMutationRefresh(["media:deleted", "media:updated", "media:moved", "face:deleted", "face:assigned", "face:detached", "person:changed", "person:created", "duplicates:resolved", "list:invalidate"], () => { setRevision(value => value + 1); });
+  useMutationRefresh(["media:deleted", "media:updated", "media:moved", "face:deleted", "face:assigned", "face:detached", "person:changed", "person:created", "duplicates:resolved", "tag:changed", "album:changed", "events:changed", "list:invalidate"], () => { setRevision(value => value + 1); });
   useUndoRefresh("library-statistics", async () => { setRevision(value => value + 1); });
 
   useEffect(() => {

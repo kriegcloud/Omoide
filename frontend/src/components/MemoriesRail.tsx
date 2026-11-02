@@ -1,3 +1,4 @@
+import { useMutationRefresh } from "../context/UndoContext";
 import React, { useEffect, useState } from "react";
 import { Box, Chip, IconButton, Typography } from "@mui/material";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
@@ -25,6 +26,9 @@ export function MemoriesRail() {
   );
   const location = useLocation();
 
+  const [revision, setRevision] = useState(0);
+  useMutationRefresh(["media:deleted", "media:updated", "media:moved", "list:invalidate"], () => setRevision(value => value + 1));
+
   useEffect(() => {
     let alive = true;
     getMemories()
@@ -35,7 +39,7 @@ export function MemoriesRail() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [revision]);
 
   if (groups.length === 0) return null;
 

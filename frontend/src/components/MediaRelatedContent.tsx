@@ -1,7 +1,7 @@
 import ListState from "./ListState";
 import { mutationBus } from "../stores/mutationBus";
 import { ListRevision } from "../stores/listReconciliation";
-import { useUndoRefresh } from "../context/UndoContext";
+import { useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
 import React, { useEffect, useState, useMemo, useRef } from "react";
 import { Box, Typography } from "@mui/material";
 import { Media } from "../types";
@@ -34,6 +34,7 @@ export default function SimilarContent({ mediaId }: { mediaId: number }) {
       setSimilar(previous => previous.map(item => ({ ...item, ...patches.get(item.id) })));
     } else if (event.type === "list:invalidate" && event.prefix === "") setRetry(value => value + 1);
   }), []);
+  useMutationRefresh(["media:deleted", "media:updated", "media:moved", "face:assigned", "face:detached", "face:deleted", "person:changed", "list:invalidate"], () => setRetry(value => value + 1));
   const similarIds = useMemo(() => similar.map((item) => item.id), [similar]);
   const gridRef = useRef<HTMLDivElement>(null);
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();

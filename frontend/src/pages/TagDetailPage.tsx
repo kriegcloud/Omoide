@@ -1,3 +1,5 @@
+import { useListInvalidation } from "../stores/useListStore";
+import { useMutationRefresh } from "../context/UndoContext";
 import { readCachedList } from "../stores/useListStore";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link as RouterLink } from "react-router-dom";
@@ -39,6 +41,8 @@ export default function TagDetailPage() {
   const mediaGridRef = useRef<HTMLDivElement>(null);
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
 
+  useMutationRefresh(["tag:changed", "media:deleted", "media:updated", "media:moved", "list:invalidate"], () => setRetryTick(value => value + 1));
+
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
@@ -71,6 +75,7 @@ export default function TagDetailPage() {
   const listError = listState?.error ?? defaultListState.error;
   const fetchInitial = useListStore((state) => state.fetchInitial);
   const loadMore = useListStore((state) => state.loadMore);
+  useListInvalidation(listKey);
   const clearList = useListStore((state) => state.clearList);
 
   const { marqueeRect, onItemClick } = useGridSelection<number>({

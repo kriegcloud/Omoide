@@ -1,3 +1,4 @@
+import { useMutationRefresh } from "../context/UndoContext";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Link as RouterLink, useSearchParams } from "react-router-dom";
 import {
@@ -127,12 +128,14 @@ export default function MapEditorPage() {
   const sortParam = searchParams.get("sort");
   const sort: MissingGeoSort = isSort(sortParam) ? sortParam : "latest";
 
+  const [revision, setRevision] = useState(0);
+  useMutationRefresh(["media:deleted", "media:updated", "media:moved", "list:invalidate"], () => setRevision(value => value + 1));
   const [folders, setFolders] = useState<MissingGeoFolder[]>([]);
   const [foldersLoading, setFoldersLoading] = useState(true);
   useEffect(() => {
     const controller = new AbortController();
     getMissingGeoFolders(controller.signal)
-      .then((data) => setFolders(data.folders))
+      .then((data) => { if (!controller.signal.aborted) setFolders(data.folders); })
       .catch((err) => {
         if (!controller.signal.aborted) console.error(err);
       })
@@ -140,7 +143,7 @@ export default function MapEditorPage() {
         if (!controller.signal.aborted) setFoldersLoading(false);
       });
     return () => controller.abort();
-  }, []);
+  }, [revision]);
   const selectedFolder = useMemo(
     () => folders.find((f) => f.path === folder) ?? null,
     [folders, folder]
@@ -167,6 +170,9 @@ export default function MapEditorPage() {
     null
   );
   const [newPosition, setNewPosition] = useState<L.LatLng | null>(null);
+  useEffect(() => {
+    setSelectedMedia(null); setNewPosition(null);
+  }, [revision, folder, sort]);
   const [saving, setSaving] = useState(false);
 
   // Search State

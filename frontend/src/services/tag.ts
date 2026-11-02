@@ -1,3 +1,4 @@
+import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
 import { Tag } from "../types";
 import { CursorPage } from "../types";
@@ -29,5 +30,8 @@ export const deleteTagsBulk = async (
     body: JSON.stringify({ tag_ids: tagIds }),
   });
   if (!response.ok) throw new Error("Failed to delete selected tags");
-  return response.json();
+  const result = await response.json();
+  mutationBus.emit({ type: "tag:changed", ids: result.deleted_ids });
+  mutationBus.emit({ type: "list:invalidate", prefix: "" });
+  return result;
 };

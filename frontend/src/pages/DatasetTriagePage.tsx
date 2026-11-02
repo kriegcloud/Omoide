@@ -1,3 +1,4 @@
+import { useMutationRefresh } from "../context/UndoContext";
 import { useHotkeys } from "../hotkeys/useHotkey";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -136,6 +137,49 @@ export default function DatasetTriagePage() {
     return () => { active = false; queueGeneration.current += 1; };
   }, [datasetId, filter, retryTick]);
 
+  // Refresh loaded membership in place. A committed write must not reset the
+  // active review item, caption draft, undo history, or open crop editor.
+  const [refreshTick, setRefreshTick] = useState(0);
+  const appliedRefresh = useRef(0);
+  const queueSnapshot = useRef({ entries, currentIndex });
+  queueSnapshot.current = { entries, currentIndex };
+  useMutationRefresh(["dataset:changed", "media:deleted", "media:updated", "media:moved", "person:changed", "face:assigned", "face:detached", "face:deleted", "tag:changed", "list:invalidate"], () => setRefreshTick(value => value + 1));
+  useEffect(() => {
+    if (refreshTick === appliedRefresh.current || loading || busy || mutationPending.current || cropOpen) return;
+    appliedRefresh.current = refreshTick;
+    const generation = ++queueGeneration.current;
+    const snapshot = queueSnapshot.current;
+    const activeId = snapshot.entries[snapshot.currentIndex]?.item.id;
+    const desiredCount = Math.max(1, snapshot.entries.length);
+    let active = true;
+    morePending.current = false;
+    setLoadingMore(false);
+    void (async () => {
+      const refreshed: DatasetTriageEntry[] = [];
+      let cursor: string | null = null;
+      let page;
+      do {
+        page = await getDatasetTriage(datasetId, filter, cursor);
+        if (!active || generation !== queueGeneration.current) return;
+        refreshed.push(...page.items);
+        cursor = page.next_cursor ?? null;
+      } while (cursor && refreshed.length < desiredCount);
+      const dataset = await getDataset(datasetId);
+      if (!active || generation !== queueGeneration.current) return;
+      const index = refreshed.findIndex(entry => entry.item.id === activeId);
+      setEntries(refreshed);
+      setCurrentIndex(index >= 0 ? index : Math.max(0, Math.min(snapshot.currentIndex, refreshed.length - 1)));
+      setNextCursor(cursor);
+      setReviewedCount(page.reviewed_count);
+      setTotalCount(page.total_count);
+      setPersonId(dataset.person_id ?? null);
+      setPageError(null);
+    })().catch(reason => {
+      if (active && generation === queueGeneration.current) setPageError(reason instanceof Error ? reason.message : "Failed to refresh triage queue");
+    });
+    return () => { active = false; appliedRefresh.current = Math.min(appliedRefresh.current, refreshTick - 1); };
+  }, [refreshTick, loading, busy, cropOpen, datasetId, filter]);
+
   useEffect(() => {
     if (!pageError) { setRetryReady(true); return; }
     setRetryReady(false);
@@ -143,8 +187,12 @@ export default function DatasetTriagePage() {
     return () => clearTimeout(timer);
   }, [pageError]);
 
+  const previousCaption = useRef({ id: current?.item.id, caption: current?.caption ?? "" });
   useEffect(() => {
-    setCaption(current?.caption ?? "");
+    const previous = previousCaption.current;
+    const next = { id: current?.item.id, caption: current?.caption ?? "" };
+    setCaption(draft => previous.id !== next.id || draft === previous.caption ? next.caption : draft);
+    previousCaption.current = next;
   }, [current?.item.id, current?.caption]);
 
   useEffect(() => {

@@ -2,6 +2,8 @@ import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
 import { FaceAssign, FaceAssignSource, Person } from "../types";
 
+// These endpoints skip missing faces and return no committed face IDs.
+// Refresh authoritative membership instead of claiming the requested subset.
 export const assignFace = async (
   faceIds: number[],
   personId: number,
@@ -14,8 +16,8 @@ export const assignFace = async (
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Assign failed: ${res.status}`);
-  mutationBus.emit({ type: "face:assigned", faceIds, personId, previous: {} });
-  mutationBus.emit({ type: "person:changed", ids: [personId] });
+  mutationBus.emit({ type: "list:invalidate", prefix: "" });
+  mutationBus.emit({ type: "person:changed", ids: [] });
 };
 
 export const createPersonFromFaces = async (
@@ -31,7 +33,8 @@ export const createPersonFromFaces = async (
   const json = await res.json();
   const person: Person = json.person ?? json;
   mutationBus.emit({ type: "person:created", id: person.id });
-  mutationBus.emit({ type: "face:assigned", faceIds, personId: person.id, previous: {} });
+  mutationBus.emit({ type: "person:changed", ids: [] });
+  mutationBus.emit({ type: "list:invalidate", prefix: "" });
   return person;
 };
 
@@ -42,7 +45,7 @@ export const deleteFace = async (faceIds: number[]) => {
     method: "DELETE",
   });
   if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
-  mutationBus.emit({ type: "face:deleted", ids: faceIds });
+  mutationBus.emit({ type: "list:invalidate", prefix: "" });
   mutationBus.emit({ type: "person:changed", ids: [] });
 };
 
@@ -53,7 +56,7 @@ export const detachFace = async (faceIds: number[]) => {
     body: JSON.stringify({ face_ids: faceIds }),
   });
   if (!res.ok) throw new Error(`Detach failed: ${res.status}`);
-  mutationBus.emit({ type: "face:detached", faceIds, personId: null });
+  mutationBus.emit({ type: "list:invalidate", prefix: "" });
   mutationBus.emit({ type: "person:changed", ids: [] });
 };
 
@@ -64,7 +67,7 @@ export const deleteAllOrphanFaces = async (): Promise<{ deleted: number }> => {
     throw new Error(typeof error.detail === "string" ? error.detail : "Failed to delete all unassigned faces");
   }
   const result = await response.json();
-  mutationBus.emit({ type: "face:deleted", ids: [] });
+  mutationBus.emit({ type: "list:invalidate", prefix: "" });
   mutationBus.emit({ type: "list:invalidate", prefix: "orphan-faces" });
   return result;
 };

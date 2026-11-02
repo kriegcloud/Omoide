@@ -1,3 +1,4 @@
+import { useMutationRefresh } from "../context/UndoContext";
 import { useEffect, useId, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import {
@@ -130,6 +131,9 @@ export default function PersonPicker({
   const term = query.trim();
   const count = Math.max(0, Math.floor(topCount));
 
+  const [revision, setRevision] = useState(0);
+  useMutationRefresh(["person:changed", "person:created", "face:assigned", "face:detached", "face:deleted", "media:deleted", "list:invalidate"], () => setRevision(value => value + 1));
+
   useEffect(() => {
     const controller = new AbortController();
     const excluded = new Set(excludedKey ? excludedKey.split(",").map(Number) : []);
@@ -177,7 +181,7 @@ export default function PersonPicker({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [term, excludedKey, count]);
+  }, [term, excludedKey, count, revision]);
 
   useEffect(() => {
     listRef.current?.children[highlightedIndex]?.scrollIntoView({ block: "nearest" });

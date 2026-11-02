@@ -1,3 +1,4 @@
+import { useMutationRefresh } from "../../context/UndoContext";
 import React, { useEffect, useState } from "react";
 import { Box, Typography } from "@mui/material";
 import InsightsIcon from "@mui/icons-material/Insights";
@@ -10,6 +11,9 @@ import { HomeWidgetCard } from "./HomeWidgetCard";
 export function StatisticsSnapshotWidget() {
   const [stats, setStats] = useState<LibraryStats | null>(null);
 
+  const [revision, setRevision] = useState(0);
+  useMutationRefresh(["media:deleted", "media:updated", "media:moved", "list:invalidate", "face:assigned", "face:detached", "face:deleted", "person:changed", "person:created", "duplicates:resolved"], () => setRevision(value => value + 1));
+
   useEffect(() => {
     let alive = true;
     getLibraryStats()
@@ -20,7 +24,7 @@ export function StatisticsSnapshotWidget() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [revision]);
 
   if (!stats) return null;
 

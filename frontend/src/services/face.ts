@@ -1,3 +1,4 @@
+import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
 import {
   AssignSuggestedFacesResult,
@@ -53,5 +54,9 @@ export const assignSuggestedFaces = async (
     body: JSON.stringify({ assignments, source }),
   });
   if (!response.ok) throw new Error("Failed to assign suggested faces");
-  return response.json();
+  const result: AssignSuggestedFacesResult = await response.json();
+  // Previous owners and all affected media are absent from this receipt.
+  mutationBus.emit({ type: "person:changed", ids: [] });
+  mutationBus.emit({ type: "list:invalidate", prefix: "" });
+  return result;
 };

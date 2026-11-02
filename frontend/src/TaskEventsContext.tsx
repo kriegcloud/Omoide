@@ -1,3 +1,4 @@
+import { mutationBus } from "./stores/mutationBus";
 import React, {
   createContext,
   useCallback,
@@ -122,6 +123,9 @@ export function TaskEventsProvider({
     });
     const completedTasks = resolvedTasks.filter(task => task.status === "completed");
     if (!resolvedTasks.length) return;
+    // Even failed/cancelled jobs can have checkpointed writes. Re-read rather
+    // than claim an unreported successful subset from a background operation.
+    mutationBus.emit({ type: "list:invalidate", prefix: "" });
 
     setLastFinishedTask((previous) => ({
       task: resolvedTasks[0],

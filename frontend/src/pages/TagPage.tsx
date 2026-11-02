@@ -1,3 +1,4 @@
+import { useListInvalidation } from "../stores/useListStore";
 import type { Tag } from "../types";
 import { readCachedList } from "../stores/useListStore";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -22,6 +23,7 @@ export default function TagsPage() {
   );
   const fetchInitial = useListStore(state => state.fetchInitial);
   const loadMore = useListStore(state => state.loadMore);
+  useListInvalidation(listKey);
   const removeItem = useListStore(state => state.removeItem);
   const removeItems = useListStore(state => state.removeItems);
   const [deleteOpen, setDeleteOpen] = useState(false);

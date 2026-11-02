@@ -136,7 +136,9 @@ export const createMediaFolder = async (
     body: JSON.stringify({ parent_path: parentPath, name }),
   });
   if (!res.ok) throw await responseError(res, "Failed to create folder");
-  return res.json();
+  const result = await res.json();
+  mutationBus.emit({ type: "list:invalidate", prefix: "" });
+  return result;
 };
 
 export const editMedia = async (

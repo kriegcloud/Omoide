@@ -188,6 +188,7 @@ export const usePersonDetailPage = () => {
         patchPersonInGrids(personData);
       } catch (err) {
         if (isCurrent()) {
+          if (err && typeof err === "object" && "status" in err && Number(err.status) === 404) setPerson(null);
           setLoadError(err instanceof Error ? err.message : "Failed to load person");
         }
       }
@@ -251,9 +252,11 @@ export const usePersonDetailPage = () => {
     [fetchSuggestedFaces],
   );
 
+  const similaritiesLoaded = useRef(false);
   const loadSimilar = useCallback(
     async (signal?: AbortSignal) => {
       if (!id || routeId.current !== id) return;
+      similaritiesLoaded.current = true;
       const isCurrent = beginRequest("similar", signal);
       setSimilarPersons([]);
       try {
@@ -366,10 +369,11 @@ export const usePersonDetailPage = () => {
     ]);
   });
 
-  useMutationRefresh(["face:assigned", "face:detached", "face:deleted", "person:changed", "media:deleted", "media:updated"], async () => {
+  useMutationRefresh(["face:assigned", "face:detached", "face:deleted", "person:changed", "media:deleted", "media:updated", "media:moved", "list:invalidate", "tag:changed"], async () => {
     await Promise.all([
       refreshDetectedFaces(), refreshMediaAppearances(), loadDetail(),
       refreshSuggestedFaces(), reloadRelationshipGraphIfLoaded(),
+      similaritiesLoaded.current ? loadSimilar() : Promise.resolve(),
     ]);
   });
 
@@ -384,6 +388,7 @@ export const usePersonDetailPage = () => {
   useEffect(() => {
     const controller = new AbortController();
     const activeRequests = requests.current;
+    similaritiesLoaded.current = false;
     const deleteVersion = ++deleteGeneration.current;
 
     const initialLoad = async () => {

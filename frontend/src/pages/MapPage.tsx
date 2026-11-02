@@ -1,3 +1,4 @@
+import { useMutationRefresh } from "../context/UndoContext";
 import { Box, useTheme } from "@mui/material";
 import { useMemo } from "react";
 import type { LatLngExpression, Map as LeafletMap } from "leaflet";
@@ -67,6 +68,8 @@ function MapController({
       .catch(console.error);
   }, [map, onLocationsChange]);
 
+  useMutationRefresh(["media:deleted", "media:updated", "media:moved", "list:invalidate"], fetchLocationsForView);
+
   const scheduleFetch = useCallback(() => {
     if (debounceRef.current !== null) {
       window.clearTimeout(debounceRef.current);
@@ -82,6 +85,7 @@ function MapController({
     onZoomChange(map.getZoom());
     fetchLocationsForView();
     return () => {
+      requestSeqRef.current += 1;
       if (debounceRef.current !== null) {
         window.clearTimeout(debounceRef.current);
       }

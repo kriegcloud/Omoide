@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMutationRefresh } from "../context/UndoContext";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -138,6 +139,33 @@ export default function TrainingRunsPanel({ datasetId, exports, runs, onRunsChan
   const [evalStrength, setEvalStrength] = useState(1);
   const [evalSubmitting, setEvalSubmitting] = useState(false);
   const [compareBatches, setCompareBatches] = useState<Record<number, number[]>>({});
+
+  const refreshGeneration = useRef(0);
+  useEffect(() => () => { refreshGeneration.current += 1; }, [datasetId]);
+  useMutationRefresh(["dataset:changed", "media:deleted", "person:changed", "list:invalidate"], async () => {
+    const generation = ++refreshGeneration.current;
+    try {
+      const [nextRuns, nextHealth, nextLikeness] = await Promise.all([
+        getTrainingRuns(datasetId), getTrainingHealth(), getDatasetRunLikeness(datasetId),
+      ]);
+      if (generation !== refreshGeneration.current) return;
+      onRunsChange(nextRuns);
+      onHealthChange(nextHealth);
+      setLikeness(Object.fromEntries(nextLikeness.map(entry => [entry.run_id, entry])));
+      const visibleRuns = nextRuns.filter(run => expanded.has(run.id));
+      const details = await Promise.all(visibleRuns.map(async run => ({
+        id: run.id, samples: await getTrainingSamples(run.id), evals: await getEvalBatches(run.id),
+      })));
+      if (generation !== refreshGeneration.current) return;
+      setSamples(current => ({ ...current, ...Object.fromEntries(details.map(entry => [entry.id, entry.samples])) }));
+      setEvalBatches(current => ({ ...current, ...Object.fromEntries(details.map(entry => [entry.id, entry.evals])) }));
+      const batches = await Promise.all(Object.keys(evalDetails).map(id => getEvalBatch(Number(id))));
+      if (generation !== refreshGeneration.current) return;
+      setEvalDetails(Object.fromEntries(batches.map(batch => [batch.id, batch])));
+    } catch (reason) {
+      if (generation === refreshGeneration.current) setError(reason instanceof Error ? reason.message : "Could not refresh training runs");
+    }
+  });
 
   useEffect(() => {
     void Promise.all([getTrainingHealth(), getTrainingPresets()])

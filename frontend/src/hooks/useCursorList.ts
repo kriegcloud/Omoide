@@ -155,7 +155,10 @@ export function useCursorList<T extends { id: number }>(
 
   const itemsRef = useRef(items);
   itemsRef.current = items;
-  useEffect(() => mutationBus.subscribe(event => {
+  useEffect(() => {
+    let queued = false;
+    let active = true;
+    const unsubscribe = mutationBus.subscribe(event => {
     if (event.type === "media:deleted") {
       const visible = event.ids.filter(id => itemsRef.current.some(item => item.id === id));
       revision.current.remove(event.ids);
@@ -164,10 +167,16 @@ export function useCursorList<T extends { id: number }>(
       revision.current.patch(event.items);
       const patches = new Map(event.items.map(item => [item.id, item]));
       setItems(previous => previous.map(item => patches.has(item.id) ? { ...item, ...patches.get(item.id) } : item));
-    } else if (event.type === "media:moved" || (event.type === "list:invalidate" && event.prefix === "")) {
-      void refetch();
     }
-  }), [removeItems, refetch]);
+    // Predicates and totals may change even when none of the loaded ids match.
+    if (event.type !== "list:invalidate" || !event.prefix || (query?.startsWith(event.prefix))) {
+      if (queued) return;
+      queued = true;
+      queueMicrotask(() => { queued = false; if (active) void refetch(); });
+    }
+    });
+    return () => { active = false; unsubscribe(); };
+  }, [removeItems, refetch, query]);
 
   const refreshId = useId();
   useUndoRefresh(`cursor-list:${refreshId}`, () => fetchPage(null, false, true));

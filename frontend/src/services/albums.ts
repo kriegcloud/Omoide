@@ -1,3 +1,4 @@
+import { mutationBus } from "../stores/mutationBus";
 import { getAlbumMedia } from "./features";
 import { API } from "../config";
 
@@ -15,7 +16,9 @@ export const deleteAlbumsBulk = async (
     body: JSON.stringify({ album_ids: albumIds }),
   });
   if (!response.ok) throw new Error("Failed to delete selected albums");
-  return response.json();
+  const result = await response.json();
+  mutationBus.emit({ type: "album:changed", ids: result.deleted_ids });
+  return result;
 };
 
 /** Album mutations return counts only; snapshot membership before offering Undo. */

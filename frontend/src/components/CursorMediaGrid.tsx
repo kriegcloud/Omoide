@@ -146,7 +146,10 @@ export function CursorMediaGrid({
   }, [inView, hasMore, isLoading, error, cursor, loadPage]);
 
   useEffect(() => { onItemsChange?.(visibleItems); }, [visibleItems, onItemsChange]);
-  useEffect(() => mutationBus.subscribe(event => {
+  useEffect(() => {
+    let queued = false;
+    let active = true;
+    const unsubscribe = mutationBus.subscribe(event => {
     if (event.type === "media:deleted") {
       revision.current.remove(event.ids);
       const ids = new Set(event.ids);
@@ -155,12 +158,21 @@ export function CursorMediaGrid({
       revision.current.patch(event.items);
       const patches = new Map(event.items.map(item => [item.id, item]));
       setItems(previous => previous.map(item => patches.has(item.id) ? { ...item, ...patches.get(item.id) } : item));
-    } else if (event.type === "media:moved" || (event.type === "list:invalidate" && listKey.startsWith(event.prefix))) {
-      requestSeq.current += 1;
-      inFlightRef.current = false;
-      void loadPage(null, true);
     }
-  }), [listKey, loadPage]);
+    if (event.type !== "list:invalidate" || listKey.startsWith(event.prefix)) {
+      if (queued) return;
+      queued = true;
+      queueMicrotask(() => {
+        queued = false;
+        if (!active) return;
+        requestSeq.current += 1;
+        inFlightRef.current = false;
+        void loadPage(null, true);
+      });
+    }
+    });
+    return () => { active = false; unsubscribe(); };
+  }, [listKey, loadPage]);
 
   useEffect(() => optimistic ? registerQueryEntities(listKey, items.map(item => `media:${item.id}` as const)) : undefined, [optimistic, listKey, items]);
 

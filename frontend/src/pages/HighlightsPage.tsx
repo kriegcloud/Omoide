@@ -1,7 +1,7 @@
 import { mutationBus } from "../stores/mutationBus";
 import { ListRevision } from "../stores/listReconciliation";
 import ListState from "../components/ListState";
-import { useUndoRefresh } from "../context/UndoContext";
+import { useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Masonry from "react-masonry-css";
 import {
@@ -59,6 +59,7 @@ export default function HighlightsPage() {
       if (generation === generationRef.current) setIsLoading(false);
     }
   }, [year]);
+  useMutationRefresh(["media:deleted", "media:updated", "media:moved", "face:assigned", "face:detached", "face:deleted", "person:changed", "list:invalidate"], () => { setRetryYears(value => value + 1); void loadHighlights(); });
   useUndoRefresh(`highlights:${year}`, loadHighlights);
   refreshLocalRef.current = prefix => {
     if (!(prefix === "" || `highlights:${year}`.startsWith(prefix) || `highlights-${year}`.startsWith(prefix))) return;
@@ -89,8 +90,8 @@ export default function HighlightsPage() {
       .then((data) => {
         if (cancelled) return;
         setYears(data);
-        if (data.length > 0) setYear(data[0].year);
-        else setIsLoading(false);
+        setYear(previous => data.some(item => item.year === previous) ? previous : data[0]?.year ?? null);
+        if (data.length === 0) { setItems([]); setIsLoading(false); }
       })
       .catch((err) => {
         if (cancelled) return;

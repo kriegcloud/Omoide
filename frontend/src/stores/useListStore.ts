@@ -3,6 +3,7 @@ import { mutationBus, type MediaPatch } from "./mutationBus";
 import { ListRevision, listItemId, mergeUnique } from "./listReconciliation";
 import { acknowledgeQuery, isQueryPending, operationVersion, optimisticOperations, projectList, projectEntity, registerQueryEntities, registerQueryRefresh, unregisterQuery } from "./optimisticOperations";
 import { entityKey, queryEntityKind, type EntityKind, type EntityKey } from "./queryKeys";
+import { pruneDuplicateGroups } from "../services/duplicateResolver";
 import { create } from "zustand";
 export type PageResponse<T> = import("../types").CursorPage<T> & {total?: number};
 import { CursorPage } from "../types";
@@ -10,6 +11,7 @@ import { CursorPage } from "../types";
 // Keep the initial fetcher so a mounted card can refresh its owning cached list.
 const initialFetchers = new Map<string, () => Promise<CursorPage<unknown>>>();
 const generations = new Map<string, number>();
+const invalidations = new Map<string, number>();
 const revisions = new Map<string, ListRevision>();
 const journal = (key: string) => {
   let value = revisions.get(key);
@@ -27,7 +29,13 @@ const cachedRefreshes = new Map<string, Promise<void>>();
 export function refreshCachedList(listKey: string): Promise<void> {
   const pending = cachedRefreshes.get(listKey);
   if (pending) return pending;
-  const request = performCachedRefresh(listKey).finally(() => cachedRefreshes.delete(listKey));
+  const request = (async () => {
+    do {
+      await performCachedRefresh(listKey);
+      // A later committed event may arrive while this GET is in flight. All
+      // coalesced callers wait for the subsequent authoritative snapshot too.
+    } while (initialFetchers.has(listKey) && useListStore.getState().lists[listKey]?.stale);
+  })().finally(() => cachedRefreshes.delete(listKey));
   cachedRefreshes.set(listKey, request);
   return request;
 }
@@ -106,6 +114,7 @@ export const useListStore = create<ListStoreState>((set, get) => ({
     const generation = generations.get(listKey) ?? 0;
     const revision = journal(listKey).revision;
     const operationsStarted = operationVersion();
+    const invalidation = invalidations.get(listKey) ?? 0;
     const existingList = get().lists[listKey];
     // Do not fetch if the list is already loading or if it already has content.
     // A new search will have a new listKey, so this check will allow the fetch.
@@ -134,6 +143,7 @@ export const useListStore = create<ListStoreState>((set, get) => ({
           [listKey]: {
             items,
             loaded: true,
+            stale: (invalidations.get(listKey) ?? 0) !== invalidation,
             total: "total" in response ? Math.max(0, Number(response.total) - response.items.length + items.length) : undefined,
             nextCursor: response.next_cursor,
             hasMore: response.next_cursor !== null,
@@ -235,6 +245,7 @@ export const useListStore = create<ListStoreState>((set, get) => ({
           [listKey]: {
             ...currentList,
             items: updatedItems,
+            total: currentList.total === undefined ? undefined : Math.max(0, currentList.total - (currentList.items.length - updatedItems.length)),
           },
         },
       };
@@ -258,6 +269,7 @@ export const useListStore = create<ListStoreState>((set, get) => ({
           [listKey]: {
             ...currentList,
             items: updatedItems,
+            total: currentList.total === undefined ? undefined : Math.max(0, currentList.total - (currentList.items.length - updatedItems.length)),
           },
         },
       };
@@ -299,6 +311,7 @@ export const useListStore = create<ListStoreState>((set, get) => ({
           [listKey]: {
             ...currentList,
             items: updatedItems,
+            total: currentList.total === undefined ? undefined : Math.max(0, currentList.total - (currentList.items.length - updatedItems.length)),
           },
         },
       };
@@ -367,6 +380,13 @@ mutationBus.subscribe(event => {
   if (event.type === "media:deleted") {
     for (const key of Object.keys(state.lists)) if (sceneList(key)) invalidateCachedLists(key);
   }
+  if (event.type === "media:deleted") {
+    useListStore.setState(state => ({ lists: Object.fromEntries(Object.entries(state.lists).map(([key, list]) => {
+      if (!key.startsWith("duplicate")) return [key, list];
+      const result = pruneDuplicateGroups(list.items as { group_id: number; items: { id: number }[] }[], event.ids);
+      return [key, result.changed ? { ...list, items: result.groups, total: list.total === undefined ? undefined : Math.max(0, list.total - result.removedGroupIds.length) } : list];
+    })) }));
+  }
   const removed = new Set(event.type === "media:deleted" ? event.ids : []);
   const patches = new Map((event.type === "media:updated" || event.type === "media:moved" ? event.items : []).map(item => [item.id, item]));
   const lists = { ...useListStore.getState().lists };
@@ -387,29 +407,32 @@ mutationBus.subscribe(event => {
   }
 });
 
+/** Membership, order and derived totals are server-owned. A field patch alone cannot
+ * insert newly matching rows, repair cursors, or infer cascaded person deletion.
+ * Keep patched rows visible but mark every cached query pending authoritative read. */
+mutationBus.subscribe(event => {
+  if (event.type !== "list:invalidate") invalidateCachedLists("", false);
+});
+
 /** Only mounted lists refetch on invalidation; other cached variants stay cleared. */
 export function useListInvalidation(listKey: string) {
   useEffect(() => pinCachedList(listKey), [listKey]);
   useEffect(() => mutationBus.subscribe(event => {
-    const shouldRefresh = (event.type === "list:invalidate" && listKey.startsWith(event.prefix)) ||
-      (event.type === "media:moved" && mediaList(listKey)) ||
-      (event.type === "media:deleted" && sceneList(listKey)) ||
-      ((event.type === "person:created" || event.type === "person:changed") && listKey.startsWith("people-grid")) ||
-      (event.type === "face:detached" && listKey.startsWith("orphan-faces"));
+    const shouldRefresh = event.type !== "list:invalidate" || listKey.startsWith(event.prefix);
     if (shouldRefresh) queueMicrotask(() => {
-      const fetcher = initialFetchers.get(listKey);
-      if (fetcher) void useListStore.getState().fetchInitial(listKey, fetcher);
+      void refreshCachedList(listKey).catch(error => console.error("Mutation refresh failed", error));
     });
   }), [listKey]);
 }
 
 /** Invalidating preserves rows while an interested mounted view revalidates. */
-export function invalidateCachedLists(prefix: string) {
+export function invalidateCachedLists(prefix: string, supersede = true) {
   for (const key of Object.keys(useListStore.getState().lists)) if (key.startsWith(prefix)) {
-    generations.set(key, (generations.get(key) ?? 0) + 1);
+    invalidations.set(key, (invalidations.get(key) ?? 0) + 1);
+    if (supersede) generations.set(key, (generations.get(key) ?? 0) + 1);
   }
   useListStore.setState(state => ({ lists: Object.fromEntries(Object.entries(state.lists).map(([key, list]) =>
-    [key, key.startsWith(prefix) ? { ...list, stale: true, isLoading: false } : list])) }));
+    [key, key.startsWith(prefix) ? { ...list, stale: true, ...(supersede ? { isLoading: false } : {}) } : list])) }));
 }
 
 /** Explicit adapter; base cache stays authoritative for legacy service callers. */

@@ -1,3 +1,4 @@
+import { useMutationRefresh } from "../context/UndoContext";
 import React, { useState, useEffect } from "react";
 import { TextField, Autocomplete, CircularProgress } from "@mui/material";
 import { Tag } from "../types";
@@ -33,6 +34,9 @@ export default function TagAdder({
   const [inputValue, setInputValue] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const [revision, setRevision] = useState(0);
+  useMutationRefresh(["tag:changed", "list:invalidate"], () => setRevision(value => value + 1));
+
   useEffect(() => {
     const query = inputValue.trim();
     let cancelled = false;
@@ -59,7 +63,7 @@ export default function TagAdder({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [inputValue]);
+  }, [inputValue, revision]);
 
   const handleSelection = async (
     event: React.SyntheticEvent,

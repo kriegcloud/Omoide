@@ -1,3 +1,4 @@
+import { mutationBus } from "../stores/mutationBus";
 import {
   Album,
   CameraCount,
@@ -85,6 +86,9 @@ export const createAlbum = async (
     method: "POST",
     body: { name, description },
     errorMessage: "Failed to create album",
+  }).then((result) => {
+    mutationBus.emit({ type: "album:changed", ids: [result.id] });
+    return result;
   });
 
 export const updateAlbum = async (
@@ -95,12 +99,18 @@ export const updateAlbum = async (
     method: "PATCH",
     body: patch,
     errorMessage: "Failed to update album",
+  }).then((result) => {
+    mutationBus.emit({ type: "album:changed", ids: [id] });
+    return result;
   });
 
 export const deleteAlbum = async (id: number): Promise<void> =>
   apiFetch<void>(`/api/albums/${id}`, {
     method: "DELETE",
     errorMessage: "Failed to delete album",
+  }).then((result) => {
+    mutationBus.emit({ type: "album:changed", ids: [id] });
+    return result;
   });
 
 export const addMediaToAlbum = async (
@@ -111,6 +121,10 @@ export const addMediaToAlbum = async (
     method: "POST",
     body: { media_ids: mediaIds },
     errorMessage: "Failed to add media to album",
+  }).then((result) => {
+    mutationBus.emit({ type: "album:changed", ids: [id] });
+    mutationBus.emit({ type: "list:invalidate", prefix: "" });
+    return result;
   });
 
 export const removeMediaFromAlbum = async (
@@ -121,6 +135,10 @@ export const removeMediaFromAlbum = async (
     method: "DELETE",
     body: { media_ids: mediaIds },
     errorMessage: "Failed to remove media from album",
+  }).then((result) => {
+    mutationBus.emit({ type: "album:changed", ids: [id] });
+    mutationBus.emit({ type: "list:invalidate", prefix: "" });
+    return result;
   });
 
 export const getAlbumMedia = async (
@@ -174,6 +192,9 @@ export const updateEvent = async (
     method: "PATCH",
     body: { title },
     errorMessage: "Failed to rename event",
+  }).then((result) => {
+    mutationBus.emit({ type: "events:changed", ids: [id] });
+    return result;
   });
 
 export const convertEventToAlbum = async (
@@ -184,6 +205,10 @@ export const convertEventToAlbum = async (
     method: "POST",
     body: { name: name ?? null },
     errorMessage: "Failed to convert event to album",
+  }).then((result) => {
+    mutationBus.emit({ type: "album:changed", ids: [result.id] });
+    mutationBus.emit({ type: "events:changed", ids: [id] });
+    return result;
   });
 
 // ---------- places ----------

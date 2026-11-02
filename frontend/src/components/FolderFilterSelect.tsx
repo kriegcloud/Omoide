@@ -1,3 +1,4 @@
+import { useMutationRefresh } from "../context/UndoContext";
 import { useEffect, useId, useState } from "react";
 import {
   Box,
@@ -23,6 +24,8 @@ export default function FolderFilterSelect({ value, onChange }: FolderFilterSele
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [retry, setRetry] = useState(0);
+
+  useMutationRefresh(["media:deleted", "media:updated", "media:moved", "list:invalidate"], () => setRetry(value => value + 1));
 
   useEffect(() => {
     let active = true;

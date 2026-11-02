@@ -1,3 +1,4 @@
+import { mutationBus } from "../stores/mutationBus";
 import { format } from "date-fns";
 import {
   CursorPage,
@@ -34,6 +35,9 @@ export const createTimelineEvent = async (
     method: "POST",
     body: payload, // Send the formatted payload
     errorMessage: "Failed to create timeline event.",
+  }).then((result) => {
+    mutationBus.emit({ type: "person:changed", ids: [personId] });
+    return result;
   });
 };
 
@@ -56,7 +60,10 @@ export const updateTimelineEvent = async (
       body: payload,
       errorMessage: "Failed to update timeline event.",
     }
-  );
+  ).then((result) => {
+    mutationBus.emit({ type: "person:changed", ids: [personId] });
+    return result;
+  });
 };
 
 export const deleteTimelineEvent = async (
@@ -66,4 +73,7 @@ export const deleteTimelineEvent = async (
   apiFetch<void>(`/api/person/${personId}/events/${eventId}`, {
     method: "DELETE",
     errorMessage: "Failed to delete timeline event.",
+  }).then((result) => {
+    mutationBus.emit({ type: "person:changed", ids: [personId] });
+    return result;
   });

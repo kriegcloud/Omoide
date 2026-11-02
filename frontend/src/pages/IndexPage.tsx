@@ -1,3 +1,4 @@
+import { useMutationRefresh } from "../context/UndoContext";
 import { readCachedList } from "../stores/useListStore";
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useInView } from "react-intersection-observer";
@@ -245,6 +246,8 @@ export default function IndexPage() {
       if (generation === folderGeneration.current) setIsFolderLoading(false);
     }
   }, [recentMediaEnabled, viewMode, currentFolder]);
+
+  useMutationRefresh(["media:deleted", "media:updated", "media:moved", "list:invalidate"], loadFolders);
 
   useEffect(() => {
     void loadFolders();

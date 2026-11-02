@@ -11,6 +11,12 @@ export type MutationEvent =
   | { type: "person:changed"; ids: number[] }
   | { type: "person:created"; id: number }
   | { type: "duplicates:resolved"; groupId: number; mediaIds: number[] }
+  | { type: "album:changed"; ids: number[] }
+  | { type: "tag:changed"; ids: number[] }
+  | { type: "review:changed"; scope: string }
+  | { type: "dataset:changed"; ids: number[] }
+  | { type: "events:changed"; ids: number[] }
+  | { type: "repairs:changed" }
   | { type: "list:invalidate"; prefix: string };
 export type MutationType = MutationEvent["type"];
 const listeners = new Set<(event: MutationEvent) => void>();

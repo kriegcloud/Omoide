@@ -1,5 +1,5 @@
 import { useVisiblePolling } from "../hooks/useVisiblePolling";
-import { useUndoRefresh } from "../context/UndoContext";
+import { useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInView } from "react-intersection-observer";
 import {
@@ -144,6 +144,8 @@ export default function DatasetDetailPage() {
   const datasetId = Number(id);
   const navigate = useNavigate();
   const [dataset, setDataset] = useState<TrainingDataset | null>(null);
+  const serverDataset = useRef<TrainingDataset | null>(null);
+  const metadataGeneration = useRef(0);
   const [items, setItems] = useState<DatasetItem[]>([]);
   // Items arrive in pages of 500; the sentinel below the grid pulls the rest.
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -209,6 +211,8 @@ export default function DatasetDetailPage() {
   useEffect(() => {
     routeGeneration.current += 1;
     setDataset(null);
+    serverDataset.current = null;
+    metadataGeneration.current += 1;
     setNotice(null); setAnalysisError(null); setGapMedia([]); setCaption("");
     setPreviewExcluded(null); setDedupeBusy(false); setTrainingHealth(null);
     setBucketText("");
@@ -290,28 +294,44 @@ export default function DatasetDetailPage() {
   const load = useCallback(async () => {
     if (datasetIdentity.current !== datasetId) return;
     const route = routeGeneration.current;
+    const revision = ++metadataGeneration.current;
     setError(null);
     try {
       const [nextDataset, history, runHistory] = await Promise.all([
         getDataset(datasetId), getDatasetExports(datasetId), getTrainingRuns(datasetId),
       ]);
-      if (route !== routeGeneration.current) return;
-      // Keep the editable settings draft while refreshing server metadata.
-      setDataset((draft) => draft?.id === nextDataset.id
-        ? { ...draft, item_count: nextDataset.item_count, included_count: nextDataset.included_count }
-        : nextDataset);
-      setBucketText((draft) => draft || nextDataset.buckets.join(", "));
+      if (route !== routeGeneration.current || revision !== metadataGeneration.current) return;
+      // Refresh untouched settings while retaining fields edited since the last read.
+      const previous = serverDataset.current;
+      serverDataset.current = nextDataset;
+      setDataset(draft => {
+        if (!previous || draft?.id !== nextDataset.id) return nextDataset;
+        const merged = { ...nextDataset };
+        for (const key of Object.keys(draft) as Array<keyof TrainingDataset>) {
+          if (JSON.stringify(draft[key]) !== JSON.stringify(previous[key])) {
+            Object.assign(merged, { [key]: draft[key] });
+          }
+        }
+        return merged;
+      });
+      setBucketText(draft => !previous || draft === previous.buckets.join(", ")
+        ? nextDataset.buckets.join(", ") : draft);
       setExports(history);
       setRuns(runHistory);
-      setExportLayout(nextDataset.export_layout);
+      setExportLayout(draft => !previous || draft === previous.export_layout ? nextDataset.export_layout : draft);
       void loadAnalysis();
     } catch (reason) {
-      if (route === routeGeneration.current) setError(reason instanceof Error ? reason.message : "Failed to load dataset");
+      if (route === routeGeneration.current && revision === metadataGeneration.current) setError(reason instanceof Error ? reason.message : "Failed to load dataset");
     } finally {
-      if (route === routeGeneration.current) setLoading(false);
+      if (route === routeGeneration.current && revision === metadataGeneration.current) setLoading(false);
     }
   }, [datasetId, loadAnalysis]);
 
+  useMutationRefresh(["dataset:changed", "media:deleted", "media:updated", "media:moved", "person:changed", "face:assigned", "face:detached", "face:deleted", "tag:changed", "list:invalidate"], async () => {
+    setGapPreview(null);
+    setGapMedia([]);
+    await Promise.all([load(), loadItems()]);
+  });
   useUndoRefresh(`dataset:${datasetId}`, async () => { await Promise.all([load(), loadItems()]); });
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {

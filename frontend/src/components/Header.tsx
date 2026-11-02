@@ -319,6 +319,7 @@ export function Header() {
         state: {
           items: results,
           searchType: "image",
+          queryImage: file,
         },
       });
     } catch (error) {

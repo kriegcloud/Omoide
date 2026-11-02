@@ -51,9 +51,9 @@ test('bulk delete emits only processed ids',async()=>{
  const {load,events}=environment();global.fetch=async()=>({ok:true,json:async()=>({removed:1,processed_ids:[7],skipped_ids:[8],errors:[]})});
  await load('services/mediaActions.ts').bulkDeleteMedia([7,8],'DELETE_RECORDS');assert.deepEqual(events,[{type:'media:deleted',ids:[7]}]);
 });
-test('person creation invalidates people caches and assigns faces',async()=>{
+test('person creation invalidates people and face caches without inventing committed face ids',async()=>{
  const {load,events}=environment();global.fetch=async()=>({ok:true,json:async()=>({person:{id:12}})});
- await load('services/faceActions.ts').createPersonFromFaces([3]);assert(events.some(e=>e.type==='person:created'&&e.id===12));assert(events.some(e=>e.type==='face:assigned'&&e.faceIds[0]===3));
+ await load('services/faceActions.ts').createPersonFromFaces([3]);assert(events.some(e=>e.type==='person:created'&&e.id===12));assert(events.some(e=>e.type==='list:invalidate'&&e.prefix===''));assert(!events.some(e=>e.type==='face:assigned'));
 });
 test('partial duplicate 409 retains status and invalidates committed members and stats',async()=>{
  const {load,events}=environment();global.fetch=async()=>({ok:false,status:409,json:async()=>({detail:'some members survived'})});

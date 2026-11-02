@@ -1,3 +1,4 @@
+import { useMutationRefresh } from "../context/UndoContext";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -45,18 +46,23 @@ export default function AlbumsPage() {
     onSelectionChange: selection.setSelected,
   });
 
-  const load = useCallback(() => {
-    setIsLoading(true);
-    getAlbums()
-      .then(setAlbums)
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : "Failed to load albums")
-      )
-      .finally(() => setIsLoading(false));
+  const requestVersion = useRef(0);
+  const load = useCallback(async () => {
+    const version = ++requestVersion.current;
+    setIsLoading(true); setError(null);
+    try {
+      const albums = await getAlbums();
+      if (version === requestVersion.current) setAlbums(albums);
+    } catch (err) {
+      if (version === requestVersion.current) setError(err instanceof Error ? err.message : "Failed to load albums");
+    } finally {
+      if (version === requestVersion.current) setIsLoading(false);
+    }
   }, []);
-
+  useMutationRefresh(["album:changed", "media:deleted", "media:updated", "media:moved", "list:invalidate"], load);
   useEffect(() => {
-    load();
+    void load();
+    return () => { requestVersion.current += 1; };
   }, [load]);
 
   useEffect(() => {

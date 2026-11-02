@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useMutationRefresh } from "../context/UndoContext";
+import { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -43,23 +44,29 @@ export default function FolderPickerDialog({
   const [newFolderName, setNewFolderName] = useState("");
   const [creating, setCreating] = useState(false);
 
+  const requestVersion = useRef(0);
   const load = (path: string) => {
+    const version = ++requestVersion.current;
     setFetching(true);
     setError(null);
     getMediaFolders(path || null, 0, true)
       .then((data) => {
+        if (version !== requestVersion.current) return;
         setListing(data);
         setCurrentPath(data.current_path ?? "");
       })
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load folders"))
-      .finally(() => setFetching(false));
+      .catch((err) => { if (version === requestVersion.current) setError(err instanceof Error ? err.message : "Failed to load folders"); })
+      .finally(() => { if (version === requestVersion.current) setFetching(false); });
   };
+
+  useMutationRefresh(["media:deleted", "media:updated", "media:moved", "list:invalidate"], () => { if (open) load(currentPath); });
 
   useEffect(() => {
     if (!open) return;
     setCurrentPath("");
     setNewFolderName("");
     load("");
+    return () => { requestVersion.current += 1; };
   }, [open]);
 
   const createFolder = async () => {

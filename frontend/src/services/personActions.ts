@@ -257,7 +257,9 @@ export const createPairDecision = async (
     body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error("Failed to save pair decision");
-  return res.json();
+  const result = await res.json();
+  mutationBus.emit({ type: "person:changed", ids: [] });
+  return result;
 };
 
 export const deletePairDecision = async (id: number): Promise<void> => {
@@ -265,6 +267,7 @@ export const deletePairDecision = async (id: number): Promise<void> => {
     method: "DELETE",
   });
   if (!res.ok) throw new Error("Failed to delete pair decision");
+  mutationBus.emit({ type: "person:changed", ids: [] });
 };
 
 export const mergePersons = async (sourceId: number, targetId: number) => {

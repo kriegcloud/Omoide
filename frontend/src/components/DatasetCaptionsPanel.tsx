@@ -1,3 +1,4 @@
+import { useMutationRefresh } from "../context/UndoContext";
 import { useVisiblePolling } from "../hooks/useVisiblePolling";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -72,6 +73,7 @@ export default function DatasetCaptionsPanel({
     [],
   );
 
+  const rowsRef = useRef(rows); rowsRef.current = rows;
   const identity = `${datasetId}:${filter}`;
   const currentIdentity = useRef(identity); currentIdentity.current = identity;
   const generation = useRef(0);
@@ -91,15 +93,27 @@ export default function DatasetCaptionsPanel({
     const current = () => isCurrent(version) && readGeneration.current === revision && !controller.signal.aborted;
     setLoading(true); setLoadingMore(false); morePending.current = false; setError(null);
     try {
-      const page = await getDatasetCaptions(datasetId, filter, undefined, controller.signal);
-      if (!current()) return;
-      setRows(page.items); setNextCursor(page.next_cursor ?? null);
-      setDrafts(Object.fromEntries(page.items.map(row => [row.item_id, row.caption])));
+      const desiredCount = Math.max(1, rowsRef.current.length);
+      const items: DatasetCaption[] = [];
+      let cursor: string | null = null;
+      do {
+        const page = await getDatasetCaptions(datasetId, filter, cursor ?? undefined, controller.signal);
+        if (!current()) return;
+        items.push(...page.items);
+        cursor = page.next_cursor ?? null;
+      } while (cursor && items.length < desiredCount);
+      setRows(items); setNextCursor(cursor);
+      const previousCaptions = new Map(rowsRef.current.map(row => [row.item_id, row.caption]));
+      setDrafts(currentDrafts => Object.fromEntries(items.map(row => [row.item_id,
+        currentDrafts[row.item_id] !== undefined && currentDrafts[row.item_id] !== previousCaptions.get(row.item_id)
+          ? currentDrafts[row.item_id] : row.caption,
+      ])));
     } catch (reason) {
       if (current()) setError(reason instanceof Error ? reason.message : "Failed to load captions");
     } finally { if (current()) setLoading(false); }
   }, [datasetId, filter, isCurrent]);
 
+  useMutationRefresh(["dataset:changed", "media:deleted", "media:updated", "media:moved", "person:changed", "tag:changed", "list:invalidate"], load);
   useEffect(() => {
     setTask(null);
   }, [datasetId]);

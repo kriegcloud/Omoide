@@ -27,16 +27,16 @@ function load(file,h,overrides={}) {
     'react-router-dom':{useSearchParams:()=>[new URLSearchParams('view=folders&folder=a'),noop],useLocation:()=>({key:'route',state:null}),useNavigate:()=>noop},
     '../stores/useListStore':{defaultListState:{items:[],hasMore:false,isLoading:false,error:null},useListInvalidation:noop,useListStore:(selector)=>selector?selector(list):list,refreshCachedList:async()=>{}},
     '../context/SelectionContext':{useSelection:()=>({selectedIds:new Set(),beginSelecting:noop,clear:noop,setSelected:noop})},
-    '../context/UndoContext':{useUndoRefresh:noop},'../hooks/useMarqueeSelection':{useGridSelection:()=>({})},
+    '../context/UndoContext':{useUndoRefresh:noop,useMutationRefresh:noop},'../hooks/useMarqueeSelection':{useGridSelection:()=>({})},
     '../hotkeys/useHotkey':{useHotkeys:noop},'../TaskEventsContext':{useTaskCompletionVersion:()=>0},'../hooks/useHomeWidgets':{useHomeWidgets:()=>({widgets:[{id:'recent_media',enabled:true}]})},
     '../config':{API:''},'../services/media':{getMediaList:async()=>({items:[],next_cursor:null}),getMediaFolders:async()=>({folders:[],breadcrumbs:[]})},
     '../services/features':{getCameras:async()=>[]},'react-leaflet':{MapContainer:'MapContainer',TileLayer:'TileLayer',Marker:'Marker',Popup:'Popup'},
-    '../utils/leaflet':{},'../urlUtils':{encodeFilePath:encodeURIComponent},'../stores/mutationBus':{mutationBus:{subscribe:()=>noop}},
+    '../utils/leaflet':{},'../urlUtils':{encodeFilePath:encodeURIComponent},'../stores/mutationBus':{mutationBus:{subscribe:()=>noop,emit:noop}},'./stores/mutationBus':{mutationBus:{subscribe:()=>noop,emit:noop}},
     ...overrides};
   const src=fs.readFileSync(path.resolve(__dirname,'../src',file),'utf8').replaceAll('import.meta.env.DEV','false');
   const code=ts.transpileModule(src,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText;
   const mod={exports:{}};
-  new Function('require','module','exports',code)(id=>{if(id in modules)return id==='../stores/useListStore'?{readCachedList:(state,key)=>state.lists[key],...modules[id]}:modules[id];if(id.startsWith('../components/')||id.startsWith('@mui/icons-material/'))return new Proxy({__esModule:true,default:id},{get:(v,k)=>v[k]??k}); if(id.startsWith('../hooks/')||id.startsWith('../stores/'))return load(id.slice(3)+'.ts',h,overrides); return require(id);},mod,mod.exports);
+  new Function('require','module','exports',code)(id=>{if(id in modules)return id==='../context/UndoContext'?{useMutationRefresh:noop,useUndoRefresh:noop,...modules[id]}:id==='../stores/useListStore'?{readCachedList:(state,key)=>state.lists[key],...modules[id]}:modules[id];if(id.includes('/services/'))return {};if(id.startsWith('../components/')||id.startsWith('@mui/icons-material/'))return new Proxy({__esModule:true,default:id},{get:(v,k)=>v[k]??k}); if(id.startsWith('../hooks/')||id.startsWith('../stores/'))return load(id.slice(3)+'.ts',h,overrides); return require(id);},mod,mod.exports);
   return mod.exports;
 }
 function find(node,predicate){if(!node||typeof node!=='object')return; if(predicate(node))return node; for(const child of [node.props?.children].flat(Infinity)){const match=find(child,predicate);if(match)return match;}}
@@ -211,4 +211,10 @@ test('Map geocoder does not write state after its page unmounts', async () => {
     pending.resolve({ok:true,json:async()=>[{display_name:'obsolete'}]}); await tick();
     assert.equal(lateWrites,0);
   } finally {global.setTimeout=original;global.clearTimeout=originalClear;delete global.fetch;}
+});
+test('terminal tasks invalidate derived views once even when a failed task partially wrote data',async()=>{
+ let active=[task('mutation')],recent=[],events=[];
+ const p=provider({'./stores/mutationBus':{mutationBus:{emit:e=>events.push(e)}},'./services/taskActions':{getActiveTasks:async()=>active,getRecentTasks:async()=>recent},'./services/task':{getTask:async()=>null}});
+ await p.value().forceRefresh();active=[];recent=[task('mutation','failed')];await p.value().forceRefresh();await p.value().forceRefresh();
+ assert.deepEqual(events,[{type:'list:invalidate',prefix:''}]);p.h.unmount();
 });

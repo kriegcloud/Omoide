@@ -1,3 +1,4 @@
+import { useMutationRefresh } from "../context/UndoContext";
 import ConfirmDialog from "../components/ConfirmDialog";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -41,10 +42,23 @@ export default function EventDetailPage() {
   const [convertTarget, setConvertTarget] = useState<EventItem | null>(null);
   const [isConverting, setIsConverting] = useState(false);
 
+  const metadataRequest = useRef(0);
+  useMutationRefresh(["events:changed", "media:deleted", "media:updated", "media:moved", "list:invalidate"], async () => {
+    const request = ++metadataRequest.current;
+    const version = generation.current;
+    try {
+      const data = await getEvent(eventId);
+      if (request === metadataRequest.current && generation.current === version && routeId.current === eventId) setEvent(data);
+    } catch (error) {
+      if (request === metadataRequest.current && generation.current === version && routeId.current === eventId) setError(error instanceof Error ? error.message : "Failed to refresh event");
+    }
+  });
+
   useEffect(() => {
     const version = ++generation.current;
+    const request = ++metadataRequest.current;
     const controller = new AbortController();
-    const current = () => !controller.signal.aborted && generation.current === version && routeId.current === eventId;
+    const current = () => request === metadataRequest.current && !controller.signal.aborted && generation.current === version && routeId.current === eventId;
     setEvent(null); setError(null); actionBusy.current = false; setBusy(false);
     setIsRenaming(false); setConvertTarget(null); setIsSavingTitle(false); setIsConverting(false);
     if (Number.isFinite(eventId)) getEvent(eventId, controller.signal)

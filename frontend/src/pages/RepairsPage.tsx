@@ -1,3 +1,4 @@
+import { useMutationRefresh } from "../context/UndoContext";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useVisiblePolling } from "../hooks/useVisiblePolling";
 import { Alert, Button, Chip, CircularProgress, Container, Link, Paper, Stack, Typography } from "@mui/material";
@@ -45,6 +46,7 @@ export default function RepairsPage() {
       if (isCurrent()) setLoading(false);
     }
   }, []);
+  useMutationRefresh(["repairs:changed"], () => load());
   useVisiblePolling(load, 3000, true, true);
   const loadMore = async () => {
     if (!nextCursor || pending.current) return;

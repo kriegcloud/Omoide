@@ -1,3 +1,4 @@
+import { mutationBus } from "../stores/mutationBus";
 import { SceneRead } from "../types";
 import { apiFetch } from "./api";
 
@@ -18,6 +19,10 @@ export const createScene = async (
     method: "POST",
     body: data,
     errorMessage: "Failed to create scene",
+  }).then((result) => {
+    mutationBus.emit({ type: "media:updated", items: [{ id: mediaId }] });
+    mutationBus.emit({ type: "list:invalidate", prefix: "" });
+    return result;
   });
 
 export const deleteScene = async (
@@ -27,4 +32,8 @@ export const deleteScene = async (
   apiFetch<void>(`/api/media/${mediaId}/scenes/${sceneId}`, {
     method: "DELETE",
     errorMessage: "Failed to delete scene",
+  }).then((result) => {
+    mutationBus.emit({ type: "media:updated", items: [{ id: mediaId }] });
+    mutationBus.emit({ type: "list:invalidate", prefix: "" });
+    return result;
   });

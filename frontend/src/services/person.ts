@@ -1,3 +1,4 @@
+import { ApiError } from "./api";
 import { API } from "../config";
 import {
   CursorPage,
@@ -38,7 +39,7 @@ export const getPerson = async (
   signal?: AbortSignal
 ): Promise<Person> => {
   const response = await fetch(`${API}/api/person/${id}`, { signal });
-  if (!response.ok) throw new Error(`Failed to load person (${response.status})`);
+  if (!response.ok) throw new ApiError(`Failed to load person (${response.status})`, response.status);
   return response.json();
 };
 

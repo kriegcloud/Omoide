@@ -15,7 +15,7 @@ import {
   Typography,
 } from "@mui/material";
 import config, { API } from "../config";
-import { useUndo, useUndoRefresh } from "../context/UndoContext";
+import { useUndo, useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
 import { useLocalStorageBoolean } from "../hooks/useLocalStorageBoolean";
 import {
   createPairDecision,
@@ -131,6 +131,10 @@ export default function MergeQueue({ onMerged, refreshVersion }: MergeQueueProps
     };
   }, [refresh, refreshVersion]);
   useUndoRefresh("merge-queue", refresh);
+  useMutationRefresh(["person:changed", "person:created", "face:assigned", "face:detached", "face:deleted", "media:deleted", "list:invalidate"], async () => {
+    setMerge(null);
+    await refresh();
+  });
 
   const handleNotSame = async (pair: MergeCandidate) => {
     if (mutating.current || config.PRESENTATION_MODE) return;

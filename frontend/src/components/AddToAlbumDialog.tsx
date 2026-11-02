@@ -1,4 +1,4 @@
-import { useUndo } from "../context/UndoContext";
+import { useUndo, useMutationRefresh } from "../context/UndoContext";
 import { getAlbumMemberIds } from "../services/albums";
 import React, { useEffect, useState } from "react";
 import {
@@ -44,17 +44,22 @@ export const AddToAlbumDialog: React.FC<Props> = ({
   const [error, setError] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
 
+  const [revision, setRevision] = useState(0);
+  useMutationRefresh(["album:changed", "media:deleted", "media:updated", "media:moved", "list:invalidate"], () => { if (open) setRevision(value => value + 1); });
+
   useEffect(() => {
+    let active = true;
     if (!open) return;
     setLoading(true);
     setError(null);
     getAlbums()
-      .then(setAlbums)
+      .then(data => { if (active) setAlbums(data); })
       .catch((err) =>
-        setError(err instanceof Error ? err.message : "Failed to load albums")
+        active && setError(err instanceof Error ? err.message : "Failed to load albums")
       )
-      .finally(() => setLoading(false));
-  }, [open]);
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [open, revision]);
 
   const offerUndo = (album: Album, addedIds: number[]) => {
     if (!addedIds.length) return;

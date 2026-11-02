@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, MutableRefObject } from "react";
+import { useMutationRefresh } from "../context/UndoContext";
+import React, { useState, useEffect, useCallback, useRef, MutableRefObject } from "react";
 import {
   Alert,
   Box,
@@ -70,22 +71,29 @@ export function SceneManager({
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
+  const generation = useRef(0);
   const loadScenes = useCallback(async () => {
+    const request = ++generation.current;
     setLoading(true);
     try {
       const data = await getScenes(mediaId);
+      if (request !== generation.current) return;
       setScenes(data);
       setError(null);
     } catch {
+      if (request !== generation.current) return;
       setError("Failed to load scenes");
     } finally {
-      setLoading(false);
+      if (request === generation.current) setLoading(false);
     }
   }, [mediaId]);
 
   useEffect(() => {
+    const counter = generation;
     loadScenes();
+    return () => { counter.current++; };
   }, [loadScenes]);
+  useMutationRefresh(["media:deleted", "media:updated", "media:moved", "face:assigned", "face:detached", "face:deleted", "person:changed", "tag:changed", "list:invalidate"], loadScenes);
 
   const filteredScenes =
     selectedPersonId != null

@@ -1,6 +1,7 @@
+import { searchByImage } from "../services/searchActions";
 import { mutationBus } from "../stores/mutationBus";
 import { ListRevision, mergeUnique } from "../stores/listReconciliation";
-import { useUndoRefresh } from "../context/UndoContext";
+import { useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
 import { refreshCachedList, useListInvalidation } from "../stores/useListStore";
 import { getMedia } from "../services/media";
 import {
@@ -92,6 +93,7 @@ export default function SearchResultsPage() {
   const preloadedState = location.state as {
     items: (MediaPreview | Person | Tag | SceneSearchResult)[];
     searchType: "image";
+    queryImage?: File;
   } | null;
   const isImageSearch = preloadedState?.searchType === "image";
 
@@ -293,6 +295,11 @@ export default function SearchResultsPage() {
     setMediaState(previous => ({ ...previous, isLoading: true, error: null }));
     try {
       if (isImageSearch) {
+        if (preloadedState?.queryImage) {
+          const ranked = await searchByImage(preloadedState.queryImage);
+          if (generation === activeQueryRef.current) setRefreshedImageItems(revisionRef.current.reconcile(ranked, revision, true));
+          return;
+        }
         const previews = await Promise.all(rawMediaItems.map(async media => {
           try {
             const detail = await getMedia(String(media.id));
@@ -320,6 +327,7 @@ export default function SearchResultsPage() {
       if (generation === activeQueryRef.current) setMediaState(previous => ({ ...previous, isLoading: false }));
     }
   };
+  useMutationRefresh(["media:deleted", "media:updated", "media:moved", "person:changed", "person:created", "face:assigned", "face:detached", "face:deleted", "tag:changed"], refreshSearch);
   useUndoRefresh(`search:${category}:${query}`, refreshSearch);
   refreshLocalRef.current = prefix => {
     if (category !== "media" || !(prefix === "" || `search:${category}:${query}`.startsWith(prefix))) return;

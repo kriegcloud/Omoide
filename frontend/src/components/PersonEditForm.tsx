@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Box,
   Button,
@@ -19,8 +19,11 @@ export function PersonEditForm({
 }) {
   const [form, setForm] = useState(initialPersonData);
 
+  const previousName = useRef(initialPersonData.name);
   useEffect(() => {
-    setForm({ name: initialPersonData.name });
+    const previous = previousName.current;
+    previousName.current = initialPersonData.name;
+    setForm(current => current.name === previous ? { name: initialPersonData.name } : current);
   }, [initialPersonData.name]);
 
   const handleChange = (
