@@ -743,7 +743,10 @@ app.include_router(person, prefix="/api/person", tags=["person"])
 from app.api.social_brands import router as social_brands_router
 app.include_router(social_brands_router, prefix="/api/social-brands", tags=["social-brands"])
 app.include_router(tasks, prefix="/api/tasks", tags=["tasks"])
+from app.api.face_frames import router as face_frames
+
 app.include_router(face, prefix="/api/faces", tags=["faces"])
+app.include_router(face_frames, prefix="/api/faces", tags=["faces"])
 app.include_router(tags, prefix="/api/tags", tags=["tags"])
 app.include_router(search, prefix="/api/search", tags=["search"])
 app.include_router(blur.router, prefix="/api/blur", tags=["blur"])

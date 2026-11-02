@@ -118,7 +118,7 @@ function FaceCard({
       <Box
         component="img"
         src={thumbUrl}
-        alt={showsParent ? "Parent image with detected face" : "Detected face crop"}
+        alt={showsParent ? face.timestamp != null ? "Video frame with detected face" : "Parent image with detected face" : "Detected face crop"}
         loading="lazy"
         decoding="async"
         draggable={false}
