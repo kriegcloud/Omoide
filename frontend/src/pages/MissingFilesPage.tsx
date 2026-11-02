@@ -1,3 +1,5 @@
+import { startReviewResolve } from "../services/review";
+import { useOptimisticCachedList, refreshCachedList } from "../stores/useListStore";
 import GalleryPage from "../components/GalleryPage";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -9,7 +11,6 @@ import {
   Divider,
   FormControlLabel,
   Paper,
-  Snackbar,
   Stack,
   Switch,
   Table,
@@ -40,7 +41,6 @@ import { usePagedList } from "../hooks/usePagedList";
 import { useIdSelection } from "../hooks/useIdSelection";
 import { useTaskCompletionVersion, useTaskEvents } from "../TaskEventsContext";
 import ConfirmDialog from "../components/ConfirmDialog";
-import { FeedbackSeverity } from "../components/BulkResolveToolbar";
 import { formatBytes } from "../formatUtils";
 
 const parseUtcDate = (iso: string) => new Date(iso.endsWith("Z") ? iso : `${iso}Z`);
@@ -71,13 +71,8 @@ type MissingBulkKind = "confirm-selected" | "confirm-all" | "reset-all";
 
 const MissingFilesPage: React.FC = () => {
   const [summary, setSummary] = useState<MissingSummaryEntry[]>([]);
-  const [isActionLoading, setIsActionLoading] = useState(false);
-  const [pendingBulk, setPendingBulk] = useState<MissingBulkKind | null>(null);
-  const [snackbar, setSnackbar] = useState<{
-    open: boolean;
-    message: string;
-    severity: FeedbackSeverity;
-  }>({ open: false, message: "", severity: "success" });
+  const [pendingBulk, setPendingBulk] = useState<{ kind: MissingBulkKind; ids: number[]; count: number; path: string; includeConfirmed: boolean; query: string } | null>(null);
+
 
   const [pathFilter, setPathFilter] = useState("");
   const [includeConfirmed, setIncludeConfirmed] = useState(false);
@@ -109,8 +104,11 @@ const MissingFilesPage: React.FC = () => {
     },
     { infiniteScroll: false, refetchOnMount: true }
   );
-  const { items, isLoading, error, hasMore, loadMore, reload: reloadList } = list;
-  const totalMissing = list.total ?? 0;
+  const listKey = `missing:${includeConfirmed}:${debouncedPath}`;
+  const visibleList = useOptimisticCachedList<MissingMediaItem>(listKey);
+  const { items, isLoading, error, hasMore } = visibleList ?? list;
+  const { loadMore, reload: reloadList } = list;
+  const totalMissing = (visibleList ?? list).total ?? 0;
   const selection = useIdSelection<number>();
   const { selectedIds, toggle: toggleSelection, clear: clearSelection } = selection;
 
@@ -133,134 +131,48 @@ const MissingFilesPage: React.FC = () => {
 
   const selectAllVisible = () => selection.selectAll(items.map((item) => item.id));
 
-  const removeLocalItems = (ids: number[], removed: number) => {
-    list.removeItems(ids, removed);
-    selection.deselect(ids);
+  const requestBulk = (kind: MissingBulkKind) => {
+    setPendingBulk({ kind, ids: [...selectedIds], count: kind === "confirm-selected" ? selectedIds.size : totalMissing,
+      path: debouncedPath, includeConfirmed, query: listKey });
   };
 
-  const showFeedback = (message: string, severity: FeedbackSeverity) =>
-    setSnackbar({ open: true, message, severity });
-
-  const performConfirmSelected = async () => {
-    const ids = Array.from(selectedIds);
-    if (ids.length === 0) return;
-    setIsActionLoading(true);
-    try {
-      const { deleted } = await confirmMissing({ media_ids: ids });
-      showFeedback(
-        deleted > 0 ? `Removed ${deleted} media record(s)` : "No items matched",
-        deleted > 0 ? "success" : "warning"
-      );
-      if (deleted > 0) {
-        removeLocalItems(ids, deleted);
-      }
-      setPendingBulk(null);
-    } catch (err) {
-      showFeedback(
-        err instanceof Error ? err.message : "Failed to confirm missing media",
-        "error"
-      );
-      setPendingBulk(null);
-    } finally {
-      setIsActionLoading(false);
-    }
+  const submitMissing = (snapshot: { kind: MissingBulkKind | "reset-selected"; ids: number[]; path: string; includeConfirmed: boolean; query: string }) => {
+    const all = snapshot.kind.endsWith("all");
+    const reset = snapshot.kind.startsWith("reset");
+    startReviewResolve({
+      label: reset ? "Clear missing status" : "Remove missing records",
+      ids: all ? [] : snapshot.ids,
+      query: snapshot.query,
+      countOnly: true,
+      request: () => (reset ? resetMissingFlags : confirmMissing)(all
+        ? { select_all: true, path_prefix: snapshot.path || undefined, include_confirmed: snapshot.includeConfirmed }
+        : { media_ids: snapshot.ids }),
+      refresh: () => refreshCachedList(snapshot.query),
+    });
+    selection.deselect(snapshot.ids);
   };
 
-  const handleResetSelected = async () => {
-    const ids = Array.from(selectedIds);
-    if (ids.length === 0) return;
-    setIsActionLoading(true);
-    try {
-      const { cleared } = await resetMissingFlags({ media_ids: ids });
-      showFeedback(
-        cleared > 0
-          ? `Cleared missing status for ${cleared} item(s)`
-          : "No items matched",
-        cleared > 0 ? "success" : "warning"
-      );
-      if (cleared > 0) {
-        removeLocalItems(ids, cleared);
-      }
-    } catch (err) {
-      showFeedback(
-        err instanceof Error ? err.message : "Failed to reset missing status",
-        "error"
-      );
-    } finally {
-      setIsActionLoading(false);
-    }
-  };
-
-  const performConfirmAllFiltered = async () => {
-    setIsActionLoading(true);
-    try {
-      const { deleted } = await confirmMissing({
-        select_all: true,
-        path_prefix: pathFilter.trim() || undefined,
-        include_confirmed: includeConfirmed,
-      });
-      showFeedback(
-        deleted > 0
-          ? `Removed ${deleted} filtered media record(s)`
-          : "No items matched",
-        deleted > 0 ? "success" : "warning"
-      );
-      setPendingBulk(null);
-      reload();
-    } catch (err) {
-      showFeedback(
-        err instanceof Error ? err.message : "Failed to confirm filtered media",
-        "error"
-      );
-      setPendingBulk(null);
-    } finally {
-      setIsActionLoading(false);
-    }
-  };
-
-  const performResetAllFiltered = async () => {
-    setIsActionLoading(true);
-    try {
-      const { cleared } = await resetMissingFlags({
-        select_all: true,
-        path_prefix: pathFilter.trim() || undefined,
-        include_confirmed: includeConfirmed,
-      });
-      showFeedback(
-        cleared > 0
-          ? `Cleared missing status for ${cleared} item(s)`
-          : "No items matched",
-        cleared > 0 ? "success" : "warning"
-      );
-      setPendingBulk(null);
-      reload();
-    } catch (err) {
-      showFeedback(
-        err instanceof Error ? err.message : "Failed to reset filtered media",
-        "error"
-      );
-      setPendingBulk(null);
-    } finally {
-      setIsActionLoading(false);
-    }
+  const handleResetSelected = () => {
+    if (!selectedIds.size) return;
+    submitMissing({ kind: "reset-selected", ids: [...selectedIds], path: debouncedPath, includeConfirmed, query: listKey });
   };
 
   const selectedCount = selectedIds.size;
 
   const bulkCopy =
-    pendingBulk === "confirm-selected"
+    pendingBulk?.kind === "confirm-selected"
       ? {
           title: "Remove records",
-          message: `Remove ${selectedCount} record(s) for missing files from the library. This cannot be undone.`,
+          message: `Remove ${pendingBulk.count} record(s) for missing files from the library. This cannot be undone.`,
           confirmLabel: "Remove records",
         }
-      : pendingBulk === "confirm-all"
+      : pendingBulk?.kind === "confirm-all"
       ? {
           title: "Remove all filtered records",
-          message: `Remove all ${totalMissing.toLocaleString()} missing item(s) matching the current filters from the library. This cannot be undone.`,
+          message: `Remove all ${pendingBulk.count.toLocaleString()} missing item(s) matching the current filters from the library. This cannot be undone.`,
           confirmLabel: "Remove records",
         }
-      : pendingBulk === "reset-all"
+      : pendingBulk?.kind === "reset-all"
       ? {
           title: "Clear missing status",
           message: `Clear the missing status for all items matching the current filters. They will be treated as found again.`,
@@ -269,9 +181,10 @@ const MissingFilesPage: React.FC = () => {
       : null;
 
   const handleBulkConfirm = () => {
-    if (pendingBulk === "confirm-selected") performConfirmSelected();
-    else if (pendingBulk === "confirm-all") performConfirmAllFiltered();
-    else if (pendingBulk === "reset-all") performResetAllFiltered();
+    if (!pendingBulk) return;
+    const snapshot = pendingBulk;
+    setPendingBulk(null);
+    submitMissing(snapshot);
   };
 
   return (
@@ -386,8 +299,8 @@ const MissingFilesPage: React.FC = () => {
               variant="contained"
               color="error"
               startIcon={<DoneAllIcon />}
-              onClick={() => setPendingBulk("confirm-selected")}
-              disabled={selectedCount === 0 || isActionLoading}
+              onClick={() => requestBulk("confirm-selected")}
+              disabled={selectedCount === 0}
             >
               Confirm selected
             </Button>
@@ -395,7 +308,7 @@ const MissingFilesPage: React.FC = () => {
               variant="outlined"
               startIcon={<UndoIcon />}
               onClick={handleResetSelected}
-              disabled={selectedCount === 0 || isActionLoading}
+              disabled={selectedCount === 0}
             >
               Mark selected as found
             </Button>
@@ -407,15 +320,15 @@ const MissingFilesPage: React.FC = () => {
             <Button
               variant="text"
               color="error"
-              onClick={() => setPendingBulk("confirm-all")}
-              disabled={isActionLoading || totalMissing === 0}
+              onClick={() => requestBulk("confirm-all")}
+              disabled={totalMissing === 0}
             >
               Confirm all filtered
             </Button>
             <Button
               variant="text"
-              onClick={() => setPendingBulk("reset-all")}
-              disabled={isActionLoading || totalMissing === 0}
+              onClick={() => requestBulk("reset-all")}
+              disabled={totalMissing === 0}
             >
               Clear all filtered
             </Button>
@@ -538,26 +451,12 @@ const MissingFilesPage: React.FC = () => {
         title={bulkCopy?.title ?? ""}
         message={bulkCopy?.message ?? ""}
         confirmLabel={bulkCopy?.confirmLabel}
-        confirmColor={pendingBulk === "reset-all" ? "primary" : "error"}
-        loading={isActionLoading}
+        confirmColor={pendingBulk?.kind === "reset-all" ? "primary" : "error"}
         onConfirm={handleBulkConfirm}
         onClose={() => setPendingBulk(null)}
       />
 
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={5000}
-        onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
-        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-      >
-        <Alert
-          onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
-          severity={snackbar.severity}
-          sx={{ width: "100%" }}
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
+
     </GalleryPage>
   );
 };

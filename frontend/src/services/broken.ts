@@ -1,4 +1,4 @@
-import { mutationBus } from "../stores/mutationBus";
+import { DefinitiveMutationError } from "../stores/optimisticOperations";
 import { API } from "../config";
 import { BrokenMediaPage, BrokenResolvePayload } from "../types";
 
@@ -24,11 +24,10 @@ export const resolveBroken = async (
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
+    if ([400, 403, 422].includes(res.status)) throw new DefinitiveMutationError(err.detail || "Failed to resolve broken media");
     throw new Error(err.detail || "Failed to resolve broken media");
   }
   const result = await res.json();
-  if (Array.isArray(result.processed_ids)) mutationBus.emit({ type: "media:deleted", ids: result.processed_ids });
-  else mutationBus.emit({ type: "list:invalidate", prefix: "" });
   return result;
 };
 
@@ -50,6 +49,7 @@ export const retryBroken = async (payload: {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
+    if ([400, 403, 422].includes(res.status)) throw new DefinitiveMutationError(err.detail || "Failed to retry broken media");
     throw new Error(err.detail || "Failed to retry broken media");
   }
   return res.json();

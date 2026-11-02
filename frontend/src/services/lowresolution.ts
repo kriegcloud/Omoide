@@ -1,4 +1,4 @@
-import { mutationBus } from "../stores/mutationBus";
+import { DefinitiveMutationError } from "../stores/optimisticOperations";
 import { API } from "../config";
 import { LowResPage } from "../types";
 import type { MediaResolveResult } from "../types";
@@ -45,10 +45,9 @@ export const resolveLowRes = async (
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
+    if ([400, 403, 422].includes(response.status)) throw new DefinitiveMutationError(err.detail || "Failed to resolve media");
     throw new Error(err.detail || "Failed to resolve media");
   }
   const result = await response.json();
-  if (Array.isArray(result.processed_ids)) mutationBus.emit({ type: "media:deleted", ids: result.processed_ids });
-  else mutationBus.emit({ type: "list:invalidate", prefix: "" });
   return result;
 };

@@ -1,3 +1,4 @@
+import { queryKey } from "../stores/queryKeys";
 import GalleryPage from "../components/GalleryPage";
 import React, { useCallback, useRef, useState } from "react";
 import {
@@ -61,7 +62,7 @@ const UntaggedPage: React.FC = () => {
     selectVisible,
     clearSelection,
     refetch,
-  } = useCursorList<UntaggedMediaItem>(fetcher);
+  } = useCursorList<UntaggedMediaItem>(fetcher, 0, { queryKey: queryKey("UntaggedPage", { folder, media_type: mediaType }), entityKind: "media" });
 
   const gridRef = useRef<HTMLDivElement>(null);
   const { isSelecting: globalSelecting } = useSelection();
@@ -108,6 +109,7 @@ const UntaggedPage: React.FC = () => {
         onSelectVisible={selectVisible}
         onClearSelection={clearSelection}
         resolve={resolveSelection}
+        refresh={refetch}
         onResolved={handleResolved}
         onFeedback={showFeedback}
       />}>
