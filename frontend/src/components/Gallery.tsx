@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Children, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box } from "@mui/material";
 import Masonry from "react-masonry-css";
-import { galleryLayout, masonryPositions } from "./galleryLayout";
+import { galleryFit, masonryPositions } from "./galleryLayout";
 import { useHotkeys } from "../hotkeys/useHotkey";
 import { nextGridIndex } from "../hotkeys/GridKeyboardNavigation";
 
@@ -40,7 +40,8 @@ export default function Gallery({ children, virtualItems, scrollRef, onEndReache
     window.addEventListener("resize", measure);
     return () => { observer.disconnect(); window.removeEventListener("resize", measure); };
   }, [host, isVirtual, viewportRef]);
-  const { columns } = galleryLayout(size.width, minTileWidth);
+  const childCount = Children.toArray(children).length;
+  const { columns, maxWidth } = galleryFit(size.width, childCount, minTileWidth);
   const virtualLayout = useMemo(() => masonryPositions(size.width, virtualItems?.map(item => item.aspectRatio) ?? []), [size.width, virtualItems]);
   const viewportHeight = Math.min(size.height, Math.max(1, virtualLayout.height));
   useEffect(() => {
@@ -87,9 +88,11 @@ export default function Gallery({ children, virtualItems, scrollRef, onEndReache
           </Box>
         </Box>
       ) : (
-        <Masonry breakpointCols={columns} className="gallery-masonry" columnClassName="gallery-column">
-          {children}
-        </Masonry>
+        <Box sx={{ maxWidth: maxWidth ?? "none" }}>
+          <Masonry breakpointCols={columns} className="gallery-masonry" columnClassName="gallery-column">
+            {children}
+          </Masonry>
+        </Box>
       )}
     </Box>
   );

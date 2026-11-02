@@ -1,5 +1,5 @@
 import { useEditorUrlState } from "../hooks/useEditorUrlState";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { MouseEvent, useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -45,6 +45,7 @@ import RepairDialog from "./RepairDialog";
 import { startRepair } from "../services/repairs";
 import type { RepairProfile } from "../types";
 import { useTileContextMenu, type TileMenuPoint } from "./tileContextMenu";
+import { editorOpenTarget } from "../utils/editorUrlState";
 
 
 export interface MediaPersonContext {
@@ -89,8 +90,9 @@ export default function MediaCardMenu({
   } | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [favorite, setFavorite] = useState(!!media.is_favorite);
-  const { patch: patchEditor } = useEditorUrlState();
+  const { open: openEditorUrl } = useEditorUrlState();
   const location = useLocation();
+  const navigate = useNavigate();
   const [snackbar, setSnackbar] = useState<{ message: string; severity: "success" | "error" } | null>(null);
 
   useEffect(() => setFavorite(!!media.is_favorite), [media.id, media.is_favorite]);
@@ -149,7 +151,12 @@ export default function MediaCardMenu({
 
   const openEditor = () => {
     closeMenu();
-    patchEditor({ edit: String(media.id) }, false, { ...location.state, editorListKey: mediaListKey });
+    const target = editorOpenTarget(location.pathname, media.id);
+    if (target.kind === "navigate") {
+      navigate(target.to, { state: { ...location.state, editorListKey: mediaListKey } });
+      return;
+    }
+    openEditorUrl({ edit: target.edit }, { ...location.state, editorListKey: mediaListKey });
   };
 
   const confirmRename = async (filename: string) => {

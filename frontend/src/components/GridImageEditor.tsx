@@ -11,7 +11,7 @@ const ImageEditorDialog = lazy(() => import("./ImageEditorDialog"));
 /** One owner also resolves cards outside the currently loaded grid page. */
 export default function GridImageEditor() {
   const location = useLocation();
-  const { params, patch } = useEditorUrlState();
+  const { params, patch, close } = useEditorUrlState();
   const rawId = /^\/medium\//.test(location.pathname) ? null : params.get("edit");
   const id = positiveId(rawId);
   const [media, setMedia] = useState<Media | null>(null);
@@ -31,6 +31,6 @@ export default function GridImageEditor() {
   return <Suspense fallback={<CircularProgress aria-label="Loading image editor" />}>
     <ImageEditorDialog key={id} open media={media}
       mediaListKey={location.state?.editorListKey}
-      onClose={() => patch({ edit: null }, false)} />
+      onClose={() => close({ edit: null })} />
   </Suspense>;
 }

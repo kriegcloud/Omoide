@@ -1,6 +1,6 @@
 import { useCallback, useRef } from "react";
-import { useLocation, useSearchParams } from "react-router-dom";
-import { patchEditorSearch, type EditorQueryPatch } from "../utils/editorUrlState";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { editorCloseAction, markEditorPushed, patchEditorSearch, type EditorQueryPatch } from "../utils/editorUrlState";
 
 /** Opening/closing adds history; in-dialog changes and invalid URLs replace it. */
 export function useEditorUrlState() {
@@ -17,5 +17,15 @@ export function useEditorUrlState() {
     current.params = next;
     current.setParams(next, { replace, state: state === undefined ? current.state : state });
   }, []);
-  return { params, patch };
+  const navigate = useNavigate();
+  /** Open an editor (edit/crop) as one new history entry. */
+  const open = useCallback((changes: EditorQueryPatch, state?: unknown) => {
+    patch(changes, false, markEditorPushed(state === undefined ? latest.current.state : state));
+  }, [patch]);
+  /** Close it: pop the entry we pushed, or replace when opened from a link/reload. */
+  const close = useCallback((changes: EditorQueryPatch = { edit: null }) => {
+    if (editorCloseAction(latest.current.state) === "back") navigate(-1);
+    else patch(changes, true);
+  }, [navigate, patch]);
+  return { params, patch, open, close };
 }

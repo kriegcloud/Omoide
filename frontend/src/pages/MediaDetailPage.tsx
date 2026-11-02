@@ -97,9 +97,9 @@ export default function MediaDetailPage() {
   const [dialogType, setDialogType] = useState<
     "convert" | "deleteRecord" | "deleteFile" | null
   >(null);
-  const { params: editorParams, patch: patchEditor } = useEditorUrlState();
+  const { params: editorParams, patch: patchEditor, open: openEditorUrl, close: closeEditorUrl } = useEditorUrlState();
   const editorOpen = editorParams.get("edit") === "1";
-  const setEditorOpen = (value: boolean) => patchEditor({ edit: value ? "1" : null }, false);
+  const setEditorOpen = (value: boolean) => (value ? openEditorUrl({ edit: "1" }) : closeEditorUrl({ edit: null }));
   const setEditorOpenRef = useRef(setEditorOpen);
   setEditorOpenRef.current = setEditorOpen;
   useEffect(() => {

@@ -45,3 +45,36 @@ export function patchEditorSearch(current: URLSearchParams, patch: EditorQueryPa
   if (patch.edit === null || patch.crop === null) for (const key of optionKeys) next.delete(key);
   return next;
 }
+
+/**
+ * How a media menu opens the editor. Grid pages use the global editor
+ * (`?edit=<id>`); the media viewer owns its editor and only accepts `edit=1`,
+ * stripping any other value, so a menu inside the viewer must use that form
+ * (or open the other item's viewer when the menu belongs to a different media).
+ */
+export type EditorOpenTarget =
+  | { kind: "patch"; edit: string }
+  | { kind: "navigate"; to: string };
+
+export function editorOpenTarget(pathname: string, mediaId: number): EditorOpenTarget {
+  const viewer = /^\/medium\/(\d+)\/?$/.exec(pathname);
+  if (!viewer) return { kind: "patch", edit: String(mediaId) };
+  if (Number(viewer[1]) === mediaId) return { kind: "patch", edit: "1" };
+  return { kind: "navigate", to: `/medium/${mediaId}?edit=1` };
+}
+
+/**
+ * Opening the editor pushes one history entry and marks it. Closing pops that
+ * entry when we pushed it, otherwise replaces the URL. Pushing on close left
+ * `viewer → viewer?edit=1 → viewer` in history, so the viewer's own Back-based
+ * close landed on `?edit=1` and reopened the editor in a loop.
+ */
+export const EDITOR_PUSHED = "editorPushed";
+
+export function markEditorPushed(state: unknown): Record<string, unknown> {
+  return { ...(state && typeof state === "object" ? state as Record<string, unknown> : {}), [EDITOR_PUSHED]: true };
+}
+
+export function editorCloseAction(state: unknown): "back" | "replace" {
+  return state && typeof state === "object" && (state as Record<string, unknown>)[EDITOR_PUSHED] === true ? "back" : "replace";
+}

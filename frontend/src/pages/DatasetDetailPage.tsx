@@ -181,14 +181,15 @@ export default function DatasetDetailPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [captionItem, setCaptionItem] = useState<DatasetItem | null>(null);
   const [caption, setCaption] = useState("");
-  const { params: editorParams, patch: patchEditor } = useEditorUrlState();
+  const { params: editorParams, patch: patchEditor, open: openEditorUrl, close: closeEditorUrl } = useEditorUrlState();
   const cropIdParam = editorParams.get("crop");
   const cropId = positiveId(cropIdParam);
   const [resolvedCropItem, setResolvedCropItem] = useState<DatasetItem | null>(null);
   const cropItem = resolvedCropItem?.id === cropId && resolvedCropItem.dataset_id === datasetId ? resolvedCropItem : null;
   const setCropItem = (item: DatasetItem | null) => {
     setResolvedCropItem(item);
-    patchEditor({ crop: item ? String(item.id) : null }, false);
+    if (item) openEditorUrl({ crop: String(item.id) });
+    else closeEditorUrl({ crop: null });
   };
   useEffect(() => {
     if (cropIdParam === null) return;
