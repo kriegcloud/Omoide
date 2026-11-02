@@ -13,8 +13,10 @@ from uuid import UUID
 from PIL import Image
 
 from app.services.comfy_annotation import (
+    PROTOCOL_VERSION,
     ComfyAnnotationClient,
     ComfyAnnotationError,
+    ComfyBridgeHealth,
     prepare_annotation_image,
 )
 
@@ -56,6 +58,23 @@ class ComfyRepairClient(ComfyAnnotationClient):
     """Shares framing and transport with annotations while parsing image results."""
 
     supported_health_profiles = SUPPORTED_REPAIR_PROFILES
+
+    def health(self) -> ComfyBridgeHealth:
+        """Ask for the repair profiles by name and parse the reply against them.
+
+        The inherited parser rejects any profile id the annotation client does
+        not know, which would fail every repair health check as soon as the
+        bridge gains a repair-only profile such as SeedVR2.
+        """
+        supported = SUPPORTED_REPAIR_PROFILES
+        response = self._request(
+            {
+                "protocol": PROTOCOL_VERSION,
+                "action": "health",
+                "profiles": sorted(supported),
+            }
+        )
+        return parse_repair_health(response, supported)
 
     def repair(
         self,
@@ -136,3 +155,44 @@ class ComfyRepairClient(ComfyAnnotationClient):
             width=width,
             height=height,
         )
+
+
+def parse_repair_health(response: dict[str, Any], supported: frozenset[str]) -> ComfyBridgeHealth:
+    def ids(value: object) -> list[str]:
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise ComfyAnnotationError("protocol-error", "bridge health response is invalid")
+        return [item for item in value if item in supported]
+
+    def mapping(value: object, allowed: set[str] | None = None) -> dict[str, str]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict) or any(
+            not isinstance(key, str)
+            or not isinstance(item, str)
+            or (allowed is not None and item not in allowed)
+            for key, item in value.items()
+        ):
+            raise ComfyAnnotationError("protocol-error", "bridge health response is invalid")
+        return {key: item for key, item in value.items() if key in supported}
+
+    ready = response.get("ready")
+    comfy_url = response.get("comfy_url")
+    if not isinstance(ready, bool) or not isinstance(comfy_url, str):
+        raise ComfyAnnotationError("protocol-error", "bridge health response is invalid")
+    profiles = tuple(ids(response.get("profiles")))
+    active = response.get("active_attempt_id")
+    try:
+        active_attempt_id = UUID(active) if active is not None else None
+    except (TypeError, ValueError) as error:
+        raise ComfyAnnotationError("protocol-error", "bridge health response is invalid") from error
+    return ComfyBridgeHealth(
+        ready=bool(profiles),
+        profiles=profiles,
+        configured_profiles=tuple(ids(response.get("configured_profiles"))),
+        unavailable_profiles=mapping(response.get("unavailable_profiles")),
+        active_attempt_id=active_attempt_id,
+        comfy_url=comfy_url,
+        profile_result_kinds=mapping(
+            response.get("profile_result_kinds", {}), {"text", "json", "image"}
+        ),
+    )

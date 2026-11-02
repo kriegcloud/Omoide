@@ -34,6 +34,45 @@ MAX_RESULT_TEXT_BYTES = 2 * 1024 * 1024
 MAX_RESULT_IMAGE_BYTES = 64 * 1024 * 1024
 MAX_PARAMS_BYTES = 8 * 1024
 MAX_CANCELLED_CACHE = 256
+# Profile ids a client that does not name its profiles is known to parse. The
+# annotation client rejects a health reply containing any id it does not know,
+# so newer profiles are listed only to clients that ask for them by name.
+LEGACY_HEALTH_PROFILES = frozenset(
+    {
+        "omoide-caption-v1",
+        "omoide-tags-v1",
+        "omoide-remove-text-v1",
+        "omoide-upscale-v1",
+        "omoide-remove-people-v1",
+        "omoide-background-swap-v1",
+        "omoide-eval-zimage-v1",
+    }
+)
+MAX_HEALTH_PROFILE_FILTER = 64
+
+
+def _health_profile_filter(request: dict[str, Any]) -> frozenset[str]:
+    requested = request.get("profiles")
+    if requested is None:
+        return LEGACY_HEALTH_PROFILES
+    if (
+        not isinstance(requested, list)
+        or len(requested) > MAX_HEALTH_PROFILE_FILTER
+        or any(not isinstance(item, str) or len(item) > 128 for item in requested)
+    ):
+        raise BridgeError("protocol-error", "health profiles must be a list of profile ids")
+    return frozenset(requested)
+
+
+def filter_health(health: dict[str, Any], visible: frozenset[str]) -> dict[str, Any]:
+    """Restrict a health reply to the profile ids the caller can parse."""
+    filtered = dict(health)
+    filtered["profiles"] = [p for p in health["profiles"] if p in visible]
+    filtered["configured_profiles"] = [p for p in health["configured_profiles"] if p in visible]
+    for key in ("profile_result_kinds", "profile_input_kinds", "unavailable_profiles"):
+        filtered[key] = {p: v for p, v in health[key].items() if p in visible}
+    filtered["ready"] = bool(filtered["profiles"])
+    return filtered
 MAX_CONNECTION_WORKERS = 4
 _TRANSIENT_READ_CODES = frozenset(
     {"comfy-unavailable", "comfy-http-error", "comfy-protocol-error"}
@@ -1022,10 +1061,10 @@ class BridgeService:
         if action == "health":
             _require_request_keys(
                 request,
-                allowed={"protocol", "action"},
+                allowed={"protocol", "action", "profiles"},
                 required={"protocol", "action"},
             )
-            return self.health()
+            return filter_health(self.health(), _health_profile_filter(request))
         if action == "get_attempt":
             _require_request_keys(
                 request,
