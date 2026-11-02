@@ -248,7 +248,10 @@ export default function SelectableTileFrame({
             checked={selected}
             indeterminate={indeterminate}
             tabIndex={isSelecting || keyboardReview ? -1 : 0}
-            inputProps={{ "aria-label": `Select item ${id}`, readOnly: true }}
+            inputProps={isCheckbox
+              // The tile itself is the checkbox in this mode; keep one accessible control (R5-02).
+              ? { "aria-hidden": true, tabIndex: -1, readOnly: true }
+              : { "aria-label": `Select item ${id}`, readOnly: true }}
             onClick={(event) => {
               // This control is a sibling of the link, so native checkbox behavior
               // can finish without navigating or reaching the tile click handler.

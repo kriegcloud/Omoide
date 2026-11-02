@@ -66,6 +66,14 @@ export function enhanceEditorControls(root: ParentNode, doc: ParentNode = root) 
     if (menu.getAttribute("role") !== "menu") menu.setAttribute("role", "menu");
     if (!menu.getAttribute("aria-label")) menu.setAttribute("aria-label", "Zoom");
     if (open) menu.removeAttribute("aria-hidden"); else menu.setAttribute("aria-hidden", "true");
+    // The menu is portalled to <body>, outside the editor dialog, so MUI's modal
+    // marks its container aria-hidden. Expose the container only while open (R2-02).
+    let portal: HTMLElement | null = menu;
+    while (portal?.parentElement && portal.parentElement !== menu.ownerDocument.body) portal = portal.parentElement;
+    if (portal && portal !== menu) {
+      if (open && portal.getAttribute("aria-hidden") === "true") { portal.removeAttribute("aria-hidden"); portal.setAttribute("data-editor-a11y-unhidden", ""); }
+      else if (!open && portal.hasAttribute("data-editor-a11y-unhidden")) { portal.setAttribute("aria-hidden", "true"); portal.removeAttribute("data-editor-a11y-unhidden"); }
+    }
     menu.querySelectorAll<HTMLElement>(MENU_ITEM).forEach(item => {
       makeControl(item, "menuitem", item.textContent?.trim() || undefined);
       // Hidden items must not be Tab stops.

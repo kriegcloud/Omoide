@@ -170,3 +170,16 @@ test('first faces refresh fetches the list instead of silently no-oping on an un
   page.render(); await settle();
   assert.ok(fetched.includes('/api/person/1/faces'), `fetchInitial keys: ${fetched.join(',')}`);
 });
+
+test('editor-only URL changes keep the loaded media instead of refetching and remounting (R5-01)', async () => {
+  let calls = 0;
+  const page = mediaPage(async id => { calls++; return media(Number(id)); });
+  page.render(); await settle();
+  assert.equal(component(page.render(), 'MediaDisplay').props.media.id, 1);
+  const before = calls;
+  page.route.key = 'tool-switch'; page.route.search = '?edit=1&tool=brightness';
+  const view = page.render();
+  assert.equal(component(view, 'MediaDisplay')?.props.media.id, 1, 'detail is not cleared on a same-media URL change');
+  await settle();
+  assert.equal(calls, before, 'no refetch for editor-only query changes');
+});

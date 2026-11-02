@@ -268,9 +268,14 @@ export default function MediaDetailPage() {
   useUndoRefresh(id ? `media-detail:${id}` : undefined, fetchDetail);
   useMutationRefresh(["face:assigned", "face:detached", "face:deleted", "person:changed", "media:updated", "media:moved", "list:invalidate", "tag:changed"], fetchDetail);
 
+  // Reset viewer state only when the media identity changes. Editor-only URL
+  // changes (?tool=, ?ratio=, ...) produce a new location.key but must not clear
+  // the detail and remount the editor (review R5-01).
+  const preloadedRef = useRef<Media | null>(null);
+  preloadedRef.current = (location.state?.media as Media | null) ?? null;
   useEffect(() => {
     const controller = new AbortController();
-    const currentPreloaded = location.state?.media as Media | null;
+    const currentPreloaded = preloadedRef.current;
     setDetail(currentPreloaded && String(currentPreloaded.id) === id
       ? { media: currentPreloaded, persons: [], orphans: [] }
       : null);
@@ -283,7 +288,7 @@ export default function MediaDetailPage() {
       controller.abort();
       detailRequest.current += 1;
     };
-  }, [id, location.key, location.state?.media, fetchDetail]);
+  }, [id, fetchDetail]);
 
   useEffect(() => {
     let active = true;
