@@ -162,7 +162,9 @@ function refreshUncertain(id: string, command: Pick<OptimisticCommand<unknown, u
   const refresh = command.refreshUnknown ?? command.refresh;
   if (!refresh) return;
   void Promise.resolve().then(refresh).then(() => {
-    if (command.reconcileUnknownAfterRefresh && records.get(id)?.state === "unknown") {
+    // An authoritative GET after an unknown outcome is the truth: retire the overlay
+    // unless the caller opts out (otherwise items stay hidden until a reload).
+    if (command.reconcileUnknownAfterRefresh !== false && records.get(id)?.state === "unknown") {
       update(id, { state: "reconciled", patches: [] }); release(id);
     }
   }).catch(error => update(id, { refreshError: message(error) }));

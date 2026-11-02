@@ -47,3 +47,27 @@ test('shared masonry bounds ten thousand rendered items and scrolls focus to an 
     Object.assign(global, previous);
   }
 });
+
+test('a gallery that mounts mid-scroll never paints at its unmeasured width (no full-size flash)', () => {
+  const previous = Object.fromEntries(['window', 'ResizeObserver'].map(key => [key, global[key]]));
+  global.window = { innerHeight: 900, addEventListener() {}, removeEventListener() {} };
+  global.ResizeObserver = class { observe() {} disconnect() {} };
+  const runtime = hooks();
+  try {
+    const math = load('components/galleryLayout.ts', runtime);
+    const Gallery = load('components/Gallery.tsx', runtime, {
+      './galleryLayout': math,
+      '../hotkeys/GridKeyboardNavigation': { nextGridIndex: () => -1 },
+      '../hotkeys/useHotkey': { useHotkeys() {} },
+      'react-masonry-css': { __esModule: true, default: function Masonry() { return null; } },
+    }).default;
+    const render = () => runtime.render(() => Gallery({ children: ['a', 'b', 'c'] }));
+    const first = render();
+    assert.equal(first.props.sx.visibility, 'hidden', 'unmeasured gallery is hidden, not a one-column full-width layout');
+    first.ref({ clientWidth: 1600 });
+    const measured = render();
+    assert.equal(measured.props.sx.visibility, 'visible');
+  } finally {
+    Object.assign(global, previous);
+  }
+});

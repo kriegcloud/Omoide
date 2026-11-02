@@ -1,4 +1,4 @@
-import React, { Children, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Children, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box } from "@mui/material";
 import Masonry from "react-masonry-css";
 import { galleryFit, masonryPositions } from "./galleryLayout";
@@ -30,7 +30,10 @@ export default function Gallery({ children, virtualItems, scrollRef, onEndReache
   const isVirtual = Boolean(virtualItems);
   const [size, setSize] = useState({ width: 1, height: 600 });
   const [scrollTop, setScrollTop] = useState(0);
-  useEffect(() => {
+  // Measure before paint: a gallery that mounts while scrolling (e.g. a virtualized
+  // duplicate group) would otherwise paint one frame at width 1 -> one full-width
+  // column, flashing each tile at full size.
+  useLayoutEffect(() => {
     if (!host) return;
     const measure = () => setSize({ width: Math.max(1, isVirtual ? viewportRef.current?.clientWidth ?? host.clientWidth : host.clientWidth), height: Math.max(320, window.innerHeight - 220) });
     measure();
@@ -72,7 +75,7 @@ export default function Gallery({ children, virtualItems, scrollRef, onEndReache
     });
   }, { scope: "page", enabled: Boolean(virtualItems), description: "Move focus between tiles" });
   return (
-    <Box ref={hostRef} sx={{ width: "100%", minWidth: 0,
+    <Box ref={hostRef} sx={{ width: "100%", minWidth: 0, visibility: size.width > 1 ? "visible" : "hidden",
       "& .gallery-masonry": { display: "flex", gap: "4px", width: "100%" },
       "& .gallery-column": { flex: "1 1 0", minWidth: 0 },
       "& .gallery-column > *": { marginBottom: "4px", minWidth: 0 },

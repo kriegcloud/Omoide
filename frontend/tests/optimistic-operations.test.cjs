@@ -218,3 +218,19 @@ test('response patches cannot escape resources locked by the request',async()=>{
  assert.equal((await h.done).state,'unknown');
  assert.equal(e.projectEntity('person:2',{id:2,name:'original'}).name,'original');
 });
+test('unknown outcome with a successful refresh retires the overlay by default (QA F1: review items stayed hidden)',async()=>{
+ const e=environment(),d=deferred();let refreshed=0;
+ const h=e.startOperation(command('f1',d,{refresh:async()=>{refreshed++;}}));
+ d.reject(Object.assign(Error('Stubbed failure (QA)'),{status:500}));await h.done;
+ for(let i=0;i<5;i++)await tick();
+ const record=e.optimisticOperations.getSnapshot().find(r=>r.id==='f1');
+ assert.equal(refreshed,1);
+ assert.equal(record.state,'reconciled');
+ assert.deepEqual(record.patches,[]);
+});
+test('callers can still opt out of reconcile-after-refresh',async()=>{
+ const e=environment(),d=deferred();
+ const h=e.startOperation(command('f1b',d,{refresh:async()=>{},reconcileUnknownAfterRefresh:false}));
+ d.reject(Object.assign(Error('x'),{status:500}));await h.done;for(let i=0;i<5;i++)await tick();
+ assert.equal(e.optimisticOperations.getSnapshot().find(r=>r.id==='f1b').state,'unknown');
+});

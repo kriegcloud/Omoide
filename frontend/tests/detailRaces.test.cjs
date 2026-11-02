@@ -162,3 +162,11 @@ test('an in-flight person visibility response cannot replace the next person',as
   page.route.id='2';page.render();await settle();pending.resolve({id:1,name:'old hidden person',hidden_at:'today'});await request;
   assert.equal(page.render().person?.id,2);
 });
+
+test('first faces refresh fetches the list instead of silently no-oping on an uncached key', async () => {
+  const page = personPage(async id => ({ id: Number(id), name: 'p' }));
+  const fetched = [];
+  page.store.state.fetchInitial = async (key, fetcher) => { fetched.push(key); await fetcher(); };
+  page.render(); await settle();
+  assert.ok(fetched.includes('/api/person/1/faces'), `fetchInitial keys: ${fetched.join(',')}`);
+});

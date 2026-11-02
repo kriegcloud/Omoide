@@ -135,8 +135,16 @@ export const usePersonDetailPage = () => {
 
   const refreshDetectedFaces = useCallback(async () => {
     if (!id || !detectedFacesListKey) return;
-    await refreshCachedList(detectedFacesListKey);
-  }, [id, detectedFacesListKey]);
+    // refreshCachedList is a no-op until a fetcher is registered; the first
+    // load must go through fetchInitial or the Faces tab never requests data.
+    if (useListStore.getState().lists[detectedFacesListKey]) {
+      await refreshCachedList(detectedFacesListKey);
+    } else {
+      await fetchInitial(detectedFacesListKey, () =>
+        getPersonFaces(Number(id), null, 20, facesSortByRef.current),
+      );
+    }
+  }, [id, detectedFacesListKey, fetchInitial]);
 
   useEffect(() => registerQueryRefresh(detectedFacesListKey, refreshDetectedFaces), [detectedFacesListKey, refreshDetectedFaces]);
 
