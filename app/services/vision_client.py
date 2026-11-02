@@ -20,6 +20,11 @@ from PIL import Image, ImageOps
 
 PROTOCOL_VERSION = 'omoide-vision/v2'
 MAX_REQUEST_BYTES = 64 * 1024 * 1024
+# Detectors resize to 640-768 px internally; a 2048 px frame is ~16 MB as base64
+# and keeps >16 MP photos under the frame limit.
+DETECTION_MAX_EDGE = 2048
+# LaMa sees the mask bounding box plus this much context (matches the worker).
+INPAINT_CONTEXT = 192
 MAX_ITEMS = 64
 HEALTH_TTL = 5.0
 
@@ -92,6 +97,28 @@ def _byte_batches(encoded_items):
         size += _item_size(item)
     if batch:
         yield start, batch
+
+
+def _rescale_detection(value, sx, sy):
+    """Map worker boxes/quads from the sent frame back to source pixels."""
+    if (sx, sy) == (1.0, 1.0) or not isinstance(value, dict):
+        return value
+    value = dict(value)
+    if isinstance(value.get('boxes'), list):
+        value['boxes'] = [
+            [box[0] * sx, box[1] * sy, box[2] * sx, box[3] * sy, *box[4:]]
+            if isinstance(box, list) and len(box) >= 4 else box
+            for box in value['boxes']
+        ]
+    if isinstance(value.get('regions'), list):
+        regions = []
+        for region in value['regions']:
+            quad = region.get('quad') if isinstance(region, dict) else None
+            if isinstance(quad, list) and len(quad) == 8:
+                region = {**region, 'quad': [v * (sx if i % 2 == 0 else sy) for i, v in enumerate(quad)]}
+            regions.append(region)
+        value['regions'] = regions
+    return value
 
 
 class VisionClient:
@@ -191,12 +218,25 @@ class VisionClient:
 
 
     def _detections(self, action, images):
+        """Send detection frames at most DETECTION_MAX_EDGE; return source-pixel geometry."""
+        frames, scales = [], []
+        for image in images:
+            if not isinstance(image, Image.Image):
+                image = Image.fromarray(image)
+            upright = ImageOps.exif_transpose(image).convert('RGB')
+            sent = upright
+            if max(upright.size) > DETECTION_MAX_EDGE:
+                sent = upright.copy()
+                sent.thumbnail((DETECTION_MAX_EDGE, DETECTION_MAX_EDGE), Image.Resampling.LANCZOS)
+            frames.append(encode_image(sent))
+            scales.append((upright.width / sent.width, upright.height / sent.height))
         results = []
-        for _offset, chunk in _byte_batches([encode_image(i) for i in images]):
+        for offset, chunk in _byte_batches(frames):
             values = self.request(action, images=chunk).get('results')
             if not isinstance(values, list) or len(values) != len(chunk):
                 raise VisionError('invalid detection result count')
-            results.extend(values)
+            for index, value in enumerate(values):
+                results.append(_rescale_detection(value, *scales[offset + index]))
         return results
 
     def detect_persons(self, images):
@@ -229,10 +269,14 @@ class VisionClient:
         return results
 
     def inpaint(self, image, mask):
-        """Return hard-composited RGB pixels, validating preservation independently."""
-        encoded = encode_image(image)
-        source = Image.frombytes('RGB', (encoded['width'], encoded['height']),
-                                 base64.b64decode(encoded['data']))
+        """Return hard-composited RGB pixels, validating preservation independently.
+
+        Only the mask's bounding box plus INPAINT_CONTEXT is sent, so large photos
+        fit the frame limit; pixels outside that window are copied from the source.
+        """
+        if not isinstance(image, Image.Image):
+            image = Image.fromarray(image)
+        source = ImageOps.exif_transpose(image).convert('RGB')
         if isinstance(mask, bytes):
             try:
                 with Image.open(io.BytesIO(mask)) as loaded:
@@ -244,22 +288,32 @@ class VisionClient:
         if not isinstance(mask, Image.Image) or mask.size != source.size:
             raise VisionError('inpaint mask dimensions must match image')
         mask = mask.convert('L')
+        bbox = mask.point(lambda v: 255 if v else 0).getbbox()
+        if bbox is None:
+            return source.copy()
+        left, top, right, bottom = bbox
+        window = (max(0, left - INPAINT_CONTEXT), max(0, top - INPAINT_CONTEXT),
+                  min(source.width, right + INPAINT_CONTEXT), min(source.height, bottom + INPAINT_CONTEXT))
+        crop, crop_mask = source.crop(window), mask.crop(window)
+        encoded = encode_image(crop)
         buffer = io.BytesIO()
-        mask.save(buffer, format='PNG')
+        crop_mask.save(buffer, format='PNG')
         response = self.request('inpaint', image=encoded,
                                 mask=base64.b64encode(buffer.getvalue()).decode('ascii'))
         try:
             result = response['image']
             raw = base64.b64decode(result['data'], validate=True)
-            if (result['format'] != 'rgb24' or result['width'] != source.width
-                    or result['height'] != source.height or len(raw) != source.width * source.height * 3):
+            if (result['format'] != 'rgb24' or result['width'] != crop.width
+                    or result['height'] != crop.height or len(raw) != crop.width * crop.height * 3):
                 raise ValueError()
-            output = Image.frombytes('RGB', source.size, raw)
-            outside = np.asarray(mask) == 0
-            if not np.array_equal(np.asarray(output)[outside], np.asarray(source)[outside]):
+            patch = Image.frombytes('RGB', crop.size, raw)
+            outside = np.asarray(crop_mask) == 0
+            if not np.array_equal(np.asarray(patch)[outside], np.asarray(crop)[outside]):
                 raise ValueError()
         except (KeyError, TypeError, ValueError) as exc:
             raise VisionError('invalid inpaint pixels or outside-mask mutation') from exc
+        output = source.copy()
+        output.paste(patch, window[:2])
         return output
 
 
