@@ -1,5 +1,7 @@
 import base64
 import binascii
+from datetime import datetime, timezone
+from uuid import uuid4
 
 from fastapi import (
     APIRouter,
@@ -9,7 +11,7 @@ from fastapi import (
     Query,
     status,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func
 from sqlalchemy.dialects.sqlite import insert
 from sqlmodel import Session, delete, select, text, update
@@ -19,7 +21,9 @@ from app.database import get_session, safe_commit, safe_execute
 from app.logger import logger
 from app.pagination import paginate
 from app.persons import set_face_embedding_person
-from app.models import Face, FaceAssignmentSource, FaceSuggestionRejection, Person, PersonMediaLink
+from app.models import (
+    Face, FaceAssignmentSource, FaceSuggestionRejection, MutationOperation, Person, PersonMediaLink,
+)
 from app.schemas.face import (
     AssignSuggestedFaces,
     AssignSuggestedFacesResult,
@@ -31,11 +35,12 @@ from app.schemas.face import (
     RecentFaceAssignment,
 )
 from app.schemas.person import PersonMinimal
+from app.schemas.mutation_operations import FailedMutation, MutationReceipt, SkippedMutation
+from app.services.face_review import get_groups, near_matches
+from app.services.mutation_operations import lookup_operation, operation_headers
 from app.services.face_matching import (
-    load_prototype_index,
     load_suggestion_rejections,
     load_unassigned_face_embeddings,
-    score_faces,
 )
 from app.services.face_provenance import stamp_face_assignment
 from app.utils import (
@@ -108,6 +113,7 @@ def _assign_face(
     if original_person_id is not None:
         affected_person_ids.add(original_person_id)
 
+    face.ignored_at = None
     face.person = person
     stamp_face_assignment(face, person.id, source)
     session.add(face)
@@ -170,6 +176,8 @@ def _assign_suggested_faces(
             reason = "unknown_face"
         elif face.person_id is not None:
             reason = "face_already_assigned"
+        elif face.ignored_at is not None:
+            reason = "face_ignored"
         elif (person := session.get(Person, assignment.person_id)) is None:
             reason = "unknown_person"
         else:
@@ -272,7 +280,7 @@ def delete_faces(
 def _delete_face_batch(session: Session, face_ids: list[int], *, only_orphans: bool = False) -> int:
     conditions = [Face.id.in_(face_ids)]
     if only_orphans:
-        conditions.append(Face.person_id.is_(None))
+        conditions.extend([Face.person_id.is_(None), Face.ignored_at.is_(None)])
     # Acquire a SQLite write lease before reading the faces to clean. Assignment
     # writers cannot race between this predicate check and vector/row removal.
     session.exec(update(Face).where(*conditions).values(id=Face.id))
@@ -346,16 +354,13 @@ def get_orphan_face_suggestions(
                 status_code=400, detail="Invalid suggestions cursor"
             ) from exc
 
-    index = load_prototype_index(session)
     face_ids, embeddings, frontalities = load_unassigned_face_embeddings(session)
+    matches, best_ids, names = near_matches(session, face_ids, embeddings, frontalities, load_suggestion_rejections(session, face_ids))
     ranked = sorted(
         (
             match
-            for match in score_faces(
-                index, face_ids, embeddings, frontalities,
-                rejected_persons=load_suggestion_rejections(session, face_ids),
-            )
-            if match.score >= min_score
+            for match in matches
+            if match.score >= max(.48, min_score)
         ),
         key=lambda match: (-match.score, match.face_id),
     )
@@ -372,7 +377,11 @@ def get_orphan_face_suggestions(
             OrphanFaceSuggestion(
                 face=faces[match.face_id],
                 person_id=match.person_id,
-                person_name=index.names[match.person_id],
+                person_name=names[match.person_id],
+                best_matching_face_id=best_ids[match.face_id],
+                best_cos=match.score,
+                runner_up_person_cos=match.score-match.margin,
+                margin=match.margin,
                 score=match.score,
                 pose_bin=match.pose_bin,
             )
@@ -389,7 +398,7 @@ def get_orphan_face_suggestions(
 @router.get("/orphans/count", summary="Count faces not assigned to a person")
 def get_orphan_count(session: Session = Depends(get_session)) -> dict[str, int]:
     count = session.exec(
-        select(func.count()).select_from(Face).where(Face.person_id.is_(None))
+        select(func.count()).select_from(Face).where(Face.person_id.is_(None), Face.ignored_at.is_(None))
     ).one()
     return {"count": count}
 
@@ -397,14 +406,14 @@ def get_orphan_count(session: Session = Depends(get_session)) -> dict[str, int]:
 def delete_all_orphans(session: Session = Depends(get_session)) -> dict[str, int]:
     if settings.general.presentation_mode:
         raise HTTPException(status_code=403, detail="Not allowed in presentation mode.")
-    count = session.exec(select(func.count(Face.id)).where(Face.person_id.is_(None))).one()
+    count = session.exec(select(func.count(Face.id)).where(Face.person_id.is_(None), Face.ignored_at.is_(None))).one()
     if count > 20_000:
         raise HTTPException(status_code=409, detail="More than 20000 orphan faces; delete in batches using face selection.")
     deleted = 0
     last_id = 0
     while True:
         ids = session.exec(
-            select(Face.id).where(Face.person_id.is_(None), Face.id > last_id)
+            select(Face.id).where(Face.person_id.is_(None), Face.ignored_at.is_(None), Face.id > last_id)
             .order_by(Face.id).limit(500)
         ).all()
         if not ids:
@@ -424,7 +433,7 @@ def get_orphans(
 ):
     orphans, next_cursor = paginate(
         session,
-        select(Face).where(Face.person_id.is_(None)),
+        select(Face).where(Face.person_id.is_(None), Face.ignored_at.is_(None)),
         [(Face.id, False)],
         cursor=cursor,
         limit=limit,
@@ -478,6 +487,7 @@ def _create_person_from_faces(
     previous_person_ids: set[int] = set()
     for face in faces:
         previous_person = face.person
+        face.ignored_at = None
         stamp_face_assignment(face, person_id, FaceAssignmentSource.MANUAL)
         session.add(face)
         if previous_person and previous_person.id != person_id:
@@ -514,6 +524,182 @@ def old_person_can_be_deleted(
 
     remove_person(person_id, session, reason=f"empty-after-{reason}", commit=commit)
     return True
+
+
+class FaceIgnoreRequest(BaseModel):
+    face_ids: list[int] = Field(default_factory=list, max_length=20000)
+    select_all: bool = False
+    operation_id: str = Field(default_factory=lambda: str(uuid4()))
+
+    @model_validator(mode='after')
+    def selection(self):
+        if self.select_all == bool(self.face_ids):
+            raise ValueError('Provide face_ids or select_all, exclusively')
+        return self
+
+
+class FaceGroupAccept(BaseModel):
+    face_ids: list[int] = Field(min_length=1, max_length=20000)
+    person_id: int | None = None
+    new_person_name: str | None = Field(default=None, min_length=1, max_length=256)
+    operation_id: str = Field(default_factory=lambda: str(uuid4()))
+
+    @model_validator(mode='after')
+    def target(self):
+        if (self.person_id is None) == (self.new_person_name is None):
+            raise ValueError('Provide person_id or new_person_name, exclusively')
+        return self
+
+
+def _review_writable():
+    if settings.general.presentation_mode:
+        raise HTTPException(403, 'Not allowed in presentation mode.')
+
+
+def _review_receipt(session, operation_id, ids, applied, skipped, action, *, failed=()):
+    from uuid import UUID
+    try:
+        operation_id = str(UUID(operation_id))
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(400, 'operation_id must be a UUID.')
+    if session.get(MutationOperation, operation_id) is not None:
+        raise HTTPException(409, 'Operation already exists; read its receipt.', headers=operation_headers(operation_id))
+    receipt = MutationReceipt(operation_id=operation_id,
+        state='partial' if (skipped or failed) and applied else 'failed' if (skipped or failed) else 'succeeded',
+        applied=[f'face:{fid}' for fid in applied], skipped=skipped, failed=list(failed))
+    # Receipt and changes commit together. No destructive work or pending
+    # external side effects: a rollback leaves neither committed.
+    session.add(MutationOperation(id=operation_id,
+        snapshot={'action': action, 'selected_ids': ids}, receipt=receipt.model_dump(),
+        response=receipt.model_dump(), status_code=200))
+    safe_commit(session)
+    return receipt
+
+
+def _review_rejected(session, body, action, exc):
+    """Publish a definitive validation rejection after rolling back all changes."""
+    session.rollback()
+    if exc.status_code not in (400, 404):
+        raise exc
+    from uuid import UUID
+    try:
+        operation_id = str(UUID(body.operation_id))
+    except ValueError:
+        raise exc
+    if session.get(MutationOperation, operation_id) is not None:
+        raise exc
+    ids = list(dict.fromkeys(body.face_ids))
+    receipt = _review_receipt(session, operation_id, ids, [], [], action,
+        failed=[FailedMutation(key=f'face:{fid}', code='bulk_rejected', message=str(exc.detail)) for fid in ids])
+    raise HTTPException(exc.status_code, {'message': exc.detail, 'receipt': receipt.model_dump()},
+                        headers=operation_headers(operation_id)) from exc
+
+
+def _set_ignored(body, session, ignored):
+    _review_writable()
+    try:
+        # A SQLite write lease serializes selection/validation against ownership
+        # changes; an assigned face rejects the entire bulk request.
+        conditions = [Face.person_id.is_(None)] if body.select_all else [Face.id.in_(body.face_ids)]
+        if body.select_all:
+            conditions.append(Face.ignored_at.is_(None) if ignored else Face.ignored_at.is_not(None))
+        session.exec(update(Face).where(*conditions).values(id=Face.id))
+        faces = session.exec(select(Face).where(*conditions).order_by(Face.id)).all()
+        if any(f.person_id is not None for f in faces):
+            raise HTTPException(400, 'Only unassigned faces can be ignored or unignored.')
+        ids = [f.id for f in faces] if body.select_all else list(dict.fromkeys(body.face_ids))
+        by_id = {f.id:f for f in faces}
+        applied, skipped = [], []
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        for fid in ids:
+            face = by_id.get(fid)
+            if face is None:
+                skipped.append(SkippedMutation(key=f'face:{fid}', reason='unknown_face'))
+            elif (face.ignored_at is not None) == ignored:
+                skipped.append(SkippedMutation(key=f'face:{fid}', reason='already_ignored' if ignored else 'not_ignored'))
+            else:
+                face.ignored_at = now if ignored else None
+                session.add(face)
+                applied.append(fid)
+        receipt = _review_receipt(session, body.operation_id, ids, applied, skipped, 'IGNORE_FACES' if ignored else 'UNIGNORE_FACES')
+    except HTTPException as exc:
+        _review_rejected(session, body, 'IGNORE_FACES' if ignored else 'UNIGNORE_FACES', exc)
+    except Exception:
+        session.rollback()
+        raise
+    logger.info('faces review count=%d reason=%s', len(applied), 'ignore' if ignored else 'unignore')
+    return receipt
+
+
+@router.post('/ignore', response_model=MutationReceipt)
+def ignore_faces(body: FaceIgnoreRequest, session: Session = Depends(get_session)):
+    return _set_ignored(body, session, True)
+
+
+@router.post('/unignore', response_model=MutationReceipt)
+def unignore_faces(body: FaceIgnoreRequest, session: Session = Depends(get_session)):
+    return _set_ignored(body, session, False)
+
+
+@router.get('/operations/{operation_id}', response_model=MutationReceipt)
+def get_face_review_operation(operation_id: str, session: Session = Depends(get_session)):
+    return lookup_operation(session, operation_id)
+
+
+@router.get('/ignored', response_model=CursorPage)
+def get_ignored(session: Session = Depends(get_session), cursor: str | None = None,
+                limit: int = Query(48, ge=1, le=200)):
+    faces, next_cursor = paginate(session,
+        select(Face).where(Face.person_id.is_(None), Face.ignored_at.is_not(None)),
+        [(Face.id, False)], cursor=cursor, limit=limit)
+    return CursorPage(items=faces, next_cursor=next_cursor)
+
+
+@router.get('/orphans/groups')
+def get_orphan_groups(session: Session = Depends(get_session), cursor: str | None = None,
+                      limit: int = Query(48, ge=1, le=200)):
+    offset = 0
+    if cursor:
+        try:
+            decoded = base64.b64decode(cursor, altchars=b'-_', validate=True).decode('ascii')
+            if not decoded.isdecimal():
+                raise ValueError()
+            offset = int(decoded)
+        except (ValueError, UnicodeError, binascii.Error):
+            raise HTTPException(400, 'Invalid groups cursor')
+    groups = get_groups(session)
+    end = offset + limit
+    return {'items': groups[offset:end], 'next_cursor': base64.urlsafe_b64encode(str(end).encode()).decode() if end < len(groups) else None}
+
+
+@router.post('/orphans/groups/accept', response_model=MutationReceipt)
+def accept_face_group(body: FaceGroupAccept, session: Session = Depends(get_session)):
+    _review_writable()
+    ids = list(dict.fromkeys(body.face_ids))
+    try:
+        session.exec(update(Face).where(Face.id.in_(ids)).values(id=Face.id))
+        faces = _load_faces(session, ids)
+        if len(faces) != len(ids) or any(f.person_id is not None or f.ignored_at is not None for f in faces):
+            raise HTTPException(400, 'Every selected face must be unassigned and not ignored.')
+        person = session.get(Person, body.person_id) if body.person_id is not None else None
+        if body.person_id is not None and person is None:
+            raise HTTPException(404, 'Person not found')
+        if person is None:
+            person = Person(name=body.new_person_name, profile_face_id=faces[0].id, appearance_count=0)
+            session.add(person)
+            session.flush()
+        affected = set()
+        for face in faces:
+            _assign_face(session, face, person, affected, FaceAssignmentSource.SUGGESTION)
+        refresh_persons(session, affected)
+        receipt = _review_receipt(session, body.operation_id, ids, ids, [], 'ACCEPT_FACE_GROUP')
+        logger.info('faces review count=%d reason=accept-suggestion', len(ids))
+        return receipt
+    except HTTPException as exc:
+        _review_rejected(session, body, 'ACCEPT_FACE_GROUP', exc)
+    except Exception:
+        session.rollback()
+        raise
 
 
 @router.post("/{face_id}/reject-suggestion")

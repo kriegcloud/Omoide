@@ -241,7 +241,7 @@ def auto_select_profile_face(session: Session, person_id: int) -> int | None:
     if not person:
         return None
 
-    faces = session.exec(select(Face).where(Face.person_id == person_id)).all()
+    faces = session.exec(select(Face).where(Face.person_id == person_id, Face.ignored_at.is_(None))).all()
 
     if not faces:
         if person.profile_face_id is not None:
@@ -946,7 +946,9 @@ def get_person_embedding(
             row[0]
             for row in session.exec(
                 text(
-                    "SELECT embedding FROM face_embeddings WHERE person_id = :p_id"
+                    '''SELECT fe.embedding FROM face_embeddings fe
+                    JOIN face f ON f.id = fe.face_id
+                    WHERE f.person_id = :p_id AND f.ignored_at IS NULL'''
                 ).bindparams(p_id=person_id)
             ).all()
         ]

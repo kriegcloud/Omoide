@@ -147,7 +147,7 @@ def load_unassigned_face_embeddings(
                 SELECT f.id, fe.embedding, f.frontality
                   FROM face AS f
                   JOIN face_embeddings AS fe ON fe.face_id = f.id
-                 WHERE f.person_id IS NULL {clause}
+                 WHERE f.person_id IS NULL AND f.ignored_at IS NULL {clause}
                  ORDER BY f.id
                 """
             ).bindparams(**params)
@@ -338,7 +338,7 @@ def _load_person_prototype_matrix(
                    CASE WHEN 1=1 {quality_filter} THEN 1 ELSE 0 END AS is_quality
               FROM face            AS f
               JOIN face_embeddings AS fe ON fe.face_id = f.id
-             WHERE f.person_id IS NOT NULL
+             WHERE f.person_id IS NOT NULL AND f.ignored_at IS NULL
              ORDER BY f.id
             """
         ).bindparams(**quality_params)
@@ -466,7 +466,7 @@ def _bulk_assign_faces_to_persons(
         for face_chunk in _iter_chunks(person_face_ids, chunk_size):
             claimed_ids = session.exec(
                 update(Face).where(
-                    Face.id.in_(face_chunk), Face.person_id.is_(None),
+                    Face.id.in_(face_chunk), Face.person_id.is_(None), Face.ignored_at.is_(None),
                     ~select(FaceSuggestionRejection.face_id).where(
                         FaceSuggestionRejection.face_id == Face.id,
                         FaceSuggestionRejection.person_id == person_id,

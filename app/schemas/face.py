@@ -13,6 +13,7 @@ class FaceRead(BaseModel):
     kps: list[list[float]] | None = None
     yaw: float | None = None
     pitch: float | None = None
+    ignored_at: datetime | None = None
     assigned_at: datetime | None = None
     assignment_source: str | None = None
 
@@ -50,6 +51,10 @@ class OrphanFaceSuggestion(BaseModel):
     person_id: int
     person_name: str
     score: float
+    best_matching_face_id: int | None = None
+    best_cos: float | None = None
+    runner_up_person_cos: float | None = None
+    margin: float | None = None
     pose_bin: Literal["frontal", "quarter", "profile", "unknown"]
 
 
@@ -70,7 +75,7 @@ class AssignSuggestedFaces(BaseModel):
 
 class SkippedFaceAssignment(BaseModel):
     face_id: int
-    reason: Literal["unknown_face", "face_already_assigned", "unknown_person"]
+    reason: Literal["unknown_face", "face_already_assigned", "face_ignored", "unknown_person"]
 
 
 class AssignSuggestedFacesResult(BaseModel):

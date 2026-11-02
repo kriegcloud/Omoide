@@ -56,7 +56,7 @@ def fetch_faces_and_embeddings(
           FROM face            AS f
           JOIN face_embeddings AS fe
                ON fe.face_id = f.id
-         WHERE f.person_id IS NULL
+         WHERE f.person_id IS NULL AND f.ignored_at IS NULL
            AND f.id > :last_id
            {quality_filter}
          ORDER BY f.id
@@ -110,7 +110,7 @@ def get_face_total(session: Session, *, quality_seed_only: bool = False) -> int:
         SELECT COUNT(*)
           FROM face            AS f
           JOIN face_embeddings AS fe ON fe.face_id = f.id
-         WHERE f.person_id IS NULL
+         WHERE f.person_id IS NULL AND f.ignored_at IS NULL
            {quality_filter}
         """
     )

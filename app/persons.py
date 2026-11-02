@@ -142,7 +142,9 @@ def _normalized_person_face_vectors(
     """Unit-length embeddings of every face assigned to the person, skipping
     missing, empty or degenerate vectors."""
     rows = session.exec(
-        text("SELECT embedding FROM face_embeddings WHERE person_id = :pid").bindparams(
+        text('''SELECT fe.embedding FROM face_embeddings fe
+                    JOIN face f ON f.id = fe.face_id
+                    WHERE f.person_id = :pid AND f.ignored_at IS NULL''').bindparams(
             pid=person_id
         )
     ).all()

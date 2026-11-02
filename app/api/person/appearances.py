@@ -64,6 +64,7 @@ def suggest_faces(
              WHERE embedding MATCH :vec
                     and k = :k
                     and person_id = -1
+                    and face_id IN (SELECT id FROM face WHERE person_id IS NULL AND ignored_at IS NULL)
                     and distance < 1.3
              ORDER BY distance
             """
@@ -72,7 +73,7 @@ def suggest_faces(
     face_ids = [r[0] for r in rows]
     distance_map = {int(row[0]): float(row[1]) for row in rows if row[1] is not None}
 
-    faces = session.exec(select(Face).where(Face.id.in_(face_ids))).all()
+    faces = session.exec(select(Face).where(Face.id.in_(face_ids), Face.person_id.is_(None), Face.ignored_at.is_(None))).all()
     id_map = {f.id: f for f in faces}
     ordered = [id_map[f] for f in face_ids if f in id_map]
 

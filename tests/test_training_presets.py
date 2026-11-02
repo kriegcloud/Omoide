@@ -221,7 +221,7 @@ class TrainingPresetApiTests(unittest.TestCase):
     def test_migration_has_single_head(self):
         config = Config("alembic.ini")
         script = ScriptDirectory.from_config(config)
-        self.assertEqual(script.get_heads(), ["598e24827831"])
+        self.assertEqual(script.get_heads(), ["f0611a9c2e74"])
 
 
 if __name__ == "__main__":

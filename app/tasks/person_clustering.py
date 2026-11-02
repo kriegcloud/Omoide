@@ -91,7 +91,9 @@ from .clustering_algorithms import run_clustering as _run_clustering
 
 def rebuild_person_embedding(session: Session, person_id: int) -> None:
     rows = session.exec(
-        text("SELECT embedding FROM face_embeddings WHERE person_id = :pid").bindparams(
+        text('''SELECT fe.embedding FROM face_embeddings fe
+                    JOIN face f ON f.id = fe.face_id
+                    WHERE f.person_id = :pid AND f.ignored_at IS NULL''').bindparams(
             pid=person_id
         )
     ).all()
@@ -321,7 +323,7 @@ def _assign_faces_to_clusters(
             # unassigned at the UPDATE, so a newer human assignment wins.
             claimed_ids = session.exec(
                 update(Face)
-                .where(Face.id.in_(face_ids), Face.person_id.is_(None))
+                .where(Face.id.in_(face_ids), Face.person_id.is_(None), Face.ignored_at.is_(None))
                 .values(**face_assignment_values(new_person.id, FaceAssignmentSource.CLUSTER))
                 .returning(Face.id)
             ).scalars().all()

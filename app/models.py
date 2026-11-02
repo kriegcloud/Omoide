@@ -222,6 +222,7 @@ class Face(SQLModel, table=True):
     person_id: int | None = Field(
         foreign_key="person.id", default=None, index=True
     )
+    ignored_at: datetime | None = Field(default=None, nullable=True, index=True)
     assigned_at: datetime | None = Field(default=None, nullable=True, index=True)
     assignment_source: str | None = Field(default=None, nullable=True)
     thumbnail_path: str | None = Field(default=None)
