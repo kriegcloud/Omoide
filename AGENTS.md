@@ -25,12 +25,15 @@ when driving the browser, and scale screenshots down (0.2–0.5) if you must tak
 ## Verify before merging
 
 ```bash
-.venv/bin/python -m unittest discover -s tests        # 687 OK as of 2026-09-23
+.venv/bin/python -m unittest discover -s tests        # 1127 OK as of 2026-11-02 (~12 min)
 cd frontend && npm run build                          # must be green
-cd frontend && npx eslint src --ext .ts,.tsx          # baseline 54 problems; add none
-.venv/bin/alembic heads                               # exactly one head (3d4e5f607182)
-node --test-isolation=none --test frontend/tests/selection.test.cjs   # 30 node tests, no npm deps
-for f in frontend/src/hotkeys/tests/*.test.cjs; do node "$f" || break; done   # 72 node tests
+cd frontend && npx tsc --noEmit -p .                  # vite build does not typecheck; must be clean
+cd frontend && npx eslint src --ext .ts,.tsx          # baseline 0 problems; add none
+.venv/bin/alembic heads                               # exactly one head (b8c9d0e1f203)
+node --test-isolation=none --test frontend/tests/*.test.cjs   # 383 node tests
+for f in frontend/src/hotkeys/tests/*.test.cjs; do node "$f" || break; done   # 87 node tests
+LD_LIBRARY_PATH=~/.local/share/omoide-portal/rocm-libs/hipsparselt-7.2.4-1.1/opt/rocm/lib:/opt/rocm/lib \
+  ~/.cache/omoide/vision/venv-rocm72/bin/python -m unittest discover -s vendor/omoide-vision/tests   # 15
 ```
 
 Audit-driven fixes follow "failing test first": reproduce the claim with a test,
