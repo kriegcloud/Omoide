@@ -6,6 +6,7 @@ import { useSelection } from "../context/SelectionContext";
 import { useUndo } from "../context/UndoContext";
 import { GridKeyboardNavigation } from "./GridKeyboardNavigation";
 import HotkeyHelpDialog from "./HotkeyHelpDialog";
+import { toggleReactGrab } from "../devtools/reactGrab";
 
 function GlobalHotkeys() {
   const { selectedIds, setSelected, clear, isSelecting, toggleSelecting } = useSelection();
@@ -101,5 +102,9 @@ export function HotkeyProvider({ children }: { children: ReactNode }) {
 
 function HelpShortcut({ openHelp }: { openHelp: () => void }) {
   useHotkey({ key: "?" }, openHelp, { scope: "global", description: "Show keyboard shortcuts" });
+  useHotkey({ key: "g", alt: true, shift: true }, toggleReactGrab, {
+    scope: "global",
+    description: "Toggle UI annotation (React Grab: hover + Ctrl+C copies the element for an agent)",
+  });
   return null;
 }

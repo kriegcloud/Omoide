@@ -1,20 +1,8 @@
 import { installPresentationGuard } from "./presentationGuard";
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './App';
-
-import { AppThemeProvider } from './ThemeContext';
-
-import '@fontsource-variable/inter';
-import '@fontsource-variable/jetbrains-mono';
-import './index.css';
+import { loadReactGrab } from "./devtools/reactGrab";
 
 installPresentationGuard();
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <AppThemeProvider>
-      <App />
-    </AppThemeProvider>
-  </React.StrictMode>
-);
+// React Grab must install its DevTools hook before react-dom evaluates, so the
+// app (and React itself) is imported only after it has loaded or been skipped.
+void loadReactGrab().finally(() => import("./bootstrap"));

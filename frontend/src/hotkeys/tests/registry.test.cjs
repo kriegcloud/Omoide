@@ -112,6 +112,7 @@ function registry() {
     './GridKeyboardNavigation': { GridKeyboardNavigation: 'GridKeyboardNavigation' },
     '../context/SelectionContext': {}, '../context/UndoContext': {},
     './HotkeyHelpDialog': { default: 'HotkeyHelpDialog', __esModule: true },
+    '../devtools/reactGrab': { toggleReactGrab: () => {} },
   }, globals).HotkeyProvider;
   const render = () => hooks.render(() => provider({ children: null }));
   const tree = render();

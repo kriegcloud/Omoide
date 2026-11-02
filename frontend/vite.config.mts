@@ -45,6 +45,9 @@ export default defineConfig(({ mode, command }) => {
   return {
     base: base,
     plugins: [react(), precompressTextAssets()],
+    // Keep component/function names in production so React Grab (Alt+Shift+G)
+    // reports readable component names instead of minified identifiers.
+    esbuild: { keepNames: true },
     server: {
       port: 5173,
       proxy: {
@@ -66,6 +69,9 @@ export default defineConfig(({ mode, command }) => {
     },
     build: {
       minify: "esbuild",
+      // Source maps are only fetched by devtools/React Grab, never by normal
+      // page loads; they let annotations resolve to src/<file>.tsx:<line>.
+      sourcemap: true,
     },
     resolve: {
       alias: {
