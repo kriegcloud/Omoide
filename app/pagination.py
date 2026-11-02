@@ -128,6 +128,7 @@ def paginate(
     ``stmt`` selects a single entity (``select(Media).where(...)``) without an
     ORDER BY; ordering comes from ``keys``. The key values are selected along
     with each row, so the next cursor never re-derives them in Python.
+    Probe one extra row so a full terminal page does not advertise an empty page.
     """
     if type(limit) is not int or limit < 1:
         raise HTTPException(400, "Page limit must be positive")
@@ -140,11 +141,11 @@ def paginate(
     )
     # SQLModel's exec() would collapse a select(Entity) to its first column
     # even after add_columns(); the plain ORM execute keeps the key columns.
-    rows = OrmSession.execute(session, query.limit(limit)).all()
-    items = [row[0] for row in rows]
+    rows = OrmSession.execute(session, query.limit(limit + 1)).all()
+    items = [row[0] for row in rows[:limit]]
     next_cursor = None
-    if len(rows) == limit:
-        next_cursor = encode_cursor(tag, list(rows[-1][1:]))
+    if len(rows) > limit:
+        next_cursor = encode_cursor(tag, list(rows[limit - 1][1:]))
     return items, next_cursor
 
 

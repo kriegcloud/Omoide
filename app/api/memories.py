@@ -39,22 +39,29 @@ def get_memories(
     now = datetime.now()
     month_day = date or now.strftime("%m-%d")
 
+    # Rank eligible IDs before hydrating ORM objects/relationships. A popular
+    # date must not load every matching media just to discard all but a few.
+    ranked = exclude_missing(select(
+        Media.id.label("media_id"),
+        func.row_number().over(
+            partition_by=func.strftime("%Y", Media.created_at),
+            order_by=(Media.created_at.desc(), Media.id.desc()),
+        ).label("year_rank"),
+    )).where(
+        *_BROWSABLE(),
+        func.strftime("%m-%d", Media.created_at) == month_day,
+        func.strftime("%Y", Media.created_at) < str(now.year),
+    ).subquery()
     rows = session.exec(
-        exclude_missing(select(Media))
-        .where(
-            *_BROWSABLE(),
-            func.strftime("%m-%d", Media.created_at) == month_day,
-            func.strftime("%Y", Media.created_at) < str(now.year),
-        )
+        select(Media)
+        .join(ranked, ranked.c.media_id == Media.id)
+        .where(ranked.c.year_rank <= per_year)
         .order_by(Media.created_at.desc(), Media.id.desc())
     ).all()
 
     groups: dict[int, list[Media]] = {}
     for media in rows:
-        year = media.created_at.year
-        bucket = groups.setdefault(year, [])
-        if len(bucket) < per_year:
-            bucket.append(media)
+        groups.setdefault(media.created_at.year, []).append(media)
 
     return [
         MemoryGroup(year=year, items=groups[year])

@@ -13,6 +13,12 @@ from app.schemas.lowresolution import LowResMediaItem, LowResPage, LowResResolve
 
 router = APIRouter()
 
+
+class LowResPageResponse(LowResPage):
+    """Totals stay exact by default; opt-in count-free pages report null."""
+
+    total: int | None = None
+
 _DEFAULT_MAX_PIXELS = 1_000_000  # 1 MP
 
 
@@ -31,7 +37,7 @@ def _base_filter(max_pixels: int, media_type: str | None):
     return base_filter
 
 
-@router.get("", response_model=LowResPage)
+@router.get("", response_model=LowResPageResponse)
 def get_low_res_media(
     session: Session = Depends(get_session),
     max_pixels: int = Query(_DEFAULT_MAX_PIXELS, ge=1),
@@ -39,13 +45,14 @@ def get_low_res_media(
     limit: int = Query(50, ge=1, le=200),
     media_type: str | None = Query(None, description="'image', 'video', or omit for all"),
     folder: str | None = None,
+    include_total: bool = True,
 ):
     """Paginated list of media whose pixel count (width × height) is below max_pixels, ordered lowest-first."""
     pixel_count = Media.pixel_count
     base_filter = _base_filter(max_pixels, media_type)
     base_filter = and_(base_filter, folder_filter(folder), Media.missing_since.is_(None))
 
-    total = count_rows(session, Media.id, base_filter)
+    total = count_rows(session, Media.id, base_filter) if include_total else None
     rows, next_cursor = paginate(
         session,
         select(Media).where(base_filter),
@@ -70,7 +77,7 @@ def get_low_res_media(
         for m in rows
     ]
 
-    return LowResPage(items=items, next_cursor=next_cursor, total=total)
+    return LowResPageResponse(items=items, next_cursor=next_cursor, total=total)
 
 
 @router.post("/resolve")

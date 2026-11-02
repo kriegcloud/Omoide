@@ -4,6 +4,7 @@ import threading
 import time
 import weakref
 from collections import OrderedDict
+from concurrent.futures import Future
 from dataclasses import dataclass
 
 import numpy as np
@@ -157,6 +158,9 @@ def encode_uploaded_image(image_bytes: bytes) -> np.ndarray:
 _TEXT_EMBEDDING_CACHE_SIZE = 256
 _text_embedding_cache: OrderedDict[tuple[str, int, str], tuple[float, ...]] = OrderedDict()
 _text_embedding_lock = threading.RLock()
+_text_embedding_pending: dict[tuple[str, int, str], Future] = {}
+# Preserve the previous single-inference bound without holding the cache lock.
+_text_embedding_inference = threading.BoundedSemaphore(1)
 _text_embedding_encoder_ref: weakref.ReferenceType | None = None
 
 
@@ -179,14 +183,34 @@ def encode_text_query(query: str) -> list[float]:
             _text_embedding_cache.clear()
             _text_embedding_encoder_ref = weakref.ref(encoder, _clear_released_text_encoder)
         cached = _text_embedding_cache.get(key)
-        if cached is None:
-            cached = tuple(encoder.encode_texts([normalized])[0].tolist())
-            _text_embedding_cache[key] = cached
-            if len(_text_embedding_cache) > _TEXT_EMBEDDING_CACHE_SIZE:
-                _text_embedding_cache.popitem(last=False)
-        else:
+        if cached is not None:
             _text_embedding_cache.move_to_end(key)
+            return list(cached)
+        pending = _text_embedding_pending.get(key)
+        owner = pending is None
+        if owner:
+            pending = Future()
+            _text_embedding_pending[key] = pending
+
+    if not owner:
+        return list(pending.result())
+    try:
+        with _text_embedding_inference:
+            cached = tuple(encoder.encode_texts([normalized])[0].tolist())
+        with _text_embedding_lock:
+            # A model reload may have replaced the active encoder meanwhile.
+            if _text_embedding_encoder_ref is not None and _text_embedding_encoder_ref() is encoder:
+                _text_embedding_cache[key] = cached
+                if len(_text_embedding_cache) > _TEXT_EMBEDDING_CACHE_SIZE:
+                    _text_embedding_cache.popitem(last=False)
+        pending.set_result(cached)
         return list(cached)
+    except BaseException as exc:
+        pending.set_exception(exc)
+        raise
+    finally:
+        with _text_embedding_lock:
+            _text_embedding_pending.pop(key, None)
 
 
 # ---------------------------------------------------------------------------

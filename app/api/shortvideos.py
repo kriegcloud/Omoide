@@ -13,6 +13,12 @@ from app.schemas.shortvideos import ShortVideoItem, ShortVideoPage, ShortVideoRe
 
 router = APIRouter()
 
+
+class ShortVideoPageResponse(ShortVideoPage):
+    """Totals stay exact by default; opt-in count-free pages report null."""
+
+    total: int | None = None
+
 _DEFAULT_MAX_DURATION = 10.0
 
 
@@ -24,19 +30,20 @@ def _base_filter(max_duration: float):
     )
 
 
-@router.get("", response_model=ShortVideoPage)
+@router.get("", response_model=ShortVideoPageResponse)
 def get_short_videos(
     session: Session = Depends(get_session),
     max_duration: float = Query(_DEFAULT_MAX_DURATION, ge=0),
     cursor: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     folder: str | None = None,
+    include_total: bool = True,
 ):
     """Paginated list of videos shorter than max_duration seconds, ordered shortest-first."""
     base_filter = _base_filter(max_duration)
     base_filter = and_(base_filter, folder_filter(folder), Media.missing_since.is_(None))
 
-    total = count_rows(session, Media.id, base_filter)
+    total = count_rows(session, Media.id, base_filter) if include_total else None
     rows, next_cursor = paginate(
         session,
         select(Media).where(base_filter),
@@ -60,7 +67,7 @@ def get_short_videos(
         for m in rows
     ]
 
-    return ShortVideoPage(items=items, next_cursor=next_cursor, total=total)
+    return ShortVideoPageResponse(items=items, next_cursor=next_cursor, total=total)
 
 
 @router.post("/resolve")

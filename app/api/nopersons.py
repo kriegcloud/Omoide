@@ -14,6 +14,12 @@ from app.schemas.nopersons import NoPersonsMediaItem, NoPersonsPage, NoPersonsRe
 router = APIRouter()
 
 
+class NoPersonsPageResponse(NoPersonsPage):
+    """Totals stay exact by default; opt-in count-free pages report null."""
+
+    total: int | None = None
+
+
 def _base_filter(media_type: str | None, scope: str):
     has_any_face = select(Face.media_id)
 
@@ -32,7 +38,7 @@ def _base_filter(media_type: str | None, scope: str):
     return base_filter
 
 
-@router.get("", response_model=NoPersonsPage)
+@router.get("", response_model=NoPersonsPageResponse)
 def get_no_persons_media(
     session: Session = Depends(get_session),
     cursor: str | None = Query(None),
@@ -40,12 +46,13 @@ def get_no_persons_media(
     media_type: str | None = Query(None, description="'image', 'video', or omit for all"),
     scope: str = Query("processed", description="'processed' (faces_extracted=true only) or 'all'"),
     folder: str | None = None,
+    include_total: bool = True,
 ):
     """Paginated list of media where face detection ran but found no faces."""
     base_filter = _base_filter(media_type, scope)
     base_filter = and_(base_filter, folder_filter(folder), Media.missing_since.is_(None))
 
-    total = count_rows(session, Media.id, base_filter)
+    total = count_rows(session, Media.id, base_filter) if include_total else None
     rows, next_cursor = paginate(
         session,
         select(Media).where(base_filter),
@@ -70,7 +77,7 @@ def get_no_persons_media(
         for m in rows
     ]
 
-    return NoPersonsPage(items=items, next_cursor=next_cursor, total=total)
+    return NoPersonsPageResponse(items=items, next_cursor=next_cursor, total=total)
 
 
 @router.post("/resolve")

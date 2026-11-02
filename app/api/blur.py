@@ -13,6 +13,12 @@ from app.schemas.blur import BlurMediaItem, BlurPage, BlurResolveRequest
 
 router = APIRouter()
 
+
+class BlurPageResponse(BlurPage):
+    """Totals stay exact by default; opt-in count-free pages report null."""
+
+    total: int | None = None
+
 _DEFAULT_THRESHOLD = 100.0
 
 
@@ -29,7 +35,7 @@ def _base_filter(threshold: float, media_type: str | None):
     return base_filter
 
 
-@router.get("", response_model=BlurPage)
+@router.get("", response_model=BlurPageResponse)
 def get_blurry_media(
     session: Session = Depends(get_session),
     threshold: float = Query(_DEFAULT_THRESHOLD, ge=0),
@@ -37,12 +43,13 @@ def get_blurry_media(
     limit: int = Query(50, ge=1, le=200),
     media_type: str | None = Query(None, description="'image', 'video', or omit for all"),
     folder: str | None = None,
+    include_total: bool = True,
 ):
     """Paginated list of media with laplacian_score below the threshold, ordered blurriest-first."""
     base_filter = _base_filter(threshold, media_type)
     base_filter = and_(base_filter, folder_filter(folder), Media.missing_since.is_(None))
 
-    total = count_rows(session, Media.id, base_filter)
+    total = count_rows(session, Media.id, base_filter) if include_total else None
     rows, next_cursor = paginate(
         session,
         select(Media).where(base_filter),
@@ -67,7 +74,7 @@ def get_blurry_media(
         for m in rows
     ]
 
-    return BlurPage(items=items, next_cursor=next_cursor, total=total)
+    return BlurPageResponse(items=items, next_cursor=next_cursor, total=total)
 
 
 @router.post("/resolve")

@@ -14,6 +14,12 @@ from app.schemas.noexifdate import NoExifDateItem, NoExifDatePage, NoExifDateRes
 router = APIRouter()
 
 
+class NoExifDatePageResponse(NoExifDatePage):
+    """Totals stay exact by default; opt-in count-free pages report null."""
+
+    total: int | None = None
+
+
 def _base_filter(media_type: str | None):
     has_exif_date = select(ExifData.media_id).where(ExifData.timestamp.isnot(None))
     base_filter = Media.id.not_in(has_exif_date)
@@ -25,19 +31,20 @@ def _base_filter(media_type: str | None):
     return base_filter
 
 
-@router.get("", response_model=NoExifDatePage)
+@router.get("", response_model=NoExifDatePageResponse)
 def get_no_exif_date_media(
     session: Session = Depends(get_session),
     cursor: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     media_type: str | None = Query(None, description="'image', 'video', or omit for all"),
     folder: str | None = None,
+    include_total: bool = True,
 ):
     """Paginated list of media with no EXIF capture timestamp, ordered newest-first."""
     base_filter = _base_filter(media_type)
     base_filter = and_(base_filter, folder_filter(folder), Media.missing_since.is_(None))
 
-    total = count_rows(session, Media.id, base_filter)
+    total = count_rows(session, Media.id, base_filter) if include_total else None
     rows, next_cursor = paginate(
         session,
         select(Media).where(base_filter),
@@ -61,7 +68,7 @@ def get_no_exif_date_media(
         for m in rows
     ]
 
-    return NoExifDatePage(items=items, next_cursor=next_cursor, total=total)
+    return NoExifDatePageResponse(items=items, next_cursor=next_cursor, total=total)
 
 
 @router.post("/resolve")

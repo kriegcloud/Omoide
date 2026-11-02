@@ -80,24 +80,25 @@ def _scalar(session: Session, stmt) -> int:
 def get_stats(session: Session = Depends(get_session)):
     is_video = Media.duration.is_not(None)
 
+    # One scan for the six media totals; keep the historical all-catalog
+    # semantics (including missing media and zero-duration videos).
+    media, images, videos, favorites, size_bytes, video_seconds = session.exec(
+        select(
+            func.count(Media.id),
+            func.sum(func.iif(Media.duration.is_(None), 1, 0)),
+            func.sum(func.iif(is_video, 1, 0)),
+            func.sum(func.iif(Media.is_favorite.is_(True), 1, 0)),
+            func.sum(Media.size),
+            func.sum(Media.duration),
+        )
+    ).one()
     totals = StatsTotals(
-        media=_scalar(session, select(func.count(Media.id))),
-        images=_scalar(
-            session,
-            select(func.count(Media.id)).where(Media.duration.is_(None)),
-        ),
-        videos=_scalar(session, select(func.count(Media.id)).where(is_video)),
-        favorites=_scalar(
-            session,
-            select(func.count(Media.id)).where(Media.is_favorite.is_(True)),
-        ),
-        size_bytes=_scalar(session, select(func.sum(Media.size))),
-        video_seconds=float(
-            session.exec(
-                select(func.sum(Media.duration)).where(is_video)
-            ).first()
-            or 0.0
-        ),
+        media=media,
+        images=images or 0,
+        videos=videos or 0,
+        favorites=favorites or 0,
+        size_bytes=size_bytes or 0,
+        video_seconds=float(video_seconds or 0.0),
         with_gps=_scalar(
             session,
             select(func.count(ExifData.id)).where(ExifData.lat.is_not(None)),
