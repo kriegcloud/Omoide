@@ -4,6 +4,7 @@ import { selectionBindings } from "../hotkeys/keymap";
 import config from "../config";
 import React, { useLayoutEffect, useState } from "react";
 import {
+  Box,
   Button,
   Divider,
   Menu,
@@ -27,7 +28,13 @@ import ConfirmDialog from "./ConfirmDialog";
 import { formatBytes } from "../formatUtils";
 
 /** Pins page actions below the actual header, including responsive/search layouts. */
-export function StickySelectionToolbar({ sx = [], ...props }: PaperProps) {
+interface StickySelectionToolbarProps extends PaperProps {
+  /** With onClearSelection: shows "Clear selection (n)" and binds Escape while n > 0. */
+  selectedCount?: number;
+  onClearSelection?: () => void;
+}
+
+export function StickySelectionToolbar({ sx = [], selectedCount = 0, onClearSelection, children, ...props }: StickySelectionToolbarProps) {
   const [headerHeight, setHeaderHeight] = useState(0);
   useLayoutEffect(() => {
     const header = document.querySelector<HTMLElement>(".MuiAppBar-root");
@@ -38,6 +45,10 @@ export function StickySelectionToolbar({ sx = [], ...props }: PaperProps) {
     observer.observe(header);
     return () => observer.disconnect();
   }, []);
+  const canClear = Boolean(onClearSelection) && selectedCount > 0;
+  useHotkey({ key: "Escape" }, () => onClearSelection?.(), {
+    scope: "page", enabled: canClear, description: "Clear the selection",
+  });
 
   return <Paper {...props} sx={[
     {
@@ -47,9 +58,27 @@ export function StickySelectionToolbar({ sx = [], ...props }: PaperProps) {
       bgcolor: "background.paper",
       backdropFilter: "none",
       boxShadow: 1,
+      display: canClear ? "flex" : undefined,
+      alignItems: "center",
+      gap: 1,
     },
     ...(Array.isArray(sx) ? sx : [sx]),
-  ]} />;
+  ]}>
+    {canClear && (
+      <Button
+        size="small"
+        variant="outlined"
+        color="inherit"
+        startIcon={<ClearAllIcon />}
+        onClick={onClearSelection}
+        aria-label={`Clear selection (${selectedCount} selected)`}
+        sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+      >
+        Clear ({selectedCount})
+      </Button>
+    )}
+    {canClear ? <Box sx={{ flex: 1, minWidth: 0 }}>{children}</Box> : children}
+  </Paper>;
 }
 
 export type BulkResolveAction = "DELETE_FILES" | "DELETE_RECORDS" | "BLACKLIST_RECORDS";

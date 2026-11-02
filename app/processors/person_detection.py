@@ -40,15 +40,24 @@ def _prepare(image):
 
 
 def detector_images(media, scenes):
-    """Read the image or at most five existing, evenly sampled video keyframes."""
+    """Read the image, or for videos the poster frame plus up to four evenly sampled
+    existing keyframes (short clips can switch content between keyframes)."""
     if media.duration is None:
         with Image.open(media.path) as source:
             return [_prepare(source)]
     available = [scene for scene in scenes if isinstance(scene, tuple) or (
         isinstance(scene, Scene) and scene.thumbnail_path
     )]
-    indices = np.linspace(0, len(available) - 1, min(5, len(available)), dtype=int)
     images = []
+    poster = getattr(media, 'thumbnail_path', None)
+    if poster:
+        try:
+            with Image.open(settings.general.thumb_dir / poster) as source:
+                images.append(_prepare(source))
+        except OSError:
+            pass
+    budget = 5 - len(images)
+    indices = np.linspace(0, len(available) - 1, min(budget, len(available)), dtype=int) if available else []
     for index in indices:
         scene = available[index]
         if isinstance(scene, tuple):

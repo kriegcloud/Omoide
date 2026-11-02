@@ -225,7 +225,7 @@ export function AllOrphanFaces({ tabs }: { tabs: React.ReactNode }) {
   useHotkey({ key: "Escape" }, () => setSelectedFaceIds([]), { scope: "page", enabled: selectedFaceIds.length > 0, description: "Clear face selection" });
 
   return (
-    <GalleryPage id="unassigned-faces" title="Unassigned Faces" tabs={tabs} count={orphanCount ?? storedOrphans.length} countLabel="faces" selection={<StickySelectionToolbar sx={{ p: 1, mb: 2 }}>
+    <GalleryPage id="unassigned-faces" title="Unassigned Faces" tabs={tabs} count={orphanCount ?? storedOrphans.length} countLabel="faces" selection={<StickySelectionToolbar sx={{ p: 1, mb: 2 }} selectedCount={selectedFaceIds.length} onClearSelection={() => setSelectedFaceIds([])}>
         <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
           <Typography sx={{ ml: 1 }} variant="subtitle1">
             {selectedFaceIds.length} selected · {orphans.length} loaded

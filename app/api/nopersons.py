@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from app.api._resolve import resolve_media_action
 from app.api._media_filters import exclude_missing, folder_filter
 from app.database import get_session
-from app.models import Media
+from app.models import Face, Media
 from app.pagination import count_rows, paginate
 from app.schemas.nopersons import NoPersonsMediaItem, NoPersonsPage, NoPersonsResolveRequest
 
@@ -24,7 +24,9 @@ def _base_filter(media_type: str | None, scope: str):
     if scope == "pending":
         base_filter = Media.persons_detected.is_(False)
     else:
-        base_filter = and_(Media.persons_detected.is_(True), Media.has_persons.is_(False))
+        # A detected face always means a person, whatever the frame sampling saw.
+        has_face = select(Face.id).where(Face.media_id == Media.id).exists()
+        base_filter = and_(Media.persons_detected.is_(True), Media.has_persons.is_(False), ~has_face)
 
     if media_type == "image":
         base_filter = and_(base_filter, Media.duration.is_(None))

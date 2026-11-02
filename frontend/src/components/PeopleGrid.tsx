@@ -350,7 +350,7 @@ const clearList = useListStore(state => state.clearList);
             />
           )}
         </Stack>
-      </Stack>} selection={<StickySelectionToolbar sx={{ p: 1, mb: 2 }}><Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">          {selectionMode && (
+      </Stack>} selection={<StickySelectionToolbar sx={{ p: 1, mb: 2 }} selectedCount={selectedCount} onClearSelection={() => setSelected([])}><Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">          {selectionMode && (
             <Typography variant="body2" color="text.secondary">
               {selectedCount} selected · {people.length} loaded
             </Typography>

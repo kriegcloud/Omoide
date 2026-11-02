@@ -42,7 +42,7 @@ export function IgnoredFaces({ tabs }: { tabs: ReactNode }) {
   useHotkey({ key: "i" }, () => restore(selected), { scope: "page", enabled: !!selected.length && !config.PRESENTATION_MODE, description: "Restore selected ignored faces" });
   useHotkey({ key: "i", shift: true }, () => restore(items.map(face => face.id), true), { scope: "page", enabled: items.length > 0 && !config.PRESENTATION_MODE, description: "Restore all ignored faces" });
   useHotkey({ key: "Escape" }, () => setSelected([]), { scope: "page", enabled: !!selected.length, description: "Clear ignored face selection" });
-  return <GalleryPage title="Ignored Faces" tabs={tabs} count={items.length} countLabel="loaded faces" selection={<StickySelectionToolbar><Stack direction="row" spacing={1} alignItems="center">
+  return <GalleryPage title="Ignored Faces" tabs={tabs} count={items.length} countLabel="loaded faces" selection={<StickySelectionToolbar selectedCount={selected.length} onClearSelection={() => setSelected([])}><Stack direction="row" spacing={1} alignItems="center">
     <Typography>{selected.length} selected</Typography>
     <Button onClick={() => setSelected(selected.length < items.length ? items.map(face => face.id) : [])}>Select All</Button>
     <Button disabled={!selected.length || config.PRESENTATION_MODE} onClick={() => restore(selected)}>Restore selected</Button>
