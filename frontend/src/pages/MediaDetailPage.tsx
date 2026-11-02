@@ -1,5 +1,5 @@
 import { useEditorUrlState } from "../hooks/useEditorUrlState";
-import React, { lazy, Suspense, useEffect, useState, useMemo, useCallback, useRef } from "react";
+import React, { lazy, Suspense, useEffect, useState, useMemo, useCallback, useRef, useSyncExternalStore } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
   Container,
@@ -20,8 +20,9 @@ import ArrowBackIosNew from "@mui/icons-material/ArrowBackIosNew";
 import ArrowForwardIos from "@mui/icons-material/ArrowForwardIos";
 import CloseIcon from "@mui/icons-material/Close";
 
+import { optimisticOperations, projectEntity, acknowledgeQuery, operationVersion } from "../stores/optimisticOperations";
 import { useListStore } from "../stores/useListStore";
-import { mutationBus, runOptimistic } from "../stores/mutationBus";
+import { mutationBus } from "../stores/mutationBus";
 import { useMutationRefresh, useUndoRefresh } from "../context/UndoContext";
 import { useTaskCompletionVersion } from "../TaskEventsContext";
 
@@ -88,7 +89,13 @@ export default function MediaDetailPage() {
   const [storedDetail, setDetail] = useState<MediaDetail | null>(
     preloadedMedia && String(preloadedMedia.id) === id ? { media: preloadedMedia, persons: [], orphans: [] } : null
   );
-  const detail = storedDetail && String(storedDetail.media.id) === id ? storedDetail : null;
+  const operations = useSyncExternalStore(optimisticOperations.subscribe, optimisticOperations.getSnapshot, optimisticOperations.getSnapshot);
+  const detail = useMemo(() => {
+    // The snapshot is the invalidation dependency for the shared projection.
+    void operations;
+    const media = storedDetail ? projectEntity(`media:${storedDetail.media.id}`, storedDetail.media, `media-detail:${id}`) : null;
+    return storedDetail && media && String(media.id) === id ? { ...storedDetail, media } : null;
+  }, [storedDetail, id, operations]);
   const [isDetailLoading, setIsDetailLoading] = useState(true);
   const [loadError, setLoadError] = useState<{ status?: number; message: string } | null>(null);
 
@@ -110,7 +117,6 @@ export default function MediaDetailPage() {
   const [actionTarget, setActionTarget] = useState<{ id: number; mediaListKey?: string } | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const actionBusyRef = useRef(false);
-  const [favoriteBusy, setFavoriteBusy] = useState(false);
   const [infoVisible, setInfoVisible] = useState(true);
   const hotkeyScope = useDialogHotkeyScope(true);
   const openHotkeyHelp = useHotkeyHelp();
@@ -224,8 +230,12 @@ export default function MediaDetailPage() {
       setIsDetailLoading(true);
       setLoadError(null);
       try {
+        const fence = operationVersion();
         const data = await getMedia(id, signal);
-        if (isCurrent()) setDetail(data);
+        if (isCurrent()) {
+          acknowledgeQuery(`media-detail:${id}`, fence);
+          setDetail(data);
+        }
       } catch (err) {
         if (isCurrent()) {
           const status = err && typeof err === "object" && "status" in err ? Number(err.status) : undefined;
@@ -435,76 +445,19 @@ export default function MediaDetailPage() {
     }
   }, [navigate, backgroundLocation]);
 
-  const confirmDeleteRecord = async () => {
-    if (!actionTarget || actionBusyRef.current) return;
+  const confirmDelete = (deleteFile: boolean) => {
+    if (!actionTarget || actionBusyRef.current || config.PRESENTATION_MODE) return;
     const target = actionTarget;
     actionBusyRef.current = true;
-    setActionBusy(true);
-    try {
-      await runOptimistic({
-        apply: () => {
-          const snapshot = detail;
-          if (routeId.current === String(target.id)) {
-            setDetail(null);
-            setIsDetailLoading(false);
-            detailRequest.current += 1;
-          }
-          return snapshot;
-        },
-        request: () => deleteMediaRecord(target.id),
-        rollback: (snapshot) => {
-          if (String(target.id) === routeId.current && snapshot?.media.id === target.id) setDetail(snapshot);
-        },
-      });
-      setSnackbar({
-        open: true,
-        message: "Record deleted",
-        severity: "success",
-      });
-      if (routeId.current === String(target.id)) navigateAfterDelete();
-    } catch {
-      setSnackbar({ open: true, message: "Delete failed", severity: "error" });
-    } finally {
-      actionBusyRef.current = false;
-      setActionBusy(false);
-      closeDialog();
-    }
+    const request = deleteFile ? deleteMediaFile(target.id) : deleteMediaRecord(target.id);
+    setDialogType(null);
+    setActionTarget(null);
+    if (routeId.current === String(target.id)) navigateAfterDelete();
+    // Global operation feedback owns failure delivery after navigation/unmount.
+    void request.catch(() => {}).finally(() => { actionBusyRef.current = false; });
   };
-  const confirmDeleteFile = async () => {
-    if (!actionTarget || actionBusyRef.current) return;
-    const target = actionTarget;
-    actionBusyRef.current = true;
-    setActionBusy(true);
-    try {
-      await runOptimistic({
-        apply: () => {
-          const snapshot = detail;
-          if (routeId.current === String(target.id)) {
-            setDetail(null);
-            setIsDetailLoading(false);
-            detailRequest.current += 1;
-          }
-          return snapshot;
-        },
-        request: () => deleteMediaFile(target.id),
-        rollback: (snapshot) => {
-          if (String(target.id) === routeId.current && snapshot?.media.id === target.id) setDetail(snapshot);
-        },
-      });
-      setSnackbar({ open: true, message: "File deleted", severity: "success" });
-      if (routeId.current === String(target.id)) navigateAfterDelete();
-    } catch {
-      setSnackbar({
-        open: true,
-        message: "File delete failed",
-        severity: "error",
-      });
-    } finally {
-      actionBusyRef.current = false;
-      setActionBusy(false);
-      closeDialog();
-    }
-  };
+  const confirmDeleteRecord = () => confirmDelete(false);
+  const confirmDeleteFile = () => confirmDelete(true);
 
   const handleClose = () => {
     if (hasChildDialog()) return;
@@ -514,19 +467,9 @@ export default function MediaDetailPage() {
       navigate("/");
     }
   };
-  const toggleFavorite = async () => {
-    if (!detail?.media || favoriteBusy) return;
-    const media = detail.media;
-    setFavoriteBusy(true);
-    try {
-      const updatedMedia = await setMediaFavorite(media.id, !media.is_favorite);
-      setDetail((current) => current?.media.id === media.id ? { ...current, media: updatedMedia } : current);
-
-    } catch {
-      setSnackbar({ open: true, message: "Failed to update favorite", severity: "error" });
-    } finally {
-      setFavoriteBusy(false);
-    }
+  const toggleFavorite = () => {
+    if (!detail?.media || config.PRESENTATION_MODE) return;
+    void setMediaFavorite(detail.media.id, !detail.media.is_favorite).catch(() => {});
   };
   const mediaActionsEnabled = !!detail?.media && String(detail.media.id) === id && !isDetailLoading && !config.PRESENTATION_MODE;
   const viewerHotkeys = { scope: "dialog" as const, dialogRef: hotkeyScope };
@@ -537,7 +480,7 @@ export default function MediaDetailPage() {
     ...viewerHotkeys, enabled: !!neighbors.nextId && !isDetailLoading, description: "Next media",
   });
   useHotkey({ key: "f" }, () => void toggleFavorite(), {
-    ...viewerHotkeys, enabled: mediaActionsEnabled && !favoriteBusy, description: "Toggle favorite",
+    ...viewerHotkeys, enabled: mediaActionsEnabled, description: "Toggle favorite",
   });
   useHotkey({ key: "e" }, () => setEditorOpen(true), {
     ...viewerHotkeys, enabled: mediaActionsEnabled && typeof detail?.media.duration !== "number", description: "Edit image",

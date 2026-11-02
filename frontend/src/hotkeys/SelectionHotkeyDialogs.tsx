@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Alert, Snackbar } from "@mui/material";
 import { useHotkeys } from "./useHotkey";
 import { selectionBindings } from "./keymap";
@@ -18,8 +18,10 @@ export function SelectionHotkeyDialogs({ mediaIds, enabled = true, includeDelete
   includeDelete?: boolean;
   onProcessed?: (ids: number[]) => void | Promise<void>;
 }) {
+  const currentIds = useRef(mediaIds);
+  currentIds.current = mediaIds;
   const [pending, setPending] = useState<{ kind: "m" | "l" | "t" | "r" | BulkDeleteAction; ids: number[] } | null>(null);
-  const [busy, setBusy] = useState(false);
+  const busy = false;
   const [feedback, setFeedback] = useState<{ message: string; error?: boolean } | null>(null);
   useHotkeys(selectionBindings.filter(binding => ["m", "l", "t", "r", ...(includeDelete ? ["Delete", "x"] : [])].includes(binding.key)), (event) => {
     const key = event.key.toLowerCase();
@@ -33,22 +35,25 @@ export function SelectionHotkeyDialogs({ mediaIds, enabled = true, includeDelete
     <ConfirmDialog open={!!deleting} title={copy?.title ?? ""} message={copy?.message ?? ""} confirmLabel={copy?.confirmLabel} loading={busy}
       onClose={() => setPending(null)} onConfirm={async () => {
         if (!pending || !deleting || busy || config.PRESENTATION_MODE) return;
-        setBusy(true);
+        const target = pending;
+        setPending(null);
         try {
-          const result = await bulkDeleteMedia(pending.ids, pending.kind as BulkDeleteAction);
-          setPending(null);
-          await onProcessed?.(result.processed_ids);
+          const result = await bulkDeleteMedia(target.ids, target.kind as BulkDeleteAction);
+          const current = new Set(currentIds.current);
+          if (current.size === target.ids.length && target.ids.every(id => current.has(id))) {
+            await onProcessed?.(result.processed_ids);
+          }
           setFeedback({ message: `Deleted ${result.removed}; ${result.skipped_ids.length} skipped; ${result.errors.length} failed`, error: result.errors.length > 0 });
-        } catch (error) { fail(error); } finally { setBusy(false); }
+        } catch (error) { fail(error); }
       }} />
     <FolderPickerDialog open={pending?.kind === "m"} loading={busy} onClose={() => setPending(null)} onConfirm={async destination => {
       if (!pending || busy || config.PRESENTATION_MODE) return;
-      setBusy(true);
+      const target = pending;
+      setPending(null);
       try {
-        const result = await bulkMoveMedia(pending.ids, destination);
-        setPending(null);
+        const result = await bulkMoveMedia(target.ids, destination);
         setFeedback({ message: `Moved ${result.moved_ids.length}; ${result.skipped.length} skipped` });
-      } catch (error) { fail(error); } finally { setBusy(false); }
+      } catch (error) { fail(error); }
     }} />
     <AddToAlbumDialog open={pending?.kind === "l"} mediaIds={pending?.ids ?? []} onClose={() => setPending(null)} onAdded={album => {
       setPending(null); setFeedback({ message: `Added to ${album.name}` });

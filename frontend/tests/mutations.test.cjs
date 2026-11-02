@@ -12,6 +12,7 @@ function environment(){
   const module={exports:{}};cache.set(file,module);
   const code=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText;
   new Function('require','module','exports',code)((id)=>{
+   if(relative==='services/mediaActions.ts' && id.endsWith('/optimisticOperations'))return { startOperation: command => ({ done: Promise.resolve().then(() => command.request(command.input)).then(() => ({ state: "committed" }), error => ({ state: "unknown", error: error.message })) }) };
    if(id.endsWith('/config'))return {API:''};
    if(id.endsWith('/mutationBus'))return {mutationBus:bus};
    if(id.startsWith('.'))return load(path.relative(path.resolve(__dirname,'../src'),path.resolve(path.dirname(file),id+'.ts')));

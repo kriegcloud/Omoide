@@ -1,6 +1,7 @@
+import { optimisticOperations, projectEntity } from "../stores/optimisticOperations";
 import { useEditorUrlState } from "../hooks/useEditorUrlState";
 import { useLocation, useNavigate } from "react-router-dom";
-import { MouseEvent, useEffect, useRef, useState } from "react";
+import { MouseEvent, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   Alert,
   Divider,
@@ -89,13 +90,19 @@ export default function MediaCardMenu({
     onDeleted?: () => void;
   } | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
-  const [favorite, setFavorite] = useState(!!media.is_favorite);
+  useSyncExternalStore(optimisticOperations.subscribe, optimisticOperations.getSnapshot, optimisticOperations.getSnapshot);
+  const favorite = !!projectEntity(`media:${media.id}`, media)?.is_favorite;
+  const favoriteChange = useRef({ media, onMediaChange });
+  favoriteChange.current = { media, onMediaChange };
+  useEffect(() => {
+    const { media: currentMedia, onMediaChange: changed } = favoriteChange.current;
+    changed?.({ ...currentMedia, is_favorite: favorite });
+  }, [favorite, media.id]);
   const { open: openEditorUrl } = useEditorUrlState();
   const location = useLocation();
   const navigate = useNavigate();
   const [snackbar, setSnackbar] = useState<{ message: string; severity: "success" | "error" } | null>(null);
 
-  useEffect(() => setFavorite(!!media.is_favorite), [media.id, media.is_favorite]);
 
   const stop = (event: MouseEvent) => {
     event.preventDefault();
@@ -113,26 +120,15 @@ export default function MediaCardMenu({
     }
     setDialog(kind);
   };
-  const applyMedia = (updated: Media | MediaPreview) => {
-    setFavorite(updated.is_favorite);
-    onMediaChange?.(updated);
-  };
   const fail = (error: unknown, fallback: string) => {
     const message = error instanceof Error ? error.message : fallback;
     setDialogError(message);
     setSnackbar({ message, severity: "error" });
   };
 
-  const toggleFavorite = async () => {
+  const toggleFavorite = () => {
     closeMenu();
-    const next = !favorite;
-    setFavorite(next);
-    try {
-      applyMedia(await setMediaFavorite(media.id, next));
-    } catch (error) {
-      setFavorite(!next);
-      fail(error, "Failed to update favorite");
-    }
+    void setMediaFavorite(media.id, !favorite).catch(() => {});
   };
 
   const beginRepair = async (profile: RepairProfile) => {
@@ -159,32 +155,14 @@ export default function MediaCardMenu({
     openEditorUrl({ edit: target.edit }, { ...location.state, editorListKey: mediaListKey });
   };
 
-  const confirmRename = async (filename: string) => {
-    setBusy(true);
-    setDialogError(null);
-    try {
-      applyMedia(await renameMedia(media.id, filename));
-      setDialog(null);
-      setSnackbar({ message: "Media renamed", severity: "success" });
-    } catch (error) {
-      fail(error, "Failed to rename media");
-    } finally {
-      setBusy(false);
-    }
+  const confirmRename = (filename: string) => {
+    setDialog(null);
+    void renameMedia(media.id, filename).catch(() => {});
   };
 
-  const confirmMove = async (destinationDir: string) => {
-    setBusy(true);
-    setDialogError(null);
-    try {
-      applyMedia(await moveMedia(media.id, destinationDir));
-      setDialog(null);
-      setSnackbar({ message: "Media moved", severity: "success" });
-    } catch (error) {
-      fail(error, "Failed to move media");
-    } finally {
-      setBusy(false);
-    }
+  const confirmMove = (destinationDir: string) => {
+    setDialog(null);
+    void moveMedia(media.id, destinationDir).catch(() => {});
   };
 
   const closeDeleteDialog = () => {
@@ -192,27 +170,15 @@ export default function MediaCardMenu({
     setDialog(null);
     setDeleteTarget(null);
   };
-  const confirmDelete = async (deleteFile: boolean) => {
-    if (!deleteTarget || deleteBusyRef.current) return;
+  const confirmDelete = (deleteFile: boolean) => {
+    if (!deleteTarget || deleteBusyRef.current || config.PRESENTATION_MODE) return;
     const target = deleteTarget;
     deleteBusyRef.current = true;
-    setBusy(true);
-    try {
-      if (deleteFile) await deleteMediaFile(target.id);
-      else await deleteMediaRecord(target.id);
-      setDialog(null);
-      setDeleteTarget(null);
-      target.onDeleted?.();
-      setSnackbar({
-        message: deleteFile ? "File deleted" : "Record removed",
-        severity: "success",
-      });
-    } catch (error) {
-      fail(error, deleteFile ? "Failed to delete file" : "Failed to remove record");
-    } finally {
-      deleteBusyRef.current = false;
-      setBusy(false);
-    }
+    const request = deleteFile ? deleteMediaFile(target.id) : deleteMediaRecord(target.id);
+    setDialog(null);
+    setDeleteTarget(null);
+    // Retained for legacy parents that do not consume the shared list overlay.
+    void request.then(() => target.onDeleted?.()).catch(() => {}).finally(() => { deleteBusyRef.current = false; });
   };
 
   const openApplicationItem = (
