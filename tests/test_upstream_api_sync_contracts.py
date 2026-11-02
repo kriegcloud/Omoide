@@ -39,7 +39,8 @@ class UpstreamApiSyncContracts(DatabaseCase):
         second = list_persons(cursor=first.next_cursor, **args)
         self.assertEqual([p.id for p in first.items + second.items], [favorite.id, ordinary.id])
         self.assertTrue(first.items[0].is_favorite)
-        self.assertEqual(list_persons(cursor=second.next_cursor, **args).items, [])
+        # A full final page no longer advertises a cursor to an empty page.
+        self.assertIsNone(second.next_cursor)
 
     def test_missing_geo_includes_no_exif_but_hides_missing_and_obeys_folder(self):
         wanted = self.media(path=str(self.root / 'a%_' / 'image.jpg'))
