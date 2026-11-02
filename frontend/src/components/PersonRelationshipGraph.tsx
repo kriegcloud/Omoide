@@ -23,14 +23,11 @@ import {
   useTheme,
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
-import {
-  EdgeEvent,
-  Graph as G6Graph,
-  GraphData,
-  NodeEvent,
-  type IElementEvent,
-} from "@antv/g6";
-import type { BaseEdgeStyleProps, BaseNodeStyleProps } from "@antv/g6";
+import { Graph as G6Graph } from "@antv/g6/esm/runtime/graph";
+import { EdgeEvent } from "@antv/g6/esm/constants/events/edge";
+import { NodeEvent } from "@antv/g6/esm/constants/events/node";
+import type { GraphData, IElementEvent, BaseEdgeStyleProps, BaseNodeStyleProps } from "@antv/g6";
+import "./personGraphExtensions";
 import useResizeObserver from "use-resize-observer";
 import { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
