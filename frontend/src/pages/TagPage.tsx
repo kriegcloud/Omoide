@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button, Typography, Box, CircularProgress } from "@mui/material";
 
 import { useInView } from "react-intersection-observer";
+import { infiniteScrollObserver } from "../hooks/infiniteScroll";
 import TagCard from "../components/TagCard";
 import { useListStore, defaultListState } from "../stores/useListStore";
 import { getTags } from "../services/tag";
@@ -43,7 +44,7 @@ export default function TagsPage() {
     onSelectionChange: selection.setSelected,
   });
 
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
+  const { ref: loaderRef, inView } = useInView(infiniteScrollObserver);
 
   useEffect(() => {
     fetchInitial(listKey, () => getTags(null));

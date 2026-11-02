@@ -5,6 +5,7 @@ import { ListRevision, mergeUnique } from "../stores/listReconciliation";
 import { useUndoRefresh } from "../context/UndoContext";
 import { useCallback, useEffect, useRef, useState, useId } from "react";
 import { useInView } from "react-intersection-observer";
+import { infiniteScrollObserver } from "./infiniteScroll";
 
 export interface CursorListPage<T> {
   items: T[];
@@ -52,7 +53,7 @@ export function useCursorList<T extends { id: number }>(
   const nextCursorRef = useRef<string | null>(null);
   const inFlightRef = useRef(false);
 
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
+  const { ref: loaderRef, inView } = useInView(infiniteScrollObserver);
 
   const fetchPage = useCallback(
     async (cursor: string | null, append: boolean, throwOnError = false) => {

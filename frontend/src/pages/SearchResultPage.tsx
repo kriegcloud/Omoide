@@ -16,6 +16,7 @@ import {
 } from "@mui/material";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInView } from "react-intersection-observer";
+import { infiniteScrollObserver } from "../hooks/infiniteScroll";
 import Gallery from "../components/Gallery";
 import { useLocation, useSearchParams } from "react-router-dom";
 import MediaCard from "../components/MediaCard";
@@ -222,7 +223,7 @@ export default function SearchResultsPage() {
   }, [listKey, category, query, fetchInitial, location.key]);
 
   // ---- infinite scroll ---------------------------------------------------
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
+  const { ref: loaderRef, inView } = useInView(infiniteScrollObserver);
 
   useEffect(() => {
     if (!inView) return;

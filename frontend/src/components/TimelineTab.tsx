@@ -14,6 +14,7 @@ import {
 import { Box, Button, CircularProgress, Typography } from "@mui/material";
 import React, { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useInView } from "react-intersection-observer";
+import { infiniteScrollObserver } from "../hooks/infiniteScroll";
 import { EventFormDialog } from "../components/EventFormDialog";
 import ConfirmDialog from "./ConfirmDialog";
 import { EventCard } from "./EventCard";
@@ -67,7 +68,7 @@ export const TimelineTab: React.FC<TimelineTabProps> = ({ person, onDetachMedia,
   useUndoRefresh(`cache:${listKey}`, refreshTimeline);
   useMutationRefresh(["face:assigned", "face:detached", "face:deleted", "media:deleted", "media:updated", "person:changed", "media:moved", "list:invalidate", "tag:changed"], refreshTimeline);
   const { ref, inView } = useInView({
-    threshold: 0.5,
+    ...infiniteScrollObserver,
     skip: isLoading || !hasMore,
   });
 

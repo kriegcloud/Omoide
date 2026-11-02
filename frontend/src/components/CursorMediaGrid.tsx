@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Gallery from "./Gallery";
 import { Box, CircularProgress } from "@mui/material";
 import { useInView } from "react-intersection-observer";
+import { infiniteScrollObserver } from "../hooks/infiniteScroll";
 import MediaCard from "./MediaCard";
 import { CursorPage, Media } from "../types";
 import { useSelection } from "../context/SelectionContext";
@@ -36,7 +37,7 @@ export function CursorMediaGrid({
   optimistic = false,
   renderItems,
 }: Props) {
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
+  const { ref: loaderRef, inView } = useInView(infiniteScrollObserver);
   const [operationsRevision, notifyOperations] = useState(0);
   useEffect(() => optimistic ? optimisticOperations.subscribe(() => notifyOperations(value => value + 1)) : undefined, [optimistic]);
   const [items, setItems] = useState<Media[]>([]);
@@ -175,7 +176,7 @@ export function CursorMediaGrid({
       {visibleItems.length > 0 && (renderItems ? renderItems(visibleItems, onItemClick) : (
         <Gallery>
           {visibleItems.map((media) => (
-            <div key={media.id}>
+            <div key={media.id} data-aspect={media.width && media.height ? media.width / media.height : undefined}>
               <MediaCard
                 media={media}
                 mediaListKey={listKey}

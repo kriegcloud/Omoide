@@ -8,6 +8,7 @@ import { useVisiblePolling } from "../hooks/useVisiblePolling";
 import { useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useInView } from "react-intersection-observer";
+import { infiniteScrollObserver } from "../hooks/infiniteScroll";
 import {
   Alert,
   Box,
@@ -168,7 +169,7 @@ export default function DatasetDetailPage() {
   const analysisGeneration = useRef(0);
   const morePending = useRef(false);
   const sortRef = useRef("position");
-  const { ref: loadMoreRef, inView: loadMoreInView } = useInView({ rootMargin: "400px" });
+  const { ref: loadMoreRef, inView: loadMoreInView } = useInView(infiniteScrollObserver);
   const [exports, setExports] = useState<DatasetExport[]>([]);
   const [runs, setRuns] = useState<TrainingRun[]>([]);
   const [trainingHealth, setTrainingHealth] = useState<TrainingHealth | null>(null);

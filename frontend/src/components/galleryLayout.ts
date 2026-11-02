@@ -38,32 +38,37 @@ export function masonryPositions(width: number, ratios: number[]) {
 }
 
 /**
- * Sticky column placement for the masonry. Round-robin by index (react-masonry-css)
- * moves every later tile to another column when one tile is removed or inserted,
- * so a delete reshuffles the whole grid. Here a tile keeps its column across
- * renders; new tiles go to the column with the fewest tiles. A full re-deal only
- * happens when the column count changes or columns drift too far apart.
+ * Masonry placement. Each new tile goes to the currently shortest column by
+ * height (estimated from its aspect ratio, or measured after a render), so the
+ * columns stay level and a newly loaded batch lands at the bottom of every
+ * column instead of filling short columns far above the viewport.
+ * Placement is sticky: a tile keeps its column across renders, so removing one
+ * only moves the tiles below it in that column. A full re-deal only happens
+ * when the column count changes.
  */
 export function assignColumns(
   keys: readonly string[],
   columns: number,
   previous: ReadonlyMap<string, number> | null,
-  maxImbalance = 3,
+  heightOf: (key: string) => number | undefined = () => undefined,
 ): Map<string, number> {
   const count = Math.max(1, columns);
-  const roundRobin = () => new Map(keys.map((key, index) => [key, index % count] as const));
-  if (!previous) return roundRobin();
   const next = new Map<string, number>();
-  const sizes = Array<number>(count).fill(0);
-  for (const key of keys) {
-    const column = previous.get(key);
-    if (column !== undefined && column < count) { next.set(key, column); sizes[column]++; }
+  const heights = Array<number>(count).fill(0);
+  const known = keys.map(key => heightOf(key)).filter((h): h is number => Number.isFinite(h) && (h as number) > 0);
+  const fallback = known.length ? known.reduce((a, b) => a + b, 0) / known.length : 1;
+  const height = (key: string) => { const h = heightOf(key); return Number.isFinite(h) && (h as number) > 0 ? (h as number) : fallback; };
+  if (previous) {
+    for (const key of keys) {
+      const column = previous.get(key);
+      if (column !== undefined && column < count) { next.set(key, column); heights[column] += height(key); }
+    }
   }
   for (const key of keys) {
     if (next.has(key)) continue;
     let target = 0;
-    for (let column = 1; column < count; column++) if (sizes[column] < sizes[target]) target = column;
-    next.set(key, target); sizes[target]++;
+    for (let column = 1; column < count; column++) if (heights[column] < heights[target] - 0.5) target = column;
+    next.set(key, target); heights[target] += height(key);
   }
-  return Math.max(...sizes) - Math.min(...sizes) > maxImbalance ? roundRobin() : next;
+  return next;
 }

@@ -19,6 +19,7 @@ import {
 import TheatersIcon from "@mui/icons-material/Theaters";
 import AutorenewIcon from "@mui/icons-material/Autorenew";
 import { useInView } from "react-intersection-observer";
+import { infiniteScrollObserver } from "../hooks/infiniteScroll";
 import config, { API } from "../config";
 import { encodeFilePath } from "../urlUtils";
 import { EmptyState } from "../components/EmptyState";
@@ -45,7 +46,7 @@ const formatRange = (startIso: string, endIso: string) => {
 };
 
 export default function EventsPage() {
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
+  const { ref: loaderRef, inView } = useInView(infiniteScrollObserver);
   const [baseItems, setItems] = useState<EventItem[]>([]);
   useSyncExternalStore(optimisticOperations.subscribe, optimisticOperations.getSnapshot, optimisticOperations.getSnapshot);
   const items = projectList("events", "event", baseItems).items;

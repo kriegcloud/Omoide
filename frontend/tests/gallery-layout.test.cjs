@@ -90,12 +90,18 @@ test('new tiles fill the shortest column and a column change re-deals', () => {
   assert.deepEqual([...resized.values()], [0, 1, 2, 0, 1, 2, 0, 1]);
 });
 
-test('heavy drift rebalances instead of leaving one column nearly empty', () => {
+test('new tiles go to the shortest column by height, so a loaded batch lands at the bottom', () => {
   const { assignColumns } = load();
-  const keys = Array.from({ length: 24 }, (_, i) => `k${i}`);
-  const first = assignColumns(keys, 3, null);
-  const drained = keys.filter(k => first.get(k) !== 0 || k === 'k0');
-  const next = assignColumns(drained, 3, first);
-  const sizes = [0, 0, 0]; for (const c of next.values()) sizes[c]++;
-  assert.ok(Math.max(...sizes) - Math.min(...sizes) <= 1, `balanced: ${sizes}`);
+  const heights = { a: 900, b: 300, c: 300, d: 300, e: 300, f: 300 };
+  const placed = assignColumns(Object.keys(heights), 2, null, key => heights[key]);
+  // a (900) alone in column 0; the five short tiles stack in column 1 until it catches up.
+  assert.deepEqual(['a', 'b', 'c', 'd', 'e', 'f'].map(k => placed.get(k)), [0, 1, 1, 1, 0, 1]);
+  const more = assignColumns([...Object.keys(heights), 'g'], 2, placed, key => heights[key] ?? 300);
+  assert.equal(more.get('g'), 0, 'next item goes to the shorter column (0: 1200 vs 1: 1200 -> first)');
+});
+
+test('unknown heights fall back to the average, keeping index order stable', () => {
+  const { assignColumns } = load();
+  const placed = assignColumns(['a', 'b', 'c', 'd'], 2, null);
+  assert.deepEqual([...placed.values()], [0, 1, 0, 1]);
 });

@@ -6,6 +6,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Box, CircularProgress, Autocomplete, TextField } from "@mui/material";
 import Gallery from "./Gallery";
 import { useInView } from "react-intersection-observer";
+import { infiniteScrollObserver } from "../hooks/infiniteScroll";
 
 import { Media, Person, PersonReadSimple, Tag } from "../types";
 import MediaCard from "./MediaCard";
@@ -49,7 +50,7 @@ export default function MediaAppearances({
   const fetchInitial = useListStore(state => state.fetchInitial);
   const loadMore = useListStore(state => state.loadMore);
   useListInvalidation(mediaListKey);
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
+  const { ref: loaderRef, inView } = useInView(infiniteScrollObserver);
 
   useUndoRefresh(`cache:${mediaListKey}`, () => refreshCachedList(mediaListKey));
   const { marqueeRect, onItemClick } = useGridSelection<number>({
