@@ -1,3 +1,4 @@
+import { DefinitiveMutationError, startOperation } from "../stores/optimisticOperations";
 import { API } from "../config";
 import { AppConfig, ProfileListResponse, ProfileHealth } from "../types";
 
@@ -42,7 +43,13 @@ export const saveConfig = async (
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
-    throw new Error(err?.detail?.message || err?.detail || "Failed to save config");
+    const message = err?.detail?.message || (typeof err?.detail === "string" ? err.detail : "Failed to save config");
+    // These guards reject before entering the save/purge handler. Other statuses
+    // can follow partial catalog deletion and must remain uncertain.
+    if ([403, 422].includes(response.status) || err?.detail?.requires_acknowledgement === true) {
+      throw new DefinitiveMutationError(message);
+    }
+    throw new Error(message);
   }
   invalidateConfigCache();
   return response.json();
@@ -276,3 +283,80 @@ export const searchScanFolders = async (
   }
   return response.json();
 };
+
+/** In-memory only: configuration may contain secrets; never persist drafts to storage. */
+interface ConfigDraftState {
+  draft: AppConfig | null;
+  accepted: AppConfig | null;
+  applied: AppConfig | null;
+  revision: number;
+  phase: "idle" | "saving" | "applying" | "applied" | "profile-switched" | "save-failed" | "apply-failed";
+  error: string | null;
+}
+let draftState: ConfigDraftState = {
+  draft: null, accepted: null, applied: null, revision: 0, phase: "idle", error: null,
+};
+const draftListeners = new Set<() => void>();
+export const getConfigDraftState = () => draftState;
+export const subscribeConfigDraft = (listener: () => void) => {
+  draftListeners.add(listener);
+  return () => { draftListeners.delete(listener); };
+};
+function publishDraft(update: Partial<ConfigDraftState>) {
+  draftState = { ...draftState, ...update };
+  draftListeners.forEach(listener => listener());
+}
+export function initializeConfigDraft(config: AppConfig) {
+  if (!draftState.draft) publishDraft({ draft: config, accepted: config, applied: config });
+}
+export function updateConfigDraft(update: AppConfig | null | ((previous: AppConfig | null) => AppConfig | null)) {
+  const draft = typeof update === "function" ? update(draftState.draft) : update;
+  if (draft !== draftState.draft) publishDraft({ draft, revision: draftState.revision + 1 });
+}
+/** Snapshot intent once; the request and global feedback survive route unmount. */
+export function submitConfigDraft(config: AppConfig, acknowledgeRemovals = false, targetProfile: string | null = null): boolean {
+  // Failed transports have no durable config receipt. Never replay an uncertain
+  // save (directory removals can purge catalog records) within this session.
+  if (!["idle", "applied"].includes(draftState.phase)) return false;
+  const revision = draftState.revision;
+  publishDraft({ phase: "saving", error: null });
+  try {
+    startOperation({
+      label: "Save and apply configuration",
+      input: { config, acknowledgeRemovals, targetProfile },
+      resources: ["config:active"], patches: [],
+      request: async (input) => {
+        let accepted: AppConfig | null = null;
+        try {
+          accepted = await saveConfig(input.config, input.acknowledgeRemovals);
+          publishDraft({ accepted, phase: "applying" });
+          if (input.targetProfile) {
+            // Switching activates the target settings itself. Applying the old
+            // profile first could enable presentation mode and forbid switching.
+            await switchProfile(input.targetProfile);
+            publishDraft({ phase: "profile-switched" });
+            return accepted;
+          }
+          const latest = await reloadConfig(accepted);
+          publishDraft({
+            applied: latest, phase: "applied",
+            // Only normalize the submitted version; never replace newer edits.
+            ...(draftState.revision === revision ? { draft: latest } : {}),
+          });
+          return latest;
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          const rejected = !accepted && error instanceof DefinitiveMutationError;
+          publishDraft({ phase: rejected ? "idle" : accepted ? "apply-failed" : "save-failed", error:
+            rejected ? detail : `${accepted ? (input.targetProfile ? "Saved to disk; profile activation was not confirmed." : "Saved to disk; runtime apply was not confirmed.") : "Save outcome was not confirmed."} ${detail} Draft retained in this tab. Verify server state before retrying.` });
+          if (rejected) throw error;
+          throw new Error(draftState.error!);
+        }
+      },
+    });
+  } catch (error) {
+    publishDraft({ phase: "idle", error: error instanceof Error ? error.message : String(error) });
+    return false;
+  }
+  return true;
+}

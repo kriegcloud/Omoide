@@ -63,6 +63,7 @@ function hooks(initialConfig) {
         slots[index] = typeof value === "function" ? value(slots[index]) : value;
       }];
     },
+    useSyncExternalStore: (_subscribe, snapshot) => snapshot(),
     useRef(initial) {
       const index = cursor++;
       if (!(index in slots)) slots[index] = { current: initial };
@@ -117,7 +118,8 @@ function configFixture() {
 
 function configurationPage(extraServices = {}) {
   const config = configFixture();
-  const state = hooks(config);
+  const state = hooks();
+  let draftState = { draft: config, accepted: config, applied: config, phase: "idle" };
   let reloads = 0;
   const profiles = { active_path: "/old", profiles: [{ path: "/old", name: "Old" }] };
   const service = {
@@ -127,6 +129,21 @@ function configurationPage(extraServices = {}) {
     createProfile: async () => {},
     ...extraServices,
   };
+  Object.assign(service, {
+    getConfigDraftState: () => draftState,
+    subscribeConfigDraft: () => () => {},
+    initializeConfigDraft() {},
+    updateConfigDraft(update) { draftState = { ...draftState, draft: typeof update === "function" ? update(draftState.draft) : update }; },
+    submitConfigDraft(snapshot) {
+      draftState = { ...draftState, phase: "saving" };
+      service.saveConfig(snapshot).then(async accepted => {
+        draftState = { ...draftState, accepted, phase: "applying" };
+        await service.reloadConfig(accepted);
+        draftState = { ...draftState, phase: "applied" };
+      });
+      return true;
+    },
+  });
   const Page = load("pages/ConfigurationPage.tsx", {
     react: state.react,
     "@mui/material": componentNames,
@@ -136,8 +153,8 @@ function configurationPage(extraServices = {}) {
     window: { location: { reload() { reloads++; } } },
   }).default;
   state.render(Page);
-  state.slots[1] = false; // Configuration has finished loading.
-  state.slots[8] = profiles;
+  state.slots[0] = false; // Configuration has finished loading.
+  state.slots[6] = profiles;
   return { config, render: () => state.render(Page), reloads: () => reloads };
 }
 
@@ -182,13 +199,13 @@ test("presentation_activation_uses_accepted_snapshot_without_protected_read", as
   assert.equal(calls.length, 1);
 });
 
-test("configuration_controls_locked_while_save_pending", async () => {
+test("configuration_controls_remain_editable_while_save_pending", async () => {
   const pending = deferred();
   const page = configurationPage({ saveConfig: () => pending.promise });
   const saving = button(page.render(), "Save").props.onClick();
   const locked = elements(page.render()).find((element) =>
     element.props.component === "fieldset" && element.props.disabled && element.props.inert === true);
-  assert.ok(locked, "settings must disable native controls and make custom controls inert during Save");
+  assert.ok(!locked, "ordinary Save keeps settings and tabs interactive");
   pending.resolve(page.config);
   await saving;
   assert.ok(!elements(page.render()).some((element) =>

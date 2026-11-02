@@ -1,14 +1,16 @@
 import VideoSection from "../components/configuration/VideoSection";
 import ScanScopeSettings from "../components/configuration/ScanScopeSettings";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useSyncExternalStore, useCallback } from "react";
 import {
   getConfig,
-  saveConfig,
-  reloadConfig,
+  initializeConfigDraft,
+  updateConfigDraft,
+  getConfigDraftState,
+  subscribeConfigDraft,
+  submitConfigDraft,
   pickDirectory,
   listProfiles,
   createProfile as apiCreateProfile,
-  switchProfile as apiSwitchProfile,
   removeProfile as apiRemoveProfile,
   getProfileHealth,
 } from "../services/config";
@@ -221,11 +223,28 @@ interface MediaDirRemovalDialogState {
   acknowledged: boolean;
 }
 
+// Route navigation retains staged UI inputs in memory, alongside the service draft.
+// Never put configuration values in localStorage/sessionStorage.
+const retainedUi = new Map<string, unknown>();
+function useRetainedConfigUi<T>(key: string, initial: T) {
+  const [value, setValue] = useState<T>(() => retainedUi.has(key) ? retainedUi.get(key) as T : initial);
+  const update = useCallback((next: T | ((previous: T) => T)) => {
+    setValue(previous => {
+      const value = typeof next === "function" ? (next as (previous: T) => T)(previous) : next;
+      retainedUi.set(key, value);
+      return value;
+    });
+  }, [key]);
+  return [value, update] as const;
+}
+
 export default function ConfigurationPage() {
-  const [config, setConfig] = useState<AppConfig | null>(null);
+  const saveState = useSyncExternalStore(subscribeConfigDraft, getConfigDraftState);
+  const config = saveState.draft;
+  const setConfig = updateConfigDraft;
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
+  const isSaving = saveState.phase === "saving" || saveState.phase === "applying";
   const [updateInfo, setUpdateInfo] = useState<VersionUpdateInfo | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [snackbar, setSnackbar] = useState({
@@ -233,13 +252,11 @@ export default function ConfigurationPage() {
     message: "",
     severity: "success" as "success" | "error" | "info",
   });
-  const [tabValue, setTabValue] = useState(0);
+  const [tabValue, setTabValue] = useRetainedConfigUi("tab", 0);
   const [profiles, setProfiles] = useState<ProfileListResponse | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [creatingProfile, setCreatingProfile] = useState(false);
-  const [selectedProfilePath, setSelectedProfilePath] = useState<string | null>(
-    null
-  );
+  const [selectedProfilePath, setSelectedProfilePath] = useRetainedConfigUi<string | null>("profile", null);
   const [isSwitchingProfile, setIsSwitchingProfile] = useState(false);
   const [newProfileName, setNewProfileName] = useState("My Library");
   const [newProfilePath, setNewProfilePath] = useState("");
@@ -251,7 +268,7 @@ export default function ConfigurationPage() {
     "presets" | "manual"
   >("presets");
   // Last config the server accepted; edits are staged until Save.
-  const [savedConfig, setSavedConfig] = useState<AppConfig | null>(null);
+  const savedConfig = saveState.accepted;
   const isDirty = useMemo(
     () =>
       config !== null &&
@@ -276,9 +293,9 @@ export default function ConfigurationPage() {
     [next[index], next[target]] = [next[target], next[index]];
     handleValueChange("general", "home_widgets", next);
   };
-  const [savedMediaDirPaths, setSavedMediaDirPaths] = useState<string[]>([]);
+  const savedMediaDirPaths = normalizedMediaDirPaths(savedConfig?.general.media_dirs ?? []);
   const [acknowledgedRemovedMediaDirPaths, setAcknowledgedRemovedMediaDirPaths] =
-    useState<Set<string>>(new Set());
+    useRetainedConfigUi<Set<string>>("removals", new Set());
   const [removeMediaDirDialog, setRemoveMediaDirDialog] =
     useState<MediaDirRemovalDialogState>({
       open: false,
@@ -289,9 +306,9 @@ export default function ConfigurationPage() {
 
   // Local state for comma-separated text fields — avoids cursor-jump caused by
   // the parse→join round-trip through config state on every keystroke.
-  const [customTagsText, setCustomTagsText] = useState<string | null>(null);
-  const [imageSuffixesText, setImageSuffixesText] = useState<string | null>(null);
-  const [videoSuffixesText, setVideoSuffixesText] = useState<string | null>(null);
+  const [customTagsText, setCustomTagsText] = useRetainedConfigUi<string | null>("customTags", null);
+  const [imageSuffixesText, setImageSuffixesText] = useRetainedConfigUi<string | null>("imageSuffixes", null);
+  const [videoSuffixesText, setVideoSuffixesText] = useRetainedConfigUi<string | null>("videoSuffixes", null);
 
   const handleRunProcessor = async (name: string, force: boolean) => {
     setRunningProcessor(name);
@@ -323,12 +340,7 @@ export default function ConfigurationPage() {
             return null;
           }),
         ]);
-        setConfig(data);
-        setSavedConfig(data);
-        setSavedMediaDirPaths(
-          normalizedMediaDirPaths(data.general.media_dirs ?? [])
-        );
-        setAcknowledgedRemovedMediaDirPaths(new Set());
+        initializeConfigDraft(data);
         if (release) {
           setUpdateInfo(release);
           setUpdateError(release.error ?? null);
@@ -339,7 +351,7 @@ export default function ConfigurationPage() {
         try {
           const p = await listProfiles();
           setProfiles(p);
-          setSelectedProfilePath(p.active_path);
+          setSelectedProfilePath(previous => previous ?? p.active_path);
         } catch {
           setProfiles(null);
         }
@@ -362,18 +374,25 @@ export default function ConfigurationPage() {
       }
     };
     fetchConfig();
-  }, []);
+  }, [setSelectedProfilePath]);
 
-  // Staged edits are lost on reload/close; warn instead of dropping them.
+  // Retain acknowledgements for newer removals staged while a save was pending.
   useEffect(() => {
-    if (!isDirty) return;
+    if (!savedConfig) return;
+    const paths = normalizedMediaDirPaths(savedConfig.general.media_dirs);
+    setAcknowledgedRemovedMediaDirPaths(previous => new Set([...previous].filter(path => paths.includes(path))));
+  }, [savedConfig, setAcknowledgedRemovedMediaDirPaths]);
+
+  // Drafts survive route changes; reload/close still needs a warning.
+  useEffect(() => {
+    if (!isDirty && !isSaving && (!profiles || selectedProfilePath === profiles.active_path)) return;
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [isDirty]);
+  }, [isDirty, isSaving, profiles, selectedProfilePath]);
 
   useEffect(() => {
     if (!config) return;
@@ -384,7 +403,6 @@ export default function ConfigurationPage() {
 
   const handleSave = async () => {
     if (!config || isSaving) return;
-    setIsSaving(true);
     try {
       const normalizedMediaDirs = (config.general.media_dirs ?? []).map(
         (dir) => ({
@@ -423,43 +441,23 @@ export default function ConfigurationPage() {
         );
       }
 
-      const accepted = await saveConfig(
-        sanitized,
-        removedMountedPaths.length > 0
-      );
-
-      // If a different profile is selected, switch to it as part of Save
-      if (
-        profiles &&
-        selectedProfilePath &&
-        selectedProfilePath !== profiles.active_path
-      ) {
+      // Profile activation deliberately retains the controlled page reset.
+      const targetProfile = profiles && selectedProfilePath !== profiles.active_path
+        ? selectedProfilePath : null;
+      if (targetProfile && hasActiveTasks) throw new Error("Wait for active tasks before switching profiles.");
+      if (!submitConfigDraft(sanitized, removedMountedPaths.length > 0, targetProfile)) return;
+      if (targetProfile) {
         setIsSwitchingProfile(true);
-        await apiSwitchProfile(selectedProfilePath);
-        // Switching activates the target config and database on the server.
-        // Discard old-library caches and requests before any protected reread.
+        // This branch locks edits until the old profile's save/apply settles.
+        await new Promise<void>((resolve) => {
+          const unsubscribe = subscribeConfigDraft(() => {
+            const phase = getConfigDraftState().phase;
+            if (phase !== "saving" && phase !== "applying") { unsubscribe(); resolve(); }
+          });
+        });
+        if (getConfigDraftState().phase !== "profile-switched") return;
         window.location.reload();
-        return;
       }
-
-      // Reload backend config and sync frontend runtime flags; also
-      // update local state with the authoritative server config.
-      const latest = await reloadConfig(accepted);
-      setConfig(latest);
-      setSavedConfig(latest);
-      setSavedMediaDirPaths(
-        normalizedMediaDirPaths(latest.general.media_dirs ?? [])
-      );
-      setAcknowledgedRemovedMediaDirPaths(new Set());
-      if (!latest.general.presentation_mode) {
-        await refreshProfiles();
-      }
-
-      setSnackbar({
-        open: true,
-        message: "Configuration saved and reloaded successfully!",
-        severity: "success",
-      });
     } catch (err) {
       setSnackbar({
         open: true,
@@ -468,7 +466,6 @@ export default function ConfigurationPage() {
         severity: "error",
       });
     } finally {
-      setIsSaving(false);
       setIsSwitchingProfile(false);
     }
   };
@@ -739,7 +736,7 @@ export default function ConfigurationPage() {
   };
 
   const createProfile = async () => {
-    if (!newProfilePath) return;
+    if (!newProfilePath || isSaving || hasActiveTasks) return;
     setCreatingProfile(true);
     try {
       await apiCreateProfile(newProfilePath, newProfileName || "Profile");
@@ -760,6 +757,7 @@ export default function ConfigurationPage() {
   // Switching now happens as part of Save; users select via radio and then Save.
 
   const removeProfile = async (path: string) => {
+    if (isSaving || hasActiveTasks) return;
     try {
       await apiRemoveProfile(path);
       await refreshProfiles();
@@ -789,6 +787,7 @@ export default function ConfigurationPage() {
     if (p) setSelectedProfilePath(p);
   };
   const handleAddExisting = async () => {
+    if (isSaving || hasActiveTasks) return;
     try {
       const p = await pickDirectory();
       if (!p) return;
@@ -921,7 +920,7 @@ export default function ConfigurationPage() {
                       size="small"
                       variant="outlined"
                       onClick={handleAddExisting}
-                      disabled={hasActiveTasks}
+                      disabled={hasActiveTasks || isSaving}
                     >
                       Add Existing???
                     </Button>
@@ -935,7 +934,7 @@ export default function ConfigurationPage() {
                             edge="start"
                             checked={selectedProfilePath === p.path}
                             onChange={() => setSelectedProfilePath(p.path)}
-                            disabled={hasActiveTasks || isSwitchingProfile}
+                            disabled={hasActiveTasks || isSaving || isSwitchingProfile}
                           />
                         </ListItemIcon>
                         <ListItemText
@@ -952,7 +951,7 @@ export default function ConfigurationPage() {
                             onClick={() => removeProfile(p.path)}
                             disabled={
                               p.path === profiles.active_path ||
-                              hasActiveTasks ||
+                              hasActiveTasks || isSaving ||
                               isSwitchingProfile
                             }
                           >
@@ -1001,7 +1000,7 @@ export default function ConfigurationPage() {
                       <IconButton
                         aria-label="browse"
                         onClick={pickNewProfilePath}
-                        disabled={hasActiveTasks}
+                        disabled={hasActiveTasks || isSaving}
                       >
                         <FolderOpenIcon />
                       </IconButton>
@@ -1013,7 +1012,7 @@ export default function ConfigurationPage() {
                         startIcon={!creatingProfile ? <AddIcon /> : undefined}
                         onClick={createProfile}
                         disabled={
-                          !newProfilePath || creatingProfile || hasActiveTasks
+                          !newProfilePath || creatingProfile || hasActiveTasks || isSaving
                         }
                         sx={{ minWidth: 120 }}
                       >
@@ -2409,8 +2408,8 @@ export default function ConfigurationPage() {
       </Typography>
       <Box
         component="fieldset"
-        disabled={isSaving}
-        {...(isSaving ? { inert: true } : {})}
+        disabled={isSwitchingProfile}
+        {...(isSwitchingProfile ? { inert: true } : {})}
         aria-busy={isSaving}
         sx={{
           flexGrow: 1,
@@ -2458,20 +2457,27 @@ export default function ConfigurationPage() {
           borderColor: "warning.main",
         }}
       >
+        <Typography role="status" variant="body2">
+          {saveState.phase === "saving" ? "Saving snapshot… You can keep editing."
+            : saveState.phase === "applying" ? "Saved to disk. Applying runtime settings…"
+            : saveState.phase === "profile-switched" ? "Profile activated. Reloading…"
+            : saveState.phase === "applied" ? "Saved snapshot applied." : ""}
+        </Typography>
+        {saveState.error && <Alert severity="error">{saveState.error}</Alert>}
         {isDirty && (
           <Typography
             variant="body2"
             color="warning.main"
             data-testid="config-unsaved-hint"
           >
-            Unsaved changes. Nothing takes effect until you save.
+            Unsaved changes. New edits will be included in the next save.
           </Typography>
         )}
         <Button
           variant="contained"
           color={isDirty ? "warning" : "primary"}
           onClick={handleSave}
-          disabled={isSaving}
+          disabled={isSaving || isSwitchingProfile || !["idle", "applied"].includes(saveState.phase)}
           size="large"
         >
           {isSaving ? <CircularProgress size={24} color="inherit" /> : "Save"}
