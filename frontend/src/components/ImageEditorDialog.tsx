@@ -1,4 +1,4 @@
-import { EDITOR_A11Y_ATTR, isVisible, observeEditorAccessibility } from "../utils/editorA11y";
+import { EDITOR_A11Y_ATTR, observeEditorAccessibility } from "../utils/editorA11y";
 import { useEditorUrlState } from "../hooks/useEditorUrlState";
 import { measureEditorImage, sameOverlay, type EditorStoreLike, type ImageOverlayLayout } from "../utils/editorOverlay";
 import { editorSelection, readEditorOptions } from "../utils/editorUrlState";
@@ -480,16 +480,20 @@ export default function ImageEditorDialog({
     // The zoom menu is portalled outside the editor host and stays mounted (hidden)
     // when closed. Open it only if it is not already open, otherwise the toggle
     // closes it and the Fit item click lands on a stale menu (review R9-03).
+    // Open = laid out (has size). Its items are clickable while it fades in, so
+    // do not wait for full opacity (slow fades left the menu open, unclicked).
     const openMenu = () => {
       const menu = document.querySelector<HTMLElement>(".FIE_topbar-zoom-menu");
-      return menu && isVisible(menu) ? menu : null;
+      if (!menu) return null;
+      const rect = menu.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 ? menu : null;
     };
     if (!openMenu()) zoomLabel.click();
     let attempts = 0;
     const clickFit = () => {
       const menu = openMenu();
       if (!menu) {
-        if (++attempts < 10) later(clickFit, 50);
+        if (++attempts < 20) later(clickFit, 50);
         return;
       }
       // Filerobot has no public zoom API; invoke its Fit-size preset by label.
