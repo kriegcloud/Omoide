@@ -3,6 +3,7 @@ import { useMutationRefresh } from "../context/UndoContext";
 import { readCachedList } from "../stores/useListStore";
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useInView } from "react-intersection-observer";
+import { infiniteScrollObserver } from "../hooks/infiniteScroll";
 import { useLocation, useSearchParams } from "react-router-dom";
 import {
   Alert,
@@ -50,7 +51,7 @@ import { useGridSelection } from "../hooks/useMarqueeSelection";
 import MarqueeSelectionBox from "../components/MarqueeSelectionBox";
 
 export default function IndexPage() {
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
+  const { ref: loaderRef, inView } = useInView(infiniteScrollObserver);
   const [tags] = useState<string[]>([]);
   const [searchParams, setSearchParams] = useSearchParams();
   const sortOrder: "newest" | "latest" =

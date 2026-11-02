@@ -48,18 +48,38 @@ export default function Gallery({ children, virtualItems, scrollRef, onEndReache
   const childKeys = childItems.map((child, index) => isValidElement(child) && child.key != null ? String(child.key) : `#${index}`);
   const keySignature = childKeys.join("\u0000");
   const [placement, setPlacement] = useState<{ columns: number; map: Map<string, number> } | null>(null);
+  // Tile heights measured after each render (keyed like the children); new tiles
+  // fall back to an aspect-ratio hint passed as data-aspect (width / height).
+  const measuredHeights = useRef(new Map<string, number>());
+  const tileWidth = galleryFit(size.width, childCount, minTileWidth).tileWidth;
   const placementMap = useMemo(
-    () => assignColumns(childKeys, columns, placement?.columns === columns ? placement.map : null),
+    () => {
+      const hints = new Map<string, number>();
+      childItems.forEach((child, index) => {
+        const ratio = isValidElement<{ "data-aspect"?: number }>(child) ? Number(child.props["data-aspect"]) : NaN;
+        if (ratio > 0 && Number.isFinite(ratio)) hints.set(childKeys[index], tileWidth / ratio);
+      });
+      return assignColumns(childKeys, columns, placement?.columns === columns ? placement.map : null,
+        key => measuredHeights.current.get(key) ?? hints.get(key));
+    },
     // childKeys is derived from keySignature; placement is read only as the prior layout.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [keySignature, columns],
+    [keySignature, columns, tileWidth],
   );
   useEffect(() => {
     if (placement?.map !== placementMap) setPlacement({ columns, map: placementMap });
   }, [placementMap, columns, placement]);
+  const masonryRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    masonryRef.current?.querySelectorAll<HTMLElement>("[data-gallery-key]").forEach(node => {
+      if (node.dataset.galleryKey && node.offsetHeight > 0) measuredHeights.current.set(node.dataset.galleryKey, node.offsetHeight);
+    });
+  });
   const columnChildren = useMemo(() => {
     const lists: React.ReactNode[][] = Array.from({ length: Math.max(1, columns) }, () => []);
-    childItems.forEach((child, index) => lists[placementMap.get(childKeys[index]) ?? index % lists.length].push(child));
+    childItems.forEach((child, index) => lists[placementMap.get(childKeys[index]) ?? index % lists.length].push(
+      <div key={childKeys[index]} data-gallery-key={childKeys[index]}>{child}</div>,
+    ));
     return lists;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [children, placementMap, columns]);
@@ -110,7 +130,7 @@ export default function Gallery({ children, virtualItems, scrollRef, onEndReache
         </Box>
       ) : (
         <Box sx={{ maxWidth: maxWidth ?? "none" }}>
-          <div className="gallery-masonry">
+          <div ref={masonryRef} className="gallery-masonry">
             {columnChildren.map((column, index) => <div key={index} className="gallery-column">{column}</div>)}
           </div>
         </Box>

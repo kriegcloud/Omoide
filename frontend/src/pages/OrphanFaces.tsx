@@ -29,6 +29,7 @@ import {
 } from "@mui/material";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useInView } from "react-intersection-observer";
+import { infiniteScrollObserver } from "../hooks/infiniteScroll";
 import { useListStore, defaultListState, useListInvalidation } from "../stores/useListStore";
 import { getOrphanFaces, getOrphanFaceCount } from "../services/face";
 import PersonPicker, { PERSON_PICKER_DIALOG_CONTENT_SX } from "../components/PersonPicker";
@@ -120,9 +121,8 @@ export function AllOrphanFaces({ tabs }: { tabs: React.ReactNode }) {
 
   // --- Infinite Scroll ---
   const { ref: loaderRef, inView } = useInView({
-    threshold: 0.5,
+    ...infiniteScrollObserver,
     skip: isLoading || !hasMore || isProcessing || !!error,
-    rootMargin: "0px 0px 200px 0px",
   });
 
   useEffect(() => {

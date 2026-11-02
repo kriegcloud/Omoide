@@ -1,6 +1,7 @@
 import { useUndoRefresh } from "../context/UndoContext";
 import { useCallback, useEffect, useRef } from "react";
 import { useInView } from "react-intersection-observer";
+import { infiniteScrollObserver } from "./infiniteScroll";
 import {
   defaultListState,
   readCachedList,
@@ -93,7 +94,7 @@ export function usePagedList<T>(
     if (signal) void fetchInitial(listKey, () => fetcher(null, signal));
   }, [enabled, fetchInitial, listKey, fetcher, clearList]);
 
-  const { ref: loaderRef, inView } = useInView({ rootMargin: "400px" });
+  const { ref: loaderRef, inView } = useInView(infiniteScrollObserver);
   const { hasMore, isLoading, error } = list;
   useEffect(() => {
     if (infiniteScroll && inView && hasMore && !isLoading && !error) loadMore();

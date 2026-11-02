@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { Box, Button, Card, CardContent, Dialog, DialogActions, DialogContent, DialogTitle, Stack, TextField, Typography } from "@mui/material";
 import { useInView } from "react-intersection-observer";
+import { infiniteScrollObserver } from "../hooks/infiniteScroll";
 import GalleryPage from "./GalleryPage";
 import Gallery from "./Gallery";
 import FaceCard from "./FaceCard";
@@ -24,7 +25,7 @@ export function IgnoredFaces({ tabs }: { tabs: ReactNode }) {
   useListInvalidation(listKey);
   useUndoRefresh(`cache:${listKey}`, () => refreshCachedList(listKey));
   useEffect(() => { void useListStore.getState().fetchInitial(listKey, () => getIgnoredFaces()); }, [listKey]);
-  const { ref, inView } = useInView({ skip: isLoading || !hasMore || !!error });
+  const { ref, inView } = useInView({ ...infiniteScrollObserver, skip: isLoading || !hasMore || !!error });
   useEffect(() => { if (inView && hasMore && !isLoading && !error) void useListStore.getState().loadMore(listKey, getIgnoredFaces); }, [inView, hasMore, isLoading, error, listKey]);
   const restore = (ids: number[], all = false) => {
     if (config.PRESENTATION_MODE) return;
@@ -59,7 +60,7 @@ export function FaceGroups({ tabs }: { tabs: ReactNode }) {
   useListInvalidation(faceGroupsKey);
   useUndoRefresh(`cache:${faceGroupsKey}`, () => refreshCachedList(faceGroupsKey));
   useEffect(() => { void useListStore.getState().fetchInitial(faceGroupsKey, () => getFaceGroups()); }, []);
-  const { ref, inView } = useInView({ skip: isLoading || !hasMore || !!error });
+  const { ref, inView } = useInView({ ...infiniteScrollObserver, skip: isLoading || !hasMore || !!error });
   useEffect(() => { if (inView && hasMore && !isLoading && !error) void useListStore.getState().loadMore(faceGroupsKey, getFaceGroups); }, [inView, hasMore, isLoading, error]);
   return <GalleryPage title="Look-alike Groups" tabs={tabs} count={items.length} countLabel="loaded groups">
     <Typography color="text.secondary" sx={{ mb: 2 }}>Review similar faces together. Remove unrelated members before assigning the remaining faces.</Typography>

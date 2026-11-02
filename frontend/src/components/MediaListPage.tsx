@@ -9,6 +9,7 @@ import GalleryPage from "./GalleryPage";
 import SortIcon from "@mui/icons-material/Sort";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import { useInView } from "react-intersection-observer";
+import { infiniteScrollObserver } from "../hooks/infiniteScroll";
 import { useSearchParams } from "react-router-dom";
 import {
   Box,
@@ -53,7 +54,7 @@ export default function MediaListPage({
   emptyTitle,
   emptyDescription,
 }: MediaListPageProps) {
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
+  const { ref: loaderRef, inView } = useInView(infiniteScrollObserver);
   const [searchParams, setSearchParams] = useSearchParams();
   const sortOrder: MediaSortOrder =
     searchParams.get("sort") === "latest" ? "latest" : "newest";

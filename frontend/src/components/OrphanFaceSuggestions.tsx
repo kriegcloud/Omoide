@@ -24,6 +24,7 @@ import {
 } from "@mui/material";
 import { Link as RouterLink } from "react-router-dom";
 import { useInView } from "react-intersection-observer";
+import { infiniteScrollObserver } from "../hooks/infiniteScroll";
 import { useUndo, useUndoRefresh, useMutationRefresh } from "../context/UndoContext";
 import { getOrphanFaceSuggestions } from "../services/face";
 import { defaultListState, refreshCachedList, useListStore, useListInvalidation, type ListState } from "../stores/useListStore";
@@ -95,9 +96,8 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange, tabs
   useMutationRefresh(["face:assigned", "face:detached", "face:deleted", "person:changed", "media:deleted"], () => refreshCachedList(listKey));
 
   const { ref: loaderRef, inView } = useInView({
-    threshold: 0.5,
+    ...infiniteScrollObserver,
     skip: isLoading || !hasMore || !!error || isProcessing || pendingAssignments !== null,
-    rootMargin: "0px 0px 200px 0px",
   });
   useEffect(() => {
     if (inView && hasMore && !isLoading && !error && !isProcessing && pendingAssignments === null) {

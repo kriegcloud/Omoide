@@ -25,6 +25,7 @@ import {
   ToggleButtonGroup,
 } from "@mui/material";
 import { useInView } from "react-intersection-observer";
+import { infiniteScrollObserver } from "../hooks/infiniteScroll";
 import { useNavigate } from "react-router-dom";
 import config from "../config";
 import { usePeopleSelection } from "../hooks/usePeopleSelection";
@@ -88,7 +89,7 @@ export default function PeopleGrid({
   const navigate = useNavigate();
   const { push, refreshVisible } = useUndo();
   useUndoRefresh(`cache:${listKey}`, () => refreshCachedList(listKey));
-  const { ref: loaderRef, inView } = useInView({ rootMargin: "200px" });
+  const { ref: loaderRef, inView } = useInView(infiniteScrollObserver);
   const fetchPeople = useCallback(
     (cursor?: string | null) => getPeople(cursor ?? undefined, hidden, gender, undefined, debouncedName, sort),
     [gender, hidden, debouncedName, sort],

@@ -6,6 +6,7 @@ import { readCachedList } from "../stores/useListStore";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link as RouterLink } from "react-router-dom";
 import { useInView } from "react-intersection-observer";
+import { infiniteScrollObserver } from "../hooks/infiniteScroll";
 import {
   Alert,
   Box,
@@ -36,7 +37,7 @@ export default function TagDetailPage() {
   const [tagError, setTagError] = useState<string | null>(null);
   const [retryTick, setRetryTick] = useState(0);
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
-  const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
+  const { ref: loaderRef, inView } = useInView(infiniteScrollObserver);
   const mediaGridRef = useRef<HTMLDivElement>(null);
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
 
