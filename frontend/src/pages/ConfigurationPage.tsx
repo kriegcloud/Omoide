@@ -250,6 +250,15 @@ export default function ConfigurationPage() {
   const [faceSettingsMode, setFaceSettingsMode] = useState<
     "presets" | "manual"
   >("presets");
+  // Last config the server accepted; edits are staged until Save.
+  const [savedConfig, setSavedConfig] = useState<AppConfig | null>(null);
+  const isDirty = useMemo(
+    () =>
+      config !== null &&
+      savedConfig !== null &&
+      JSON.stringify(config) !== JSON.stringify(savedConfig),
+    [config, savedConfig]
+  );
   const [runningProcessor, setRunningProcessor] = useState<string | null>(null);
   const homeWidgets = useMemo(
     () => mergeHomeWidgets(config?.general.home_widgets),
@@ -315,6 +324,7 @@ export default function ConfigurationPage() {
           }),
         ]);
         setConfig(data);
+        setSavedConfig(data);
         setSavedMediaDirPaths(
           normalizedMediaDirPaths(data.general.media_dirs ?? [])
         );
@@ -353,6 +363,17 @@ export default function ConfigurationPage() {
     };
     fetchConfig();
   }, []);
+
+  // Staged edits are lost on reload/close; warn instead of dropping them.
+  useEffect(() => {
+    if (!isDirty) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [isDirty]);
 
   useEffect(() => {
     if (!config) return;
@@ -425,6 +446,7 @@ export default function ConfigurationPage() {
       // update local state with the authoritative server config.
       const latest = await reloadConfig(accepted);
       setConfig(latest);
+      setSavedConfig(latest);
       setSavedMediaDirPaths(
         normalizedMediaDirPaths(latest.general.media_dirs ?? [])
       );
@@ -1377,6 +1399,7 @@ export default function ConfigurationPage() {
           <Grid size={{ xs: 12 }}>
             <ScanScopeSettings
               config={config}
+              savedScan={savedConfig?.scan}
               onValueChange={handleValueChange}
             />
           </Grid>
@@ -2417,10 +2440,36 @@ export default function ConfigurationPage() {
           </TabPanel>
         ))}
       </Box>
-      <Box sx={{ mt: 4, display: "flex", justifyContent: "flex-end" }}>
+      <Box
+        data-testid="config-save-bar"
+        data-dirty={isDirty ? "true" : "false"}
+        sx={{
+          mt: 4,
+          py: 1.5,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: 2,
+          position: "sticky",
+          bottom: 0,
+          zIndex: 2,
+          bgcolor: "background.default",
+          borderTop: isDirty ? 1 : 0,
+          borderColor: "warning.main",
+        }}
+      >
+        {isDirty && (
+          <Typography
+            variant="body2"
+            color="warning.main"
+            data-testid="config-unsaved-hint"
+          >
+            Unsaved changes. Nothing takes effect until you save.
+          </Typography>
+        )}
         <Button
           variant="contained"
-          color="primary"
+          color={isDirty ? "warning" : "primary"}
           onClick={handleSave}
           disabled={isSaving}
           size="large"

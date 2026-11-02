@@ -13,6 +13,12 @@ from urllib.request import urlopen
 from app.config import settings
 from app.logger import logger
 
+# Thread cap for ffmpeg calls that grab one frame per input. Without it every
+# input decoder and output encoder spawns ~one thread per core: a 16-frame
+# batch on a 64-core host peaked at ~1,550 threads, exhausting the container's
+# pids_limit and aborting the server (2026-11-02). One thread is also faster.
+SINGLE_FRAME_THREAD_ARGS: tuple[str, str] = ("-threads", "1")
+
 FFMPEG_RELEASES: dict[str, dict[str, str]] = {
     "windows": {
         "url": "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",

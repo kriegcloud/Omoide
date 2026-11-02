@@ -17,7 +17,7 @@ from scenedetect import FrameTimecode, HistogramDetector, SceneManager, open_vid
 from scenedetect.video_splitter import TimecodePair
 
 from app.config import settings
-from app.ffmpeg import ensure_ffmpeg_available
+from app.ffmpeg import SINGLE_FRAME_THREAD_ARGS, ensure_ffmpeg_available
 from app.logger import logger
 from app.media_files import _ffprobe_json
 from app.models import Media, Scene
@@ -174,7 +174,13 @@ def _extract_frames_batch(
 
     cmd = [str(ffmpeg_binary), "-hide_banner", "-loglevel", "error"]
     for idx in indices:
-        cmd += ["-ss", f"{timestamps[idx]}", "-i", os.fspath(video_path)]
+        cmd += [
+            *SINGLE_FRAME_THREAD_ARGS,
+            "-ss",
+            f"{timestamps[idx]}",
+            "-i",
+            os.fspath(video_path),
+        ]
 
     frames: dict[int, np.ndarray] = {}
     with tempfile.TemporaryDirectory(prefix="omoide_frames_") as tmp:
@@ -187,6 +193,7 @@ def _extract_frames_batch(
                 f"{input_no}:V:0?",
                 "-frames:v",
                 "1",
+                *SINGLE_FRAME_THREAD_ARGS,
                 "-q:v",
                 "2",
                 "-strict",
@@ -242,12 +249,14 @@ def _extract_frame_worker(
         "-hide_banner",
         "-loglevel",
         "error",
+        *SINGLE_FRAME_THREAD_ARGS,
         "-ss",
         f"{ts}",
         "-i",
         os.fspath(video_path),
         "-frames:v",
         "1",
+        *SINGLE_FRAME_THREAD_ARGS,
         "-f",
         "image2pipe",
         "-strict",

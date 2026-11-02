@@ -1,3 +1,4 @@
+import hashlib
 import os
 import time
 from pathlib import Path
@@ -26,6 +27,25 @@ from app.frames import PhotoScene, PROCESSING_MAX_DIM
 from app.persons import auto_select_profile_face
 from app.thumbnails import get_thumb_folder, to_posix_str
 from app.vectors import vector_to_blob
+
+
+# Filesystems cap one name at 255 bytes; leave room for the suffix.
+_FACE_THUMB_STEM_MAX_BYTES = 160
+
+
+def face_thumbnail_name(media_path: str, index: int, ts_ms: int) -> str:
+    """Name of a face crop thumbnail, bounded to fit the 255-byte limit.
+
+    Long source stems are cut on a UTF-8 boundary and tagged with a short
+    hash of the full stem, so names sharing a long prefix stay distinct.
+    """
+    stem = Path(media_path).stem
+    raw = stem.encode("utf-8", errors="surrogateescape")
+    if len(raw) > _FACE_THUMB_STEM_MAX_BYTES:
+        digest = hashlib.sha1(raw).hexdigest()[:10]
+        cut = raw[: _FACE_THUMB_STEM_MAX_BYTES - 11].decode("utf-8", errors="ignore")
+        stem = f"{cut}-{digest}"
+    return f"{stem}_ins_{index}_{ts_ms}.jpg"
 
 
 class FaceProcessor(MediaProcessor):
@@ -298,7 +318,7 @@ class FaceProcessor(MediaProcessor):
                     continue
 
             ts = int(time.time() * 1000)
-            name = f"{Path(media.path).stem}_ins_{i}_{ts}.jpg"
+            name = face_thumbnail_name(media.path, i, ts)
             thumb_dir = get_thumb_folder(settings.general.thumb_dir / "faces")
             thumb_file = thumb_dir / name
             pil_img = Image.fromarray(crop)

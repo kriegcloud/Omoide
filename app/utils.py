@@ -38,7 +38,7 @@ from app.annotation_coordination import (
 )
 from app.config import settings
 from app.database import safe_commit
-from app.ffmpeg import ensure_ffmpeg_available
+from app.ffmpeg import SINGLE_FRAME_THREAD_ARGS, ensure_ffmpeg_available
 from app.logger import logger
 from app.models import (
     Album,
@@ -801,6 +801,7 @@ def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:
                 "-hide_banner",
                 "-loglevel",
                 "error",
+                *SINGLE_FRAME_THREAD_ARGS,
                 "-ss",
                 seek,
                 "-i",
@@ -809,6 +810,7 @@ def generate_thumbnail(media: Media) -> tuple[str | None, str | None]:
                 "scale=360:-1",
                 "-vframes",
                 "1",
+                *SINGLE_FRAME_THREAD_ARGS,
                 "-y",
                 os.fspath(thumb_path),
             ]

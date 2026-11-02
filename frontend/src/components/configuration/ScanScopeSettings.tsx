@@ -523,10 +523,19 @@ function FolderChipList({
  * Settings for which folders under the media library a scan walks.
  * The backend rule lives in app/scan_scope.py; the picker previews it live.
  */
+const sameList = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((value, index) => value === b[index]);
+
+interface ScanScopeSettingsProps extends ConfigSectionProps {
+  /** The scan section as last saved, to flag a staged but unsaved scope. */
+  savedScan?: ConfigSectionProps["config"]["scan"];
+}
+
 export default function ScanScopeSettings({
   config,
+  savedScan,
   onValueChange,
-}: ConfigSectionProps) {
+}: ScanScopeSettingsProps) {
   const [picker, setPicker] = useState<PickerMode | null>(null);
   const [patternsText, setPatternsText] = useState<string | null>(null);
 
@@ -541,6 +550,12 @@ export default function ScanScopeSettings({
     }),
     [include, exclude, patterns]
   );
+
+  const unsaved =
+    savedScan !== undefined &&
+    (!sameList(include, savedScan.include_folders ?? NO_ITEMS) ||
+      !sameList(exclude, savedScan.exclude_folders ?? NO_ITEMS) ||
+      !sameList(patterns, savedScan.exclude_folder_patterns ?? NO_ITEMS));
 
   const choose = (path: string) => {
     if (picker === "include") {
@@ -562,6 +577,15 @@ export default function ScanScopeSettings({
           new.
         </Typography>
       </Box>
+      {unsaved && (
+        <Alert severity="warning" data-testid="scan-scope-unsaved">
+          This scope is not saved yet. Scans keep using the saved scope (
+          {(savedScan?.include_folders ?? NO_ITEMS).length > 0
+            ? (savedScan?.include_folders ?? NO_ITEMS).join(", ")
+            : "the entire media library"}
+          ) until you click Save.
+        </Alert>
+      )}
       <FolderChipList
         testId="scan-include-folders"
         label="Only scan these folders"
