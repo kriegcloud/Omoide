@@ -111,12 +111,24 @@ class AutoTagger(MediaProcessor):
     ]
     tag_map: dict[str, np.ndarray] = dict()
 
+    # True only once tags were loaded; an active tagger without them must not
+    # stamp ran_auto_tagging, or the media is skipped by every later run.
+    _tags_loaded: bool = False
+
     def load_model(self):
         self.active = settings.tagging.auto_tagging
         if not self.active:
             self.tag_map = {}
+            self._tags_loaded = False
             return
+        self._load_tags()
 
+    def load_for_manual_run(self) -> None:
+        """A manual "Auto Tags" run tags even when automatic tagging is off."""
+        self._load_tags()
+        self.active = True
+
+    def _load_tags(self) -> None:
         tags: list[str] = []
         if settings.tagging.use_default_tags:
             tags.extend(self.default_tags)
@@ -137,6 +149,7 @@ class AutoTagger(MediaProcessor):
             self._tag_names: list[str] = []
             self._tag_matrix: np.ndarray | None = None
             self._tag_thresholds: np.ndarray | None = None
+            self._tags_loaded = True  # legitimately empty: nothing to tag
             return
 
         # Use shared CLIP and keep it warm to avoid re-init leaks
@@ -146,6 +159,7 @@ class AutoTagger(MediaProcessor):
         self._tag_names = list(self.tag_map.keys())
         self._tag_matrix = np.stack(list(self.tag_map.values())) if self._tag_names else None
         self._tag_thresholds = self._calibrate_thresholds()
+        self._tags_loaded = True
 
     def unload(self):
         """Used to load models into memory before use"""
@@ -154,6 +168,7 @@ class AutoTagger(MediaProcessor):
         self._tag_names = []
         self._tag_matrix = None
         self._tag_thresholds = None
+        self._tags_loaded = False
 
     def _calibrate_thresholds(self) -> np.ndarray | None:
         """Sample existing embeddings to derive a per-tag similarity cutoff.
@@ -200,6 +215,11 @@ class AutoTagger(MediaProcessor):
         scenes: list[tuple[Scene, MatLike]] | list[PhotoScene] | list[Scene],
     ) -> bool | None:
         if media.ran_auto_tagging is True:
+            return True
+        if not self._tags_loaded:
+            logger.warning(
+                "AutoTagger: tags not loaded; leaving media %s pending", media.id
+            )
             return True
         if media.embeddings_created is False:
             if not settings.processors.image_embedding_processor_active:

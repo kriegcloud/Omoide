@@ -561,6 +561,16 @@ def _run_media_processing(task_id: str, *, clustering_chained: bool = False) -> 
             _finish_processing_task(session, task, failures)
 
 
+def _activate_for_manual_run(target) -> None:
+    """Load *target* for a user-started run, ignoring its auto-run flag."""
+    loader = getattr(target, "load_for_manual_run", None)
+    if callable(loader):
+        loader()
+        return
+    target.load_model()
+    target.active = True
+
+
 def run_single_processor(
     task_id: str, processor_name: str, force: bool = False
 ) -> None:
@@ -577,8 +587,7 @@ def run_single_processor(
         logger.error("Processor '%s' not found.", processor_name)
         return
 
-    target.load_model()
-    target.active = True  # run regardless of per-processor config flag
+    _activate_for_manual_run(target)  # regardless of its config flag
 
     pending_condition = None if force else target.get_pending_condition()
     batch_size = 100
@@ -711,8 +720,7 @@ def run_processors_for_media(
                     if _is_task_cancelled(task_id):
                         break
                     try:
-                        target.load_model()
-                        target.active = True
+                        _activate_for_manual_run(target)
                     except Exception as exc:
                         logger.exception("Processor %s failed to load", target.name)
                         failures += 1

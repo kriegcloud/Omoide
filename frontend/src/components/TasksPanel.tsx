@@ -106,6 +106,15 @@ const PROCESSOR_ACTIONS = [
   { name: "exif", label: "EXIF Data", icon: <CameraAltIcon /> },
 ] as const;
 
+/** Display name for a task; processor runs name the processor they ran. */
+const taskLabel = (task: Pick<Task, "task_type" | "params">): string => {
+  const base = TASK_LABELS[task.task_type] ?? task.task_type;
+  if (task.task_type !== "run_processor") return base;
+  const name = (task.params as Record<string, unknown> | null | undefined)?.processor_name;
+  const action = PROCESSOR_ACTIONS.find((p) => p.name === name);
+  return action ? `${base}: ${action.label}` : base;
+};
+
 type TaskManagerProps = {
   isActive: boolean;
 };
@@ -160,7 +169,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
     const { task } = lastFinishedTask;
     setSnack({
       open: true,
-      msg: `${TASK_LABELS[task.task_type]} · ${task.summary || "finished"}`,
+      msg: `${taskLabel(task)} · ${task.summary || "finished"}`,
       sev:
         task.status === "failed"
           ? "error"
@@ -456,7 +465,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                       gap={1}
                     >
                       <Typography variant="body2" fontWeight="bold" noWrap sx={{ flex: 1, minWidth: 0 }}>
-                        {TASK_LABELS[t.task_type] ?? t.task_type}
+                        {taskLabel(t)}
                       </Typography>
                       <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
                         {t.status === "pending" ? "Queued" : pctLabel}
@@ -580,7 +589,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                         size="small"
                         onClick={() => cancelTask(t.id)}
                         disabled={cancellingTaskIds.has(t.id)}
-                        aria-label={`Cancel ${TASK_LABELS[t.task_type] ?? t.task_type}`}
+                        aria-label={`Cancel ${taskLabel(t)}`}
                         sx={{ mt: 0.5, ml: -1, color: "text.secondary" }}
                       >
                         {cancellingTaskIds.has(t.id) ? "Cancelling…" : "Cancel"}
@@ -621,7 +630,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                       noWrap
                       sx={{ minWidth: 0 }}
                     >
-                      {TASK_LABELS[task.task_type]}
+                      {taskLabel(task)}
                     </Typography>
                   </Stack>
                   <Typography
@@ -648,7 +657,7 @@ export default function TaskManager({ isActive }: TaskManagerProps) {
                         size="small"
                         disabled={resumingTaskIds.has(task.id) || isTaskRunning(task.task_type)}
                         onClick={() => resumeTask(task.id)}
-                        aria-label={`Resume ${TASK_LABELS[task.task_type]}`}
+                        aria-label={`Resume ${taskLabel(task)}`}
                         sx={{ ml: -1 }}
                       >
                         {resumingTaskIds.has(task.id) ? "Resuming…" : "Resume"}

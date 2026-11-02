@@ -20,6 +20,15 @@ class MediaProcessor(ABC):
     def load_model(self):
         """Used to load models into memory before use"""
 
+    def load_for_manual_run(self) -> None:
+        """Load and activate for an explicit user-started run.
+
+        Manual runs ignore the per-processor "run automatically" config flag.
+        Override when load_model() itself skips loading for that flag.
+        """
+        self.load_model()
+        self.active = True
+
     @abstractmethod
     def unload(self):
         """Used to load models into memory before use"""
