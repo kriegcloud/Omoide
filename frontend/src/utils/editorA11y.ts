@@ -30,7 +30,7 @@ function optionName(element: Element, root: ParentNode): string {
   return tab ? labelFor(tab) : "Editor";
 }
 
-function isVisible(element: HTMLElement): boolean {
+export function isVisible(element: HTMLElement): boolean {
   const rect = element.getBoundingClientRect();
   const view = element.ownerDocument.defaultView;
   return rect.width > 0 && rect.height > 0 && view?.getComputedStyle(element).opacity !== "0";

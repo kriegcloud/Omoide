@@ -24,7 +24,8 @@ const SERIES = {
   dark: { images: "#3987e5", videos: "#199e70" },
 };
 const INK = {
-  light: { muted: "#898781", grid: "#e1e0d9", baseline: "#c3c2b7" },
+  // Muted axis labels must meet WCAG AA 4.5:1 on paper (#f4f1ea -> 4.87:1, R9-01).
+  light: { muted: "#6b6963", grid: "#e1e0d9", baseline: "#c3c2b7" },
   dark: { muted: "#898781", grid: "#2c2c2a", baseline: "#383835" },
 };
 

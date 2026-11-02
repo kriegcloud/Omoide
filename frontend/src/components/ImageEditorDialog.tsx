@@ -1,4 +1,4 @@
-import { EDITOR_A11Y_ATTR, observeEditorAccessibility } from "../utils/editorA11y";
+import { EDITOR_A11Y_ATTR, isVisible, observeEditorAccessibility } from "../utils/editorA11y";
 import { useEditorUrlState } from "../hooks/useEditorUrlState";
 import { measureEditorImage, sameOverlay, type EditorStoreLike, type ImageOverlayLayout } from "../utils/editorOverlay";
 import { editorSelection, readEditorOptions } from "../utils/editorUrlState";
@@ -457,6 +457,15 @@ export default function ImageEditorDialog({
       ?.click();
   };
 
+  const zoomTimers = useRef(new Set<number>());
+  useEffect(() => {
+    const timers = zoomTimers.current;
+    return () => { timers.forEach((id) => window.clearTimeout(id)); timers.clear(); };
+  }, []);
+  const later = (fn: () => void, delay: number) => {
+    const id = window.setTimeout(() => { zoomTimers.current.delete(id); fn(); }, delay);
+    zoomTimers.current.add(id);
+  };
   const zoomToFit = () => {
     const host = editorHostRef.current;
     if (!host) return;
@@ -467,16 +476,29 @@ export default function ImageEditorDialog({
       host.querySelector<HTMLElement>(".FIE_brightness-tool-button")?.click();
       zoomLabel = host.querySelector<HTMLElement>(".FIE_topbar-zoom-label");
     }
-    zoomLabel?.click();
-    window.setTimeout(() => {
-      // The zoom menu is portalled outside the editor host. Filerobot has no
-      // public zoom API, so invoke its translated Fit-size preset by label.
+    if (!zoomLabel) return;
+    // The zoom menu is portalled outside the editor host and stays mounted (hidden)
+    // when closed. Open it only if it is not already open, otherwise the toggle
+    // closes it and the Fit item click lands on a stale menu (review R9-03).
+    const openMenu = () => {
       const menu = document.querySelector<HTMLElement>(".FIE_topbar-zoom-menu");
-      const fitLabel = Array.from(menu?.querySelectorAll<HTMLElement>("*") ?? [])
+      return menu && isVisible(menu) ? menu : null;
+    };
+    if (!openMenu()) zoomLabel.click();
+    let attempts = 0;
+    const clickFit = () => {
+      const menu = openMenu();
+      if (!menu) {
+        if (++attempts < 10) later(clickFit, 50);
+        return;
+      }
+      // Filerobot has no public zoom API; invoke its Fit-size preset by label.
+      const fitLabel = Array.from(menu.querySelectorAll<HTMLElement>("*"))
         .find((element) => element.children.length === 0 && element.textContent?.trim() === "Fit size");
-      (fitLabel?.closest<HTMLElement>("[role='menuitem'], button, li") ?? fitLabel?.parentElement)?.click();
-      window.setTimeout(() => { void updateImageOverlay(); }, 0);
-    }, 0);
+      (fitLabel?.closest<HTMLElement>("[role='menuitem'], button, li, [class*='SfxMenuItem-root']") ?? fitLabel?.parentElement)?.click();
+      later(() => { void updateImageOverlay(); }, 0);
+    };
+    later(clickFit, 0);
   };
 
   const toggleCompare = (pinned: boolean) => {
