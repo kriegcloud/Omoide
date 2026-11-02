@@ -62,7 +62,7 @@ interface MediaCardMenuProps {
   onDeleted?: () => void;
 }
 
-type DialogKind = "edit" | "rename" | "move" | "assign" | "dataset" | "backgroundSwap" | "deleteRecord" | "deleteFile" | null;
+type DialogKind = "edit" | "rename" | "move" | "assign" | "dataset" | "backgroundSwap" | "upscale" | "deleteRecord" | "deleteFile" | null;
 
 export default function MediaCardMenu({
   media,
@@ -327,18 +327,18 @@ export default function MediaCardMenu({
         transformOrigin={{ vertical: "top", horizontal: "left" }}
       >
         <MenuItem disabled={busy} onClick={() => void beginRepair("omoide-remove-text-v1")}>Remove overlays</MenuItem>
-        <MenuItem disabled={busy} onClick={() => void beginRepair("omoide-upscale-v1")}>Upscale</MenuItem>
+        <MenuItem disabled={busy} onClick={() => { setRepairAnchorEl(null); closeMenu(); setDialog("upscale"); }}>Upscale</MenuItem>
         {personContext && <MenuItem disabled={busy} onClick={() => void beginRepair("omoide-remove-people-v1")}>Remove other people</MenuItem>}
         {personContext && <MenuItem disabled={busy} onClick={() => { setRepairAnchorEl(null); closeMenu(); setDialog("backgroundSwap"); }}>Swap background…</MenuItem>}
       </Menu>
 
       <RepairDialog
-        open={dialog === "backgroundSwap"}
+        open={dialog === "backgroundSwap" || dialog === "upscale"}
         mediaIds={[media.id]}
         personId={personContext?.personId}
-        initialProfile="omoide-background-swap-v1"
+        initialProfile={dialog === "upscale" ? "omoide-upscale-v1" : "omoide-background-swap-v1"}
         onClose={() => setDialog(null)}
-        onStarted={() => setSnackbar({ message: "Background swap started", severity: "success" })}
+        onStarted={() => setSnackbar({ message: dialog === "upscale" ? "Upscale started" : "Background swap started", severity: "success" })}
       />
 
       <RenameMediaDialog

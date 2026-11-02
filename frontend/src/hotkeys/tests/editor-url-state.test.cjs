@@ -11,10 +11,10 @@ loaded._compile(esbuild.transformSync(fs.readFileSync(filename, 'utf8'), { loade
 const { readEditorOptions, patchEditorSearch, positiveId, editorSelection } = loaded.exports;
 test('editor options validate tools, guides and framing without accepting arbitrary store state', () => {
   assert.deepEqual(readEditorOptions(new URLSearchParams('tool=brightness&guides=face,bucket&compare=1&preset=portrait')), {
-    tabId: 'Finetune', toolId: 'Brightness', face: true, bucket: true, compare: true, preset: 'portrait',
+    upscale: false, upscaler: null, ratio: 'free', advanced: false, tabId: 'Finetune', toolId: 'Brightness', face: true, bucket: true, compare: true, preset: 'portrait',
   });
   assert.deepEqual(readEditorOptions(new URLSearchParams('tool=garbage&guides=other&preset=bad&compare=true')), {
-    tabId: 'Adjust', toolId: 'Crop', face: false, bucket: false, compare: false, preset: null,
+    upscale: false, upscaler: null, ratio: 'free', advanced: false, tabId: 'Adjust', toolId: 'Crop', face: false, bucket: false, compare: false, preset: null,
   });
   assert.equal(editorSelection('Resize', null), 'resize');
   assert.equal(editorSelection('Adjust', 'Flip_X'), 'flip-x');

@@ -9,6 +9,9 @@ import { cancelRepair, listRepairs } from "../services/repairs";
 const labels: Record<string, string> = {
   "omoide-remove-text-v1": "Remove overlays",
   "omoide-upscale-v1": "Upscale",
+  "omoide-upscale-seedvr2-v1": "Upscale · SeedVR2 Sharp",
+  "omoide-upscale-hypir-ultra-v1": "Upscale · HYPIR Ultra",
+  "omoide-upscale-hypir-balance-v1": "Upscale · HYPIR Balance",
   "omoide-remove-people-v1": "Remove other people",
   "omoide-background-swap-v1": "Swap background",
 };
@@ -83,6 +86,9 @@ export default function RepairsPage() {
               <Link component={RouterLink} to={`/medium/${job.result_media_id ?? job.media_id}`}>View media</Link>
               {["created", "queued", "running"].includes(job.status) && <Button size="small" onClick={() => void cancel(job.id)}>Cancel</Button>}
             </Stack>
+            {typeof job.params?.provider === "string" && <Typography variant="body2" color="text.secondary" mt={1} sx={{ overflowWrap: "anywhere" }}>
+              {job.params.provider}{Object.entries(job.params).filter(([key]) => !["provider", "hosted_consent", "_transport"].includes(key)).map(([key, value]) => ` · ${key.replaceAll("_", " ")}: ${String(value)}`).join("")}
+            </Typography>}
             {job.error_message && <Typography variant="body2" color="error" mt={1}>{job.error_message}</Typography>}
           </Paper>
         ))}

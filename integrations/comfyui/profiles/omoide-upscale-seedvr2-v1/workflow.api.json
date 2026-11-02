@@ -1,0 +1,188 @@
+{
+  "1": {
+    "inputs": {
+      "image": "seedvr2__input.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Authorized source image"
+    }
+  },
+  "2": {
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "alpha": [
+        "1",
+        1
+      ]
+    },
+    "class_type": "JoinImageWithAlpha",
+    "_meta": {
+      "title": "Preserve source alpha"
+    }
+  },
+  "3": {
+    "inputs": {
+      "image": [
+        "2",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "scale_by": 2.0
+    },
+    "class_type": "ImageScaleBy",
+    "_meta": {
+      "title": "2x target size"
+    }
+  },
+  "4": {
+    "inputs": {
+      "resized_images": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "SeedVR2Preprocess",
+    "_meta": {
+      "title": "SeedVR2 preprocess"
+    }
+  },
+  "5": {
+    "inputs": {
+      "vae_name": "seedvr2_ema_vae_fp16.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "SeedVR2 VAE"
+    }
+  },
+  "6": {
+    "inputs": {
+      "pixels": [
+        "4",
+        0
+      ],
+      "vae": [
+        "5",
+        0
+      ],
+      "tile_size": 512,
+      "overlap": 128,
+      "temporal_size": 4096,
+      "temporal_overlap": 8
+    },
+    "class_type": "VAEEncodeTiled",
+    "_meta": {
+      "title": "Tiled encode"
+    }
+  },
+  "7": {
+    "inputs": {
+      "unet_name": "seedvr2_7b_sharp_fp16.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "SeedVR2 7B Sharp FP16"
+    }
+  },
+  "8": {
+    "inputs": {
+      "model": [
+        "7",
+        0
+      ],
+      "vae_conditioning": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "SeedVR2Conditioning",
+    "_meta": {
+      "title": "SeedVR2 conditioning"
+    }
+  },
+  "9": {
+    "inputs": {
+      "model": [
+        "7",
+        0
+      ],
+      "seed": 718219614923771,
+      "steps": 1,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "positive": [
+        "8",
+        0
+      ],
+      "negative": [
+        "8",
+        1
+      ],
+      "latent_image": [
+        "6",
+        0
+      ],
+      "denoise": 1.0
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "One-step restoration"
+    }
+  },
+  "10": {
+    "inputs": {
+      "samples": [
+        "9",
+        0
+      ],
+      "vae": [
+        "5",
+        0
+      ],
+      "tile_size": 512,
+      "overlap": 128,
+      "temporal_size": 4096,
+      "temporal_overlap": 8
+    },
+    "class_type": "VAEDecodeTiled",
+    "_meta": {
+      "title": "Tiled decode"
+    }
+  },
+  "11": {
+    "inputs": {
+      "images": [
+        "10",
+        0
+      ],
+      "original_resized_images": [
+        "3",
+        0
+      ],
+      "color_correction_method": "lab"
+    },
+    "class_type": "SeedVR2PostProcessing",
+    "_meta": {
+      "title": "Faithful color and alpha restore"
+    }
+  },
+  "12": {
+    "inputs": {
+      "images": [
+        "11",
+        0
+      ],
+      "filename_prefix": "adult-image-studio/seedvr2-sharp"
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save 2x final"
+    }
+  }
+}

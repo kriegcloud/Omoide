@@ -18,6 +18,8 @@ import {
 import type { RepairProfile } from "../types";
 import { listBackgroundPrompts, startBulkRepair, startRepair } from "../services/repairs";
 
+import UpscalerPicker, { defaultUpscaleSelection } from "./UpscalerPicker";
+
 interface Props {
   open: boolean;
   mediaIds: number[];
@@ -35,6 +37,8 @@ export default function RepairDialog({
   onClose,
   onStarted,
 }: Props) {
+  const [upscale, setUpscale] = useState(defaultUpscaleSelection);
+  const [upscaleValid, setUpscaleValid] = useState(false);
   const [profile, setProfile] = useState<RepairProfile>(initialProfile);
   const [prompts, setPrompts] = useState<string[]>([]);
   const [prompt, setPrompt] = useState("");
@@ -58,6 +62,8 @@ export default function RepairDialog({
   useEffect(() => {
     if (!open) return;
     setProfile(initialProfile);
+    setUpscale(defaultUpscaleSelection());
+    setUpscaleValid(false);
     setError(null);
     setRandomizePrompts(false);
   }, [initialProfile, open]);
@@ -79,6 +85,7 @@ export default function RepairDialog({
       }
       const options = {
         personId,
+        ...(profile === "omoide-upscale-v1" ? upscale : {}),
         ...(profile === "omoide-background-swap-v1" && !randomizePrompts
           ? { prompt: prompt.trim(), seed: parsedSeed }
           : {}),
@@ -113,6 +120,7 @@ export default function RepairDialog({
               {personId != null && <MenuItem value="omoide-background-swap-v1">Swap background…</MenuItem>}
             </Select>
           </FormControl>
+          {profile === "omoide-upscale-v1" && <UpscalerPicker value={upscale} onChange={setUpscale} onValidityChange={setUpscaleValid} disabled={busy} />}
           {profile === "omoide-background-swap-v1" && (
             <>
               {mediaIds.length > 1 && (
@@ -173,6 +181,7 @@ export default function RepairDialog({
           disabled={
             busy
             || mediaIds.length === 0
+            || (profile === "omoide-upscale-v1" && !upscaleValid)
             || (profile === "omoide-background-swap-v1" && !randomizePrompts && !prompt.trim())
           }
         >

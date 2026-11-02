@@ -882,8 +882,8 @@ class BridgeService:
         profile_id = request.get("profile_id")
         profile = self.config.profiles.get(profile_id) if isinstance(profile_id, str) else None
         params = raw_params if raw_params else None
-        if params is not None and profile is not None and profile.input_json_node_id is None:
-            raise BridgeError("invalid-params", "repair profile does not accept params")
+        if profile is not None:
+            params = profile.validate_repair_params(params)
         return self._execute_image_request(request, action="repair", params=params)
 
     def _validate_generate_params(self, value: object) -> dict[str, Any]:

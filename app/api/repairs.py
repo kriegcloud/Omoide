@@ -26,6 +26,7 @@ from app.services.comfy_annotation import ComfyAnnotationError
 from app.services.background_prompts import load_prompts
 from app.services.comfy_repair import SUPPORTED_REPAIR_PROFILES
 from app.tasks.image_repair import repair_client, run_repair_job
+from app.services.upscalers import list_upscalers, hypir_api_key
 
 router = APIRouter()
 
@@ -41,6 +42,7 @@ def _configured_profiles() -> set[str]:
     return {
         settings.repairs.remove_text_profile_id,
         settings.repairs.upscale_profile_id,
+        settings.repairs.seedvr2_profile_id,
         settings.repairs.remove_people_profile_id,
         settings.repairs.background_swap_profile_id,
     }
@@ -85,6 +87,10 @@ def _params_for_media(
     request: RepairRequest,
 ) -> dict:
     params = request.params.model_dump(exclude_none=True)
+    if request.provider:
+        params["provider"] = request.provider
+        if request.provider.startswith("hypir:"):
+            params["hosted_consent"] = request.hosted_consent
     subject_profiles = {
         settings.repairs.remove_people_profile_id,
         settings.repairs.background_swap_profile_id,
@@ -150,6 +156,29 @@ def _create_job(
     return job
 
 
+def _ensure_provider_ready(request: RepairRequest) -> None:
+    if request.provider and request.provider.startswith("hypir:"):
+        if not request.hosted_consent:
+            raise HTTPException(status_code=422, detail="Hosted upscaling requires per-run consent")
+        if not hypir_api_key():
+            raise HTTPException(status_code=503, detail="HYPIR API key is not configured")
+        return
+    _validate_profile(request.profile)
+    _bridge_ready(request.profile)
+
+
+@router.get("/upscalers")
+def upscalers() -> list[dict]:
+    profiles: set[str] = set()
+    reason = None
+    if settings.repairs.enabled:
+        try:
+            profiles = set(_bridge_ready())
+        except HTTPException as exc:
+            reason = str(exc.detail)
+    return list_upscalers(profiles, reason)
+
+
 @router.get("/health", response_model=RepairHealthRead)
 def health() -> RepairHealthRead:
     if not settings.repairs.enabled:
@@ -178,8 +207,7 @@ def start_repair(
     session: Session = Depends(get_session),
 ) -> ImageRepairJob:
     _ensure_mutation_allowed()
-    _validate_profile(request.profile)
-    _bridge_ready(request.profile)
+    _ensure_provider_ready(request)
     media = session.get(Media, media_id)
     if media is None:
         raise HTTPException(status_code=404, detail="Media not found")
@@ -193,8 +221,7 @@ def start_bulk_repair(
     session: Session = Depends(get_session),
 ) -> list[ImageRepairJob]:
     _ensure_mutation_allowed()
-    _validate_profile(request.profile)
-    _bridge_ready(request.profile)
+    _ensure_provider_ready(request)
     jobs: list[ImageRepairJob] = []
     prepared: list[tuple[Media, dict]] = []
     for media_id in dict.fromkeys(request.media_ids):
@@ -286,7 +313,8 @@ def cancel_repair(job_id: str, session: Session = Depends(get_session)) -> Image
         ImageRepairStatus.RUNNING,
     }:
         return job
-    if job.status == ImageRepairStatus.RUNNING and job.external_prompt_id:
+    if (job.status == ImageRepairStatus.RUNNING and job.external_prompt_id
+            and not (job.params or {}).get("provider", "").startswith("hypir:")):
         try:
             repair_client().cancel(attempt_id=UUID(job.external_prompt_id))
         except ComfyAnnotationError as exc:

@@ -25,6 +25,9 @@ export interface RepairOptions {
   prompt?: string;
   seed?: number;
   randomizePrompts?: boolean;
+  provider?: string;
+  params?: Record<string, string | number>;
+  hostedConsent?: boolean;
 }
 
 async function json<T>(response: Response): Promise<T> {
@@ -38,8 +41,10 @@ async function json<T>(response: Response): Promise<T> {
 
 const repairBody = (profile: RepairProfile, options: RepairOptions) => ({
   profile,
+  ...(options.provider ? { provider: options.provider, hosted_consent: options.hostedConsent === true } : {}),
   ...(options.personId ? { person_id: options.personId } : {}),
   params: {
+    ...options.params,
     ...(options.prompt ? { prompt: options.prompt } : {}),
     ...(options.seed !== undefined ? { seed: options.seed } : {}),
   },
@@ -100,3 +105,34 @@ export const cancelRepair = (jobId: string) =>
     mutationBus.emit({ type: "repairs:changed" });
     return result;
   });
+
+export interface UpscaleSelection {
+  provider: string;
+  params: Record<string, string | number>;
+  hostedConsent: boolean;
+}
+
+export interface UpscalerParameter {
+  type: "string" | "integer";
+  default: string | number;
+  min?: number;
+  max?: number;
+  choices?: (string | number)[];
+  max_length?: number;
+}
+export interface UpscalerProvider {
+  id: string;
+  label: string;
+  kind: "local" | "hosted";
+  fidelity_note: string;
+  profile: string;
+  params: Record<string, UpscalerParameter>;
+  available: boolean;
+  reason?: string | null;
+  warning?: string | null;
+}
+export const listUpscalers = () => fetch(`${API}/api/repairs/upscalers`).then(json<UpscalerProvider[]>);
+export const getRepair = (id: string) => fetch(`${API}/api/repairs/${encodeURIComponent(id)}`).then(json<ImageRepairJob>).then(job => {
+  observeRepair(job);
+  return job;
+});

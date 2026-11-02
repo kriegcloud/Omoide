@@ -10,9 +10,9 @@ export const editorTools = {
   noise: ["Finetune", "Noise"], resize: ["Resize", "Resize"],
 } as const;
 export type EditorTool = keyof typeof editorTools;
-export type EditorQueryKey = "edit" | "crop" | "tool" | "guides" | "preset" | "compare";
+export type EditorQueryKey = "edit" | "crop" | "tool" | "guides" | "preset" | "compare" | "upscaler" | "ratio" | "adv";
 export type EditorQueryPatch = Partial<Record<EditorQueryKey, string | null>>;
-const optionKeys = ["tool", "guides", "preset", "compare"] as const;
+const optionKeys = ["tool", "guides", "preset", "compare", "upscaler", "ratio", "adv"] as const;
 
 export function positiveId(value: string | null): number | null {
   if (!value || !/^[1-9]\d*$/.test(value)) return null;
@@ -25,6 +25,8 @@ export function readEditorOptions(params: URLSearchParams) {
   const guides = (params.get("guides") ?? "").split(",");
   const preset = params.get("preset");
   return {
+    upscale: key === "upscale", upscaler: params.get("upscaler"),
+    ratio: params.get("ratio") ?? "free", advanced: params.get("adv") === "1",
     tabId, toolId, face: guides.includes("face"), bucket: guides.includes("bucket"),
     compare: params.get("compare") === "1",
     preset: (["closeup", "portrait", "half_body", "full_body"].includes(preset ?? "") ? preset : null) as CropFraming | null,

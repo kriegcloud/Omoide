@@ -152,6 +152,8 @@ def _sanitize_for_save(settings_model: AppSettings) -> dict:
     On load, data_dir always derives from the active profile in bootstrap.
     """
     data = settings_model.model_dump(mode="json")
+    # YAML must retain the configured secret; API serialization stays masked.
+    data["repairs"]["hypir"]["api_key"] = settings_model.repairs.hypir.api_key.get_secret_value()
     general = data.get("general", {})
     # Force data_dir to the active profile path (or omit entirely)
     # Omitting keeps YAML clean; runtime will compute from bootstrap.

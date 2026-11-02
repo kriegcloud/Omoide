@@ -63,3 +63,25 @@ export function buildEditorTheme(theme: Theme) {
   ], `0 2px 8px ${alpha(p.text.primary, 0.2)}`);
   return { palette, typography: { fontFamily: theme.typography.fontFamily, baseLineHeight: theme.typography.htmlFontSize / theme.typography.fontSize } };
 }
+
+/** The editor's styled-components controls also need a scoped foreground.
+ * These stable FIE classes cover labels and native fields without relying on
+ * generated sc-* class names or changing the canvas/preview appearance.
+ */
+export function buildEditorControlStyles(theme: Theme) {
+  const p = theme.palette;
+  return {
+    colorScheme: p.mode,
+    "& .FIE_tools-bar-wrapper": { color: p.text.primary, backgroundColor: p.background.paper },
+    "& .FIE_tools-bar-wrapper label, & .FIE_tools-bar-wrapper [class*='Label'], & .FIE_tool-options-wrapper": {
+      color: `${p.text.primary} !important`,
+    },
+    "& .FIE_tools-bar-wrapper input": {
+      color: `${p.text.primary} !important`, WebkitTextFillColor: p.text.primary,
+      backgroundColor: `${p.background.paper} !important`, caretColor: p.text.primary,
+    },
+    "& .FIE_tools-bar-wrapper input::placeholder": { color: p.text.secondary, opacity: 1 },
+    "& .FIE_tools-bar-wrapper button, & .FIE_tools-bar-wrapper [role='button']": { color: p.text.primary },
+    "& .FIE_tools-bar-wrapper :focus-visible": { outline: `2px solid ${p.primary.main}`, outlineOffset: 2 },
+  };
+}

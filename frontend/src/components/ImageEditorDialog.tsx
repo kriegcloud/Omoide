@@ -44,7 +44,9 @@ import {
   type EditOp,
   type FilerobotDesignState,
 } from "../utils/editorOps";
-import { buildEditorTheme } from "../utils/editorTheme";
+import EditorCropControls from "./EditorCropControls";
+import { buildEditorControlStyles, buildEditorTheme } from "../utils/editorTheme";
+import EditorUpscalePanel from "./EditorUpscalePanel";
 import ConfirmDialog from "./ConfirmDialog";
 import FaceBoxOverlay from "./FaceBoxOverlay";
 import { observeEditorFits } from "../utils/editorFitObserver";
@@ -95,6 +97,7 @@ const SHORTCUTS = [
   ["H / V", "Flip horizontally / vertically"],
   ["C", "Select the crop tool"],
   ["0", "Zoom to fit"],
+  ["U", "Upscale image"],
   ["` (hold)", "Compare with original"],
   ["Ctrl/⌘+S", "Save copy"],
   ["Ctrl/⌘+Shift+S", "Overwrite original"],
@@ -118,13 +121,6 @@ const OVERWRITE_HOTKEYS = [
   { key: "s", meta: true, shift: true, description: "Confirm overwrite original" },
 ] as const;
 
-const FRAMING_PRESETS: Array<{ framing: CropFraming; label: string }> = [
-  { framing: "closeup", label: "Close-up" },
-  { framing: "portrait", label: "Portrait" },
-  { framing: "half_body", label: "Half body" },
-  { framing: "full_body", label: "Full body" },
-];
-
 const EDITOR_SAVING_PIXEL_RATIO = 1;
 
 const FilerobotImageEditor = lazy(async () => {
@@ -145,19 +141,7 @@ const FilerobotImageEditor = lazy(async () => {
         ]}
         defaultTabId={props.defaultTabId}
         defaultToolId={props.defaultToolId as React.ComponentProps<typeof Editor>["defaultToolId"]}
-        Crop={{
-          presetsItems: [
-            { titleKey: "square", descriptionKey: "1:1", ratio: 1 },
-            { titleKey: "landscape43", descriptionKey: "4:3", ratio: 4 / 3 },
-            { titleKey: "photo32", descriptionKey: "3:2", ratio: 3 / 2 },
-            { titleKey: "photo75", descriptionKey: "7:5", ratio: 7 / 5 },
-            { titleKey: "photo54", descriptionKey: "5:4", ratio: 5 / 4 },
-            { titleKey: "portrait45", descriptionKey: "4:5", ratio: 4 / 5 },
-            { titleKey: "portrait34", descriptionKey: "3:4", ratio: 3 / 4 },
-            { titleKey: "portrait23", descriptionKey: "2:3", ratio: 2 / 3 },
-            { titleKey: "portrait57", descriptionKey: "5:7", ratio: 5 / 7 },
-          ],
-        }}
+        Crop={{ noPresets: true }}
         Rotate={{ angle: 90, componentType: "buttons" }}
         useZoomPresetsMenu
         observePluginContainerSize
@@ -437,6 +421,7 @@ export default function ImageEditorDialog({
     return () => window.removeEventListener("resize", onResize);
   }, [faceGuides, aspectGuides, compareHeld, comparePinned, updateImageOverlay]);
 
+  const cropImage = useMemo(() => ({ width: media.width ?? 1, height: media.height ?? 1 }), [media.width, media.height]);
   const editorTheme = useMemo(() => buildEditorTheme(muiTheme), [muiTheme]);
 
   const source = `${API}/originals/${encodeFilePath(media.path)}${
@@ -537,7 +522,7 @@ export default function ImageEditorDialog({
     }, 0);
   };
 
-  const save = async (saveMode: "copy" | "overwrite") => {
+  const save = async (saveMode: "copy" | "overwrite", keepOpen = false): Promise<MediaDetail | null> => {
     setSaving(true);
     setError(null);
     try {
@@ -588,7 +573,7 @@ export default function ImageEditorDialog({
       if (mode === "virtual") {
         await onOpsReady?.(ops, freshState);
         onClose();
-        return;
+        return null;
       }
       const detail = await editMedia(media.id, {
         ops,
@@ -602,17 +587,19 @@ export default function ImageEditorDialog({
       } else if (mediaListKey) {
         addItem(mediaListKey, detail.media, "start");
       }
-      onSaved?.(detail, saveMode);
+      if (!keepOpen) onSaved?.(detail, saveMode);
       setConfirmOverwrite(false);
-      onClose();
-      if (saveMode === "copy") {
+      if (!keepOpen) onClose();
+      if (saveMode === "copy" && !keepOpen) {
         navigate(`/medium/${detail.media.id}`, {
           state: { media: detail.media, mediaListKey },
         });
       }
+      return detail;
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Failed to save image edits");
       setConfirmOverwrite(false);
+      return null;
     } finally {
       setSaving(false);
     }
@@ -677,6 +664,7 @@ export default function ImageEditorDialog({
     }
   };
 
+  useHotkey({ key: "u" }, () => patchEditor({ tool: "upscale" }), { scope: "dialog", dialogRef: hotkeyScope, enabled: open && mode === "write" && !saving, description: "Upscale image" });
   const openHelp = useHotkeyHelp();
   useHotkey({ key: "?" }, openHelp, { scope: "dialog", dialogRef: hotkeyScope, enabled: open, description: "Show keyboard shortcuts" });
   useHotkeys(EDITOR_HOTKEYS, onEditorKeyDown, {
@@ -744,6 +732,7 @@ export default function ImageEditorDialog({
               </Typography>
             </Box>
             <Stack direction="row" spacing={0.5} alignItems="center" sx={{ ml: { sm: "auto" }, overflowX: "auto" }}>
+              {mode === "write" && <Button size="small" disabled={saving} onClick={() => patchEditor({ tool: "upscale" })} sx={{ whiteSpace: "nowrap" }}>Upscale…</Button>}
               <Button
                 size="small"
                 startIcon={<CompareIcon />}
@@ -769,11 +758,6 @@ export default function ImageEditorDialog({
                 label="Face guides"
                 sx={{ whiteSpace: "nowrap", mr: 0.5 }}
               />
-              {FRAMING_PRESETS.map((preset) => (
-                <Button key={preset.framing} size="small" variant={urlOptions.preset === preset.framing ? "contained" : "outlined"} aria-pressed={urlOptions.preset === preset.framing} onClick={() => void applyFramingPreset(preset.framing)} sx={{ whiteSpace: "nowrap" }}>
-                  {preset.label}
-                </Button>
-              ))}
               <IconButton
                 size="small"
                 aria-label="Show editor keyboard shortcuts"
@@ -786,6 +770,15 @@ export default function ImageEditorDialog({
             </Stack>
           </Toolbar>
         </AppBar>
+        {mode === "write" && <EditorUpscalePanel
+          open={urlOptions.upscale}
+          media={media}
+          hasChanges={hasChanges}
+          initialProvider={urlOptions.upscaler}
+          onProviderChange={provider => patchEditor({ upscaler: provider })}
+          saveCopy={async () => (await save("copy", true))?.media ?? null}
+          onClose={() => patchEditor({ tool: editorSelection(tabId, toolId) })}
+        />}
         <Popover
           open={Boolean(shortcutsAnchor)}
           anchorEl={shortcutsAnchor}
@@ -813,7 +806,24 @@ export default function ImageEditorDialog({
           </Box>
         </Popover>
 
-        <Box ref={editorHostRef} onClickCapture={captureToolSelection} sx={{ flex: 1, minHeight: 0, bgcolor: "background.default", position: "relative" }}>
+        {entered && media.width && media.height && <Box sx={{ display: toolId === "Crop" && !urlOptions.upscale ? "block" : "none" }}>
+          <EditorCropControls
+            key={media.id}
+            image={cropImage}
+            ratio={urlOptions.ratio}
+            advanced={urlOptions.advanced}
+            capture={captureStoreState}
+            update={fn => updateStateRef.current?.(state => fn(state))}
+            onOptions={options => patchEditor({
+              ...(options.ratio !== undefined ? { ratio: options.ratio, preset: null } : {}),
+              ...(options.advanced !== undefined ? { adv: options.advanced ? "1" : null } : {}),
+            })}
+            onChanged={() => { setHasChanges(true); setError(null); }}
+            onFraming={framing => { patchEditor({ ratio: "free" }); void applyFramingPreset(framing); }}
+          />
+        </Box>}
+
+        <Box ref={editorHostRef} onClickCapture={captureToolSelection} sx={{ ...buildEditorControlStyles(muiTheme), flex: 1, minHeight: 0, bgcolor: "background.default", position: "relative" }}>
           <Suspense
             fallback={
               <Box

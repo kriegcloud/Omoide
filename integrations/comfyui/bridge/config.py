@@ -46,6 +46,7 @@ REPAIR_PROFILE_IDS = frozenset(
     {
         "omoide-remove-text-v1",
         "omoide-upscale-v1",
+        "omoide-upscale-seedvr2-v1",
         "omoide-remove-people-v1",
         "omoide-background-swap-v1",
     }
@@ -151,6 +152,54 @@ _OMOIDE_NODE_WRAPPER = ArtifactBinding(
 
 PROFILE_BINDINGS: Mapping[str, ProfileBinding] = MappingProxyType(
     {
+        "omoide-upscale-seedvr2-v1": ProfileBinding(
+            workflow_path=Path(
+                "/home/elpresidank/ai/workflows/comfy/omoide-upscale-seedvr2-v1/workflow.api.json"
+            ),
+            workflow_sha256="c42526b1549c4449e1e6988cfdaf543164f54cec84e4a5a580639000a4b62268",
+            image_node_id="1",
+            image_node_class="LoadImage",
+            image_input="image",
+            output_node_id="12",
+            output_node_class="SaveImage",
+            output_key="images",
+            result_kind="image",
+            required_node_classes=(
+                "LoadImage", "JoinImageWithAlpha", "ImageScaleBy", "SeedVR2Preprocess",
+                "VAELoader", "VAEEncodeTiled", "UNETLoader", "SeedVR2Conditioning",
+                "KSampler", "VAEDecodeTiled", "SeedVR2PostProcessing", "SaveImage",
+            ),
+            required_workflow_nodes=(
+                ("1", "LoadImage"), ("2", "JoinImageWithAlpha"), ("3", "ImageScaleBy"),
+                ("4", "SeedVR2Preprocess"), ("5", "VAELoader"), ("6", "VAEEncodeTiled"),
+                ("7", "UNETLoader"), ("8", "SeedVR2Conditioning"), ("9", "KSampler"),
+                ("10", "VAEDecodeTiled"), ("11", "SeedVR2PostProcessing"), ("12", "SaveImage"),
+            ),
+            required_combo_values=(
+                ("UNETLoader", "unet_name", "seedvr2_7b_sharp_fp16.safetensors"),
+                ("VAELoader", "vae_name", "seedvr2_ema_vae_fp16.safetensors"),
+            ),
+            artifacts=(
+                ArtifactBinding(
+                    path=Path("/home/elpresidank/ai/ComfyUI/models/diffusion_models/seedvr2_7b_sharp_fp16.safetensors"),
+                    bytes_expected=16_480_583_960,
+                    sha256="70823bca54b9c24eeb56e1c452697c7c2a430867e58db0e376c6e260f3a4489d",
+                    name="seedvr2_7b_sharp_fp16.safetensors",
+                ),
+                ArtifactBinding(
+                    path=Path("/home/elpresidank/ai/ComfyUI/models/vae/seedvr2_ema_vae_fp16.safetensors"),
+                    bytes_expected=501_324_814,
+                    sha256="20678548f420d98d26f11442d3528f8b8c94e57ee046ef93dbb7633da8612ca1",
+                    name="seedvr2_ema_vae_fp16.safetensors",
+                ),
+            ),
+            executor_artifacts=(_COMFY_GIT_HEAD, _COMFY_NODES),
+            model_repo_id="Comfy-Org/SeedVR2",
+            model_revision="673340c8a66db62b84e4099def7d01d337ae12dc",
+            model_license="host-managed",
+            comfy_version="0.34.0",
+            comfy_core_commit="250b2e9551a7bc7a8ebb5beb07e0fecd2983e04a",
+        ),
         "omoide-caption-v1": ProfileBinding(
             workflow_path=Path(
                 "/home/elpresidank/ai/workflows/comfy/omoide-caption-v1/"
@@ -362,6 +411,17 @@ class Profile:
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
+    def validate_repair_params(self, params: Mapping[str, Any] | None) -> dict[str, Any] | None:
+        if self.profile_id == "omoide-upscale-seedvr2-v1":
+            values = dict(params or {})
+            scale = values.get("scale", 2)
+            if set(values) - {"scale"} or isinstance(scale, bool) or not isinstance(scale, (int, float)) or scale not in (2, 4):
+                raise BridgeError("invalid-params", "SeedVR2 accepts only scale 2 or 4")
+            return {"scale": int(scale)}
+        if params and self.input_json_node_id is None:
+            raise BridgeError("invalid-params", "repair profile does not accept params")
+        return dict(params) if params else None
+
     def make_prompt(
         self,
         staged_name: str | None,
@@ -379,7 +439,10 @@ class Profile:
             prompt[self.image_node_id]["inputs"][self.image_input] = f"{STAGING_SUBFOLDER}/{staged_name}"
         elif staged_name is not None:
             raise BridgeError("invalid-staging-name", "params profile cannot stage an image")
-        if params is not None:
+        if self.profile_id == "omoide-upscale-seedvr2-v1":
+            normalized = self.validate_repair_params(params)
+            prompt["3"]["inputs"]["scale_by"] = normalized["scale"]
+        elif params is not None:
             if self.input_json_node_id is None or self.input_json_input is None:
                 raise BridgeError(
                     "invalid-params",

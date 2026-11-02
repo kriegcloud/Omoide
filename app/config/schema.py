@@ -14,6 +14,7 @@ from pydantic import (
     BaseModel,
     Field,
     PlainSerializer,
+    SecretStr,
     computed_field,
     field_validator,
 )
@@ -405,6 +406,12 @@ class TrainingSettings(BaseModel):
         return None if value == "" else value
 
 
+class HypirSettings(BaseModel):
+    """Server-only credential, optionally supplied by OMOIDE_HYPIR_API_KEY."""
+
+    api_key: SecretStr = SecretStr("")
+
+
 class RepairSettings(BaseModel):
     """Opt-in settings for host-side ComfyUI image repair."""
 
@@ -413,6 +420,8 @@ class RepairSettings(BaseModel):
     timeout_seconds: float = Field(default=1080.0, gt=0.0, le=3600.0)
     remove_text_profile_id: str = "omoide-remove-text-v1"
     upscale_profile_id: str = "omoide-upscale-v1"
+    seedvr2_profile_id: str = "omoide-upscale-seedvr2-v1"
+    hypir: HypirSettings = Field(default_factory=HypirSettings)
     remove_people_profile_id: str = "omoide-remove-people-v1"
     background_swap_profile_id: str = "omoide-background-swap-v1"
     eval_profile_id: str = "omoide-eval-zimage-v1"

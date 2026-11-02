@@ -156,6 +156,9 @@ def save_settings_endpoint(
         settings_model = payload
         acknowledge_removals = False
 
+    if settings_model.repairs.hypir.api_key.get_secret_value() == "**********":
+        settings_model.repairs.hypir.api_key = settings.repairs.hypir.api_key
+
     try:
         validate_clip_settings_change(settings_model)
     except ValueError as exc:

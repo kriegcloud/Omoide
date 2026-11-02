@@ -20,6 +20,8 @@ from app.models import ImageRepairJob, ImageRepairStatus, Media, ProcessingTask
 from app.services.comfy_annotation import ComfyAnnotationError
 from app.services.comfy_repair import ComfyRepairClient
 from app.services.image_edits import write_repaired
+from app.services.hypir import HypirClient
+from app.services.upscalers import hypir_api_key, PROVIDER_PROFILES
 from app.utils import delete_record, generate_perceptual_hash, generate_thumbnail
 
 _UPSCALE_PROFILE = "omoide-upscale-v1"
@@ -132,7 +134,7 @@ def run_repair_job(job_id: str) -> None:
             "transport_width": source.width,
             "transport_height": source.height,
         }
-        if profile != _UPSCALE_PROFILE and max(source.size) > 4096:
+        if profile not in PROVIDER_PROFILES.values() and max(source.size) > 4096:
             scale = 4096 / max(source.size)
             transport = source.resize(
                 (max(1, round(source.width * scale)), max(1, round(source.height * scale))),
@@ -153,15 +155,29 @@ def run_repair_job(job_id: str) -> None:
                     "width": max(1, round(box["width"] * scale_x)),
                     "height": max(1, round(box["height"] * scale_y)),
                 }
-        result = repair_client().repair(
-            attempt_id=UUID(job_id),
-            profile_id=profile,
-            image=transport,
-            params=params or None,
-        )
+        provider = params.pop("provider", None)
+        consent = params.pop("hosted_consent", False)
+        if provider and provider.startswith("hypir:"):
+            if consent is not True:
+                raise ComfyAnnotationError("hosted-consent-required", "Hosted upscaling requires per-run consent")
+            result = HypirClient(hypir_api_key()).repair(provider, transport, params)
+        else:
+            # Remacri has a fixed 2x workflow and accepts no bridge params.
+            if profile == _UPSCALE_PROFILE:
+                params.pop("scale", None)
+            result = repair_client().repair(
+                attempt_id=UUID(job_id), profile_id=profile,
+                image=transport, params=params or None,
+            )
         with Image.open(io.BytesIO(result.image)) as opened_result:
             opened_result.load()
             repaired = opened_result.copy()
+        # A hosted request cannot be interrupted remotely. Honor accepted local
+        # cancellation before writing its late response into the media library.
+        with Session(db.engine) as session:
+            current_job = session.get(ImageRepairJob, job_id)
+            if current_job is None or current_job.status == ImageRepairStatus.CANCELLED:
+                return
         target = write_repaired(
             source_path,
             repaired,
@@ -231,7 +247,8 @@ def run_repair_job(job_id: str) -> None:
             processor_task_id = processor_task.id
             media_id = int(media.id)
         try:
-            repair_client().ack_attempt(attempt_id=UUID(job_id))
+            if not (provider or "").startswith("hypir:"):
+                repair_client().ack_attempt(attempt_id=UUID(job_id))
         except ComfyAnnotationError as exc:
             logger.warning(
                 "Repair job %s succeeded but history acknowledgement failed: %s",

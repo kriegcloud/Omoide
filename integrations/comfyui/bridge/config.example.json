@@ -31,6 +31,20 @@
       "timeout_seconds": 900,
       "reconcile_seconds": 15,
       "poll_interval_seconds": 0.5
+    },
+    "omoide-upscale-seedvr2-v1": {
+      "workflow_path": "/home/elpresidank/ai/workflows/comfy/omoide-upscale-seedvr2-v1/workflow.api.json",
+      "workflow_sha256": "c42526b1549c4449e1e6988cfdaf543164f54cec84e4a5a580639000a4b62268",
+      "image_node_id": "1",
+      "image_node_class": "LoadImage",
+      "image_input": "image",
+      "output_node_id": "12",
+      "output_node_class": "SaveImage",
+      "output_key": "images",
+      "result_kind": "image",
+      "timeout_seconds": 900,
+      "reconcile_seconds": 15,
+      "poll_interval_seconds": 0.5
     }
   }
 }
