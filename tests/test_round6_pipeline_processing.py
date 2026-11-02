@@ -155,6 +155,40 @@ class ProcessingTests(DatabaseCase):
         processing._save_pending_faces(self.session, task, set())
         self.assertEqual(task.params["pending_face_ids"], [face.id])
 
+    def test_media_deleted_during_run_is_skipped_not_fatal(self):
+        # 2026-11-02: resolving duplicates while process_media ran deleted a
+        # batch row; the next attribute access raised ObjectDeletedError and
+        # failed the whole task at 3794/7948.
+        first, second = self.media(), self.media()
+        for row in (first, second):
+            Image.new("RGB", (256, 256), (120, 90, 60)).save(row.path)
+        second_id = second.id
+        task = self.task("process_media")
+
+        calls = []
+
+        def process(media, session, **kwargs):
+            calls.append(media.id)
+            if media.id != second_id:
+                with self.engine.begin() as conn:
+                    conn.exec_driver_sql("DELETE FROM media WHERE id = ?", (second_id,))
+            media.faces_extracted = True
+            session.add(media)
+            session.commit()
+            return True
+
+        proc = self.processor(process)
+        proc.load_model = Mock(side_effect=lambda: setattr(proc, "active", True))
+        with patch.object(processing, "processors", [proc]):
+            processing._run_media_processing(task.id)
+        self.session.expire_all()
+        finished = self.session.get(ProcessingTask, task.id)
+        self.assertEqual(calls, [first.id])
+        self.assertNotEqual(finished.status, "failed", (finished.status, finished.result))
+        self.assertEqual(finished.status, "completed", (finished.status, finished.result, self.session.get(Media, first.id).processing_error))
+        self.assertTrue(self.session.get(Media, first.id).faces_extracted)
+        self.assertIsNone(self.session.get(Media, second_id))
+
     def test_cancelled_media_task_is_not_restarted_by_worker(self):
         task = self.task("process_media", status="cancelled")
         proc = self.processor(Mock(return_value=True))

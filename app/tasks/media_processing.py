@@ -11,6 +11,7 @@ from typing import List
 
 from PIL import UnidentifiedImageError
 from sqlalchemy import func, or_
+from sqlalchemy.orm.exc import ObjectDeletedError, StaleDataError
 from sqlmodel import Session, col, select
 
 import app.database as db
@@ -113,6 +114,21 @@ def _fetch_media_batch_to_process(session: Session, limit: int, after_id: int = 
 # ahead of the item currently running through the processors, so file I/O and
 # decoding overlap with inference instead of leaving the GPU idle.
 _PREFETCH_AHEAD = 2
+
+
+def _row_gone(media: Media) -> bool:
+    """True when the row was deleted after the batch was fetched.
+
+    Users resolve duplicates and delete media while process_media runs; the
+    next attribute load then raises ObjectDeletedError (2026-11-02 the whole
+    task failed at 3794/7948). Such items are skipped, not fatal.
+    """
+    try:
+        media.id  # noqa: B018 - forces the expired-row reload
+        media.path  # noqa: B018
+    except ObjectDeletedError:
+        return True
+    return False
 
 
 def _needs_scene_extraction(media: Media) -> bool:
@@ -448,6 +464,8 @@ def _run_media_processing(task_id: str, *, clustering_chained: bool = False) -> 
                     if index >= len(medias_batch):
                         return
                     upcoming = medias_batch[index]
+                    if _row_gone(upcoming):
+                        return
                     if _needs_scene_extraction(upcoming):
                         prefetched[index] = prefetcher.submit(
                             _load_scenes, _media_snapshot(upcoming)
@@ -463,6 +481,11 @@ def _run_media_processing(task_id: str, *, clustering_chained: bool = False) -> 
                         logger.info("Task cancelled mid-batch. Stopping.")
                         cancelled_mid_batch = True
                         break
+                    if _row_gone(media):
+                        logger.info("Skipping media deleted during processing")
+                        if pending_scenes is not None:
+                            pending_scenes.cancel()
+                        continue
 
                     last_media_id = max(last_media_id, media.id)
                     retry_ids.discard(media.id)
@@ -529,7 +552,12 @@ def _run_media_processing(task_id: str, *, clustering_chained: bool = False) -> 
                     # Commit per item so the SQLite write lock is held for one
                     # item's work, not a whole batch; other writers time out at
                     # 30 s otherwise.
-                    safe_commit(session)
+                    try:
+                        safe_commit(session)
+                    except (ObjectDeletedError, StaleDataError):
+                        # Deleted while its processors ran: drop this item only.
+                        session.rollback()
+                        logger.info("Media deleted while processing; skipped")
                     set_task_progress(task_id, current_step="idle")
 
                 batch_index += 1
