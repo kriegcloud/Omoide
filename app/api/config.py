@@ -130,9 +130,9 @@ def _reload_and_reconfigure():
     configure_auto_scan_job()
 
 
-@router.post("/reload", status_code=204)
+@router.post("/reload", status_code=204, name="reload_settings_endpoint")
 @_exclusive_profile_change
-async def reload_settings_endpoint():
+def _reload_settings_endpoint():
     """Reload settings and apply the active profile's scheduling policy."""
     _reload_and_reconfigure()
 
@@ -145,7 +145,7 @@ async def get_settings():
 
 @router.post("/", response_model=AppSettings)
 @_exclusive_profile_change
-async def save_settings_endpoint(
+def save_settings_endpoint(
     payload: SaveSettingsRequest | AppSettings,
 ):
     """Saves the settings model to the config.yaml file."""
@@ -673,3 +673,12 @@ def add_profile(req: AddProfileRequest):
         profiles.append({"name": name, "path": str(p)})
         bs["profiles"] = profiles
         write_bootstrap(bs)
+
+
+async def reload_settings_endpoint():
+    """Compatibility for direct coroutine callers; HTTP uses the sync guard.
+
+    The registered handler acquires/releases the profile lock and performs the
+    complete reload in one worker, including its active-task admission checks.
+    """
+    return _reload_settings_endpoint()

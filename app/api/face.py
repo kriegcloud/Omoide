@@ -119,9 +119,10 @@ def _assign_face(
 @router.post(
     "/assign",
     summary="Assign existing faces to a person",
+    name="assign_faces",
     status_code=status.HTTP_200_OK,
 )
-async def assign_faces(
+def _assign_faces(
     body: FaceAssign = Body(...),
     session: Session = Depends(get_session),
 ):
@@ -150,8 +151,8 @@ async def assign_faces(
     return {"message": "Faces assigned successfully"}
 
 
-@router.post("/assign-suggested", response_model=AssignSuggestedFacesResult)
-async def assign_suggested_faces(
+@router.post("/assign-suggested", response_model=AssignSuggestedFacesResult, name="assign_suggested_faces")
+def _assign_suggested_faces(
     body: AssignSuggestedFaces,
     session: Session = Depends(get_session),
 ) -> AssignSuggestedFacesResult:
@@ -189,9 +190,10 @@ async def assign_suggested_faces(
 @router.post(
     "/detach",
     summary="Detaches existing faces from their persons",
+    name="detach_faces",
     status_code=status.HTTP_200_OK,
 )
-async def detach_faces(
+def _detach_faces(
     face_ids: list[int] = Body(..., embed=True),
     session: Session = Depends(get_session),
 ):
@@ -433,10 +435,11 @@ def get_orphans(
 @router.post(
     "/create_person",
     summary="Create a new person from multiple faces and assign",
+    name="create_person_from_faces",
     response_model=PersonMinimal,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_person_from_faces(
+def _create_person_from_faces(
     face_ids: list[int] = Body(..., embed=True),
     name: str | None = Body(None),
     session: Session = Depends(get_session),
@@ -545,3 +548,27 @@ def undo_face_suggestion_rejection(
     )
     safe_commit(session)
     return {"face_id": face_id, "person_id": body.person_id, "rejected": False}
+
+
+# Retain the coroutine entry points used by in-process callers with an already
+# owned Session. HTTP routes above are synchronous: FastAPI executes each whole
+# SQL/vector/centroid/commit unit in its worker pool. Do not offload individual
+# Session calls or move a caller's live Session to another thread.
+async def assign_faces(body: FaceAssign, session: Session):
+    return _assign_faces(body, session)
+
+
+async def assign_suggested_faces(
+    body: AssignSuggestedFaces, session: Session,
+) -> AssignSuggestedFacesResult:
+    return _assign_suggested_faces(body, session)
+
+
+async def detach_faces(face_ids: list[int], session: Session):
+    return _detach_faces(face_ids, session)
+
+
+async def create_person_from_faces(
+    face_ids: list[int], name: str | None = None, session: Session = Depends(get_session),
+):
+    return _create_person_from_faces(face_ids, name, session)
