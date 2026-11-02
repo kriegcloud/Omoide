@@ -61,7 +61,7 @@ class BrokenRetryTests(DatabaseCase):
         payload = {"removed": 1, "processed_ids": [2], "skipped_ids": [1], "errors": [{"id": 1, "reason": "read-only root"}]}
         with patch.object(broken, "resolve_media_action", return_value=payload):
             response = broken.resolve_broken(BrokenResolveRequest(media_ids=[1, 2], action="DELETE_FILES"), self.session)
-        self.assertEqual(response.model_dump(), payload)
+        self.assertEqual(response.model_dump(), {**payload, "receipt": None})
 
     def test_retry_rejects_presentation_mode_before_thumbnailing(self):
         self.media(processing_error="bad video")
