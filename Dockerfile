@@ -47,6 +47,7 @@ WORKDIR /app
 # Install system dependencies (these rarely change)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    chromium \
     libgl1 \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean

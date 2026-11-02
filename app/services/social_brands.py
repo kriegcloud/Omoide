@@ -1,7 +1,9 @@
 """Cached brand assets. HTTP transport pins public DNS results; no profile fetches.
 
-A browser fallback is deliberately absent. Future implementations should supply
-another guarded resolver behind resolve_icon, never navigate a person's URL.
+When plain HTTP finds no icon (JavaScript-rendered sites, login walls), a
+headless Chromium renders the brand domain's root page only, never a person's
+URL. Every browser request is checked by validate_public_url, and the icon it
+finds is downloaded through SafeFetcher like any other candidate.
 """
 from __future__ import annotations
 
@@ -11,6 +13,7 @@ import io
 import ipaddress
 import json
 import re
+import shutil
 import socket
 import queue
 import threading
@@ -230,13 +233,90 @@ def _simple_brand(domain):
     return mapping.get(domain)
 
 
-def resolve_icon(domain: str, *, fetch=None) -> dict:
+ICON_RELS = {'icon', 'shortcut', 'apple-touch-icon', 'apple-touch-icon-precomposed', 'mask-icon'}
+BROWSER_TIMEOUT = 15
+BLOCKED_BROWSER_RESOURCES = {'media', 'font', 'websocket', 'eventsource', 'manifest'}
+
+
+def _favicon_fallbacks(domain: str) -> list[str]:
+    hosts = [domain] if domain.startswith('www.') else [domain, f'www.{domain}']
+    return [f'https://{host}/favicon.ico' for host in hosts]
+
+
+def discover_icons_with_browser(domain: str, timeout: float = BROWSER_TIMEOUT) -> list[tuple[int, str]]:
+    """Render https://<domain>/ headlessly and return icon candidates from the live DOM."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as error:
+        raise ValueError('Browser fallback unavailable: playwright is not installed') from error
+    executable = shutil.which('chromium') or shutil.which('chromium-browser')
+    if not executable:
+        raise ValueError('Browser fallback unavailable: no Chromium executable')
+    root = f'https://{domain}/'
+    validate_public_url(root)
+
+    def guard(route):
+        request = route.request
+        if request.url.startswith('data:'):
+            return route.continue_()
+        if request.resource_type in BLOCKED_BROWSER_RESOURCES:
+            return route.abort()
+        try:
+            validate_public_url(request.url, timeout=3)
+        except ValueError:
+            return route.abort()
+        return route.continue_()
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            executable_path=executable,
+            headless=True,
+            args=['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
+        )
+        try:
+            context = browser.new_context(service_workers='block', accept_downloads=False)
+            context.route('**/*', guard)
+            page = context.new_page()
+            page.goto(root, wait_until='domcontentloaded', timeout=timeout * 1000)
+            page.wait_for_timeout(1500)
+            links = page.eval_on_selector_all(
+                'link[href]',
+                'els => els.map(e => [e.getAttribute("rel") || "", e.getAttribute("sizes") || "", e.href])',
+            )
+            final_url = page.url
+        finally:
+            browser.close()
+    icons = [
+        (_square_size(sizes), href)
+        for rel, sizes, href in links[:64]
+        if set(str(rel).lower().split()) & ICON_RELS and str(href).startswith(('https://', 'http://'))
+    ]
+    return sorted(icons, reverse=True)[:12] + [(0, urljoin(final_url, '/favicon.ico'))]
+
+
+def _first_usable_icon(candidates, fetch, errors):
+    seen = set()
+    for _, url in candidates:
+        if url in seen:
+            continue
+        seen.add(url)
+        try:
+            result = fetch(url)
+            return sanitize_image(result.body, result.content_type)
+        except Exception as error:
+            errors.append(str(error))
+    return None
+
+
+def resolve_icon(domain: str, *, fetch=None, browser=None) -> dict:
     """Pure orchestration with injectable guarded HTTP. No DB or file mutations."""
     metadata = _simple_brand(domain)
     if metadata:
         return {**metadata, 'source': 'simple-icons', 'status': 'ready', 'error': None}
     if '/' in domain or ':' in domain or '@' in domain or not domain:
         return {'status': 'needs_icon', 'error': 'Invalid brand domain'}
+    if browser is None and fetch is None:
+        browser = discover_icons_with_browser
     fetch = fetch or SafeFetcher().fetch
     candidates, errors = [], []
     root = f'https://{domain}/'
@@ -258,18 +338,19 @@ def resolve_icon(domain: str, *, fetch=None) -> dict:
             raise ValueError('Domain root did not return HTML')
     except Exception as error:
         errors.append(str(error))
-    candidates = sorted(candidates, reverse=True)[:12] + [(0, urljoin(root, '/favicon.ico'))]
-    seen = set()
-    for _, url in candidates:
-        if url in seen:
-            continue
-        seen.add(url)
-        try:
-            result = fetch(url)
-            data, kind = sanitize_image(result.body, result.content_type)
-            return {'source': 'site-icon', 'status': 'ready', 'error': None, 'data': data, 'content_type': kind}
-        except Exception as error:
-            errors.append(str(error))
+    candidates = sorted(candidates, reverse=True)[:12] + [(0, url) for url in _favicon_fallbacks(domain)]
+    icon = _first_usable_icon(candidates, fetch, errors)
+    if icon:
+        return {'source': 'site-icon', 'status': 'ready', 'error': None, 'data': icon[0], 'content_type': icon[1]}
+    if not browser:
+        return {'status': 'needs_icon', 'error': '; '.join(errors)[-500:] or 'No usable icon found'}
+    try:
+        icon = _first_usable_icon(browser(domain), fetch, errors)
+    except Exception as error:
+        errors.append(f'browser: {error}')
+        icon = None
+    if icon:
+        return {'source': 'site-icon-browser', 'status': 'ready', 'error': None, 'data': icon[0], 'content_type': icon[1]}
     return {'status': 'needs_icon', 'error': '; '.join(errors)[-500:] or 'No usable icon found'}
 
 

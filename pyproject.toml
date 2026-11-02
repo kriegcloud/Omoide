@@ -39,6 +39,8 @@ dependencies = [
     "transformers==5.12.1",
     "reverse-geocoder>=1.5.1",
     "webauthn==3.0.0",
+    # Headless fallback for social-link brand icons; drives the system Chromium.
+    "playwright>=1.55",
 ]
 
 [tool.uv]

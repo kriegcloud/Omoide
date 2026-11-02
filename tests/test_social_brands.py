@@ -82,6 +82,49 @@ class BrandSecurityTests(unittest.TestCase):
         self.assertEqual(result['status'], 'needs_icon')
         self.assertIn('blocked', result['error'])
 
+    def test_www_favicon_is_tried_when_apex_serves_a_login_wall(self):
+        ico = io.BytesIO()
+        from PIL import Image
+        Image.new('RGBA', (32, 32), (10, 102, 194, 255)).save(ico, format='ICO')
+        def fetch(url):
+            if url == 'https://www.walled.test/favicon.ico':
+                return FetchResult(url, 'image/x-icon', ico.getvalue())
+            return FetchResult(url, 'text/html', b'<html>sign in</html>')
+        result = resolve_icon('walled.test', fetch=fetch, browser=lambda _d: [])
+        self.assertEqual(result['source'], 'site-icon')
+        self.assertEqual(result['content_type'], 'image/png')
+
+    def test_browser_fallback_runs_only_after_http_finds_nothing(self):
+        seen = []
+        def fetch(url):
+            if url == 'https://cdn.spa.test/icon-192.png':
+                buf = io.BytesIO()
+                from PIL import Image
+                Image.new('RGB', (192, 192), 'red').save(buf, format='PNG')
+                return FetchResult(url, 'image/png', buf.getvalue())
+            raise ValueError('not here')
+        def browser(domain):
+            seen.append(domain)
+            return [(192, 'https://cdn.spa.test/icon-192.png')]
+        result = resolve_icon('spa.test', fetch=fetch, browser=browser)
+        self.assertEqual(seen, ['spa.test'])
+        self.assertEqual(result['source'], 'site-icon-browser')
+        self.assertEqual(result['status'], 'ready')
+
+    def test_browser_failure_is_reported_not_raised(self):
+        def fail(url):
+            raise ValueError('blocked')
+        def browser(_domain):
+            raise ValueError('no chromium')
+        result = resolve_icon('spa.test', fetch=fail, browser=browser)
+        self.assertEqual(result['status'], 'needs_icon')
+        self.assertIn('browser: no chromium', result['error'])
+
+    def test_injected_fetch_never_launches_a_real_browser(self):
+        with patch('app.services.social_brands.discover_icons_with_browser') as real:
+            resolve_icon('unknown-example.test', fetch=lambda url: (_ for _ in ()).throw(ValueError('x')))
+        real.assert_not_called()
+
     def test_redirect_cap(self):
         with patch('socket.getaddrinfo', return_value=PUBLIC), patch.object(SafeFetcher, '_request', return_value=(302, {'location': '/again'}, b'')) as request:
             with self.assertRaisesRegex(ValueError, 'redirect'):
