@@ -360,7 +360,8 @@ export default function StatisticsPage() {
           barColor={series.images}
           rows={stats.cameras.map((c) => ({
             key: `${c.make}-${c.model}`,
-            label: [c.make, c.model].filter(Boolean).join(" "),
+            // Never render a blank category (R8-01); the API now drops blank cameras.
+            label: [c.make, c.model].map((part) => part?.trim()).filter(Boolean).join(" ") || "Unknown camera",
             count: c.count,
           }))}
         />

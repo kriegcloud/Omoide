@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy import or_
 from sqlmodel import Session, func, select
 
 from app.database import get_session
@@ -140,12 +141,16 @@ def get_stats(session: Session = Depends(get_session)):
         if month is not None
     ][::-1]
 
+    # Rank only identifiable cameras: blank/whitespace make and model (e.g. 2,436
+    # screenshots with model="") rendered as an unnamed top row (review R8-01).
+    camera_make = func.nullif(func.trim(ExifData.make), "")
+    camera_model = func.nullif(func.trim(ExifData.model), "")
     cameras = [
         CameraCount(make=make, model=model, count=count)
         for make, model, count in session.exec(
-            select(ExifData.make, ExifData.model, func.count(ExifData.id))
-            .where(ExifData.model.is_not(None))
-            .group_by(ExifData.make, ExifData.model)
+            select(camera_make.label("make"), camera_model.label("model"), func.count(ExifData.id))
+            .where(or_(camera_make.is_not(None), camera_model.is_not(None)))
+            .group_by(camera_make, camera_model)
             .order_by(func.count(ExifData.id).desc())
             .limit(15)
         ).all()

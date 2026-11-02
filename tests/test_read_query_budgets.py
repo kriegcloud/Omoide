@@ -110,6 +110,19 @@ class ReadQueryBudgets(DatabaseCase):
                     release.set()
                     slow.result(timeout=2)
 
+    def test_top_cameras_skip_blank_make_and_model(self):
+        # R8-01: 2,436 screenshots with make=None, model="" ranked as an unnamed top camera.
+        from app.models import ExifData
+        for _ in range(3):
+            self.session.add(ExifData(media_id=self.media().id, make=None, model=""))
+        self.session.add(ExifData(media_id=self.media().id, make="  ", model="   "))
+        self.session.add(ExifData(media_id=self.media().id, make="Apple ", model=" iPhone 15"))
+        self.session.add(ExifData(media_id=self.media().id, make="Apple", model="iPhone 15"))
+        self.session.add(ExifData(media_id=self.media().id, make="Canon", model=None))
+        self.session.commit()
+        cameras = [(c.make, c.model, c.count) for c in get_stats(self.session).cameras]
+        self.assertEqual(cameras, [("Apple", "iPhone 15", 2), ("Canon", None, 1)])
+
     def test_empty_stats_and_memories(self):
         stats = get_stats(self.session)
         self.assertTrue(all(value == 0 for value in stats.totals.model_dump().values()))
