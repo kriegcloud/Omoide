@@ -91,3 +91,15 @@ class ReembedTests(unittest.TestCase):
         with Session(self.engine) as session:
             self.assertIsNone(session.get(Face, 1).embedding_norm)
             self.assertEqual(session.exec(text('SELECT embedding FROM face_embeddings')).scalar_one(), np.ones(512, dtype=np.float32).tobytes())
+
+    def test_min_agreement_keeps_old_vector_when_new_disagrees(self):
+        # Thumbnail re-detection can land on a different face region; such a
+        # vector is not "the same face plus a mirrored view" and must not replace it.
+        with Session(self.engine) as session:
+            session.exec(text("UPDATE face_embeddings SET embedding=:v WHERE face_id=1").bindparams(
+                v=(-np.arange(512, dtype=np.float32) / np.linalg.norm(np.arange(512, dtype=np.float32))).tobytes()))
+            session.commit()
+        summary = self.module.reembed(self.client, keep_unresolved=True, min_agreement=0.7)
+        self.assertEqual((summary['rewritten'], summary['kept']), (0, 1))
+        with Session(self.engine) as session:
+            self.assertIsNone(session.get(Face, 1).embedding_norm)

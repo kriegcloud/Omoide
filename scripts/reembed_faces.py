@@ -28,7 +28,7 @@ from app.utils import vector_to_blob
 from scripts.migrate_face_embeddings import _backup_database, _pad_for_detection, _rebuild_people
 
 
-def reembed(client, *, keep_unresolved=False, dry_run=None):
+def reembed(client, *, keep_unresolved=False, dry_run=None, min_agreement=None):
     """Re-embed faces. keep_unresolved retains the old vector (same model, near-identical
     space) for faces whose thumbnail cannot be re-detected; dry_run saves staged vectors
     to an .npz and writes nothing."""
@@ -38,6 +38,14 @@ def reembed(client, *, keep_unresolved=False, dry_run=None):
     with Session(engine) as session:
         snapshots = [(f.id, f.person_id, f.thumbnail_path, f.assignment_source, f.assigned_at)
                      for f in session.exec(select(Face).order_by(Face.id)).all()]
+    old_vectors = {}
+    if min_agreement is not None:
+        with Session(engine) as session:
+            for face_id, blob in session.exec(text('SELECT face_id, embedding FROM face_embeddings')).all():
+                vector = np.frombuffer(blob, dtype=np.float32)
+                length = float(np.linalg.norm(vector))
+                if vector.shape == (512,) and length > 0:
+                    old_vectors[face_id] = vector / length
     staged = []
     unresolved = []
     for face_id, person_id, thumbnail, *_ in snapshots:
@@ -60,6 +68,10 @@ def reembed(client, *, keep_unresolved=False, dry_run=None):
             if (vector.shape != (512,) or not np.isfinite(vector).all()
                     or length <= 0 or norm is None or not np.isfinite(norm) or norm <= 0):
                 raise ValueError('invalid embedding or raw norm')
+            if min_agreement is not None:
+                previous = old_vectors.get(face_id)
+                if previous is not None and float(previous @ (vector / length)) < min_agreement:
+                    raise ValueError(f'new vector disagrees with the stored one (cosine < {min_agreement})')
             staged.append((face_id, person_id, vector_to_blob(vector / length), float(norm)))
         except (OSError, ValueError, RuntimeError) as error:
             unresolved.append(face_id)
@@ -95,6 +107,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--dry-run', type=Path, metavar='NPZ', help='stage only; save vectors to NPZ')
+    parser.add_argument('--min-agreement', type=float, default=None,
+                        help='treat a face as unresolved when cosine(old, new) is below this')
     parser.add_argument('--keep-unresolved', action='store_true',
                         help='keep the old vector for faces whose thumbnail cannot be re-detected')
     args = parser.parse_args()
@@ -102,7 +116,7 @@ def main():
         parser.error('--apply (quiesce matching/extraction tasks first) or --dry-run is required')
     reembed(AdaFaceSocketAnalysis(settings.face_recognition.inference_socket_path,
                                  settings.face_recognition.inference_timeout_seconds),
-            keep_unresolved=args.keep_unresolved, dry_run=args.dry_run)
+            keep_unresolved=args.keep_unresolved, dry_run=args.dry_run, min_agreement=args.min_agreement)
 
 
 if __name__ == '__main__':
