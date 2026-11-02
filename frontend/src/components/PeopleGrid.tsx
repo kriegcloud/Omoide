@@ -31,6 +31,7 @@ import { usePeopleSelection } from "../hooks/usePeopleSelection";
 import { useGridSelection } from "../hooks/useMarqueeSelection";
 import { getPeople } from "../services/person";
 import {
+  startPeopleMutation,
   deletePersonsBulk,
   hidePersonsBulk,
   mergeMultiplePersons,
@@ -40,6 +41,7 @@ import {
   defaultListState,
   ListState,
   useListStore,
+  useOptimisticCachedList,
 } from "../stores/useListStore";
 import { useTaskCompletionVersion } from "../TaskEventsContext";
 import { Person, PersonReadSimple } from "../types";
@@ -91,14 +93,10 @@ export default function PeopleGrid({
     (cursor?: string | null) => getPeople(cursor ?? undefined, hidden, gender, undefined, debouncedName, sort),
     [gender, hidden, debouncedName, sort],
   );
-  const { items: people, hasMore, isLoading, error } = useListStore(
-    (state) =>
-      (state.lists[listKey] as ListState<PersonReadSimple> | undefined) ??
-      (defaultListState as ListState<PersonReadSimple>),
-  );
+  const { items: people, hasMore, isLoading, error } = useOptimisticCachedList<PersonReadSimple>(listKey, "person") ?? defaultListState as ListState<PersonReadSimple>;
   const fetchInitial = useListStore(state => state.fetchInitial);
 const loadMore = useListStore(state => state.loadMore);
-const clearList = useListStore(state => state.clearList);
+
   useListInvalidation(listKey);
   const refreshKey = useTaskCompletionVersion([
     "process_media",
@@ -117,9 +115,11 @@ const clearList = useListStore(state => state.clearList);
     setSelected,
     pruneTo,
   } = usePeopleSelection();
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [isMerging, setIsMerging] = useState(false);
-  const [isChangingVisibility, setIsChangingVisibility] = useState(false);
+  const isDeleting = false;
+  const [deleteIds, setDeleteIds] = useState<number[]>([]);
+  const [mergePeople, setMergePeople] = useState<PersonReadSimple[]>([]);
+  const isMerging = false;
+  const isChangingVisibility = false;
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [snackbar, setSnackbar] = useState<SnackbarState>({
@@ -158,9 +158,8 @@ const clearList = useListStore(state => state.clearList);
   const selectedCount = selectedIds.size;
 
   const refetch = useCallback(() => {
-    clearList(listKey);
-    void fetchInitial(listKey, () => fetchPeople(null));
-  }, [clearList, fetchInitial, fetchPeople, listKey]);
+    void refreshCachedList(listKey);
+  }, [listKey]);
 
   const handleRefresh = useCallback(() => {
     setSeenRefreshKey(refreshKey);
@@ -183,120 +182,50 @@ const clearList = useListStore(state => state.clearList);
     setSelected(remaining);
   };
 
-  const handleVisibilityChange = async () => {
-    const ids = Array.from(selectedIds);
-    if (ids.length === 0) return;
-
-    setIsChangingVisibility(true);
-    try {
-      const result = hidden
-        ? await unhidePersonsBulk(ids)
-        : await hidePersonsBulk(ids);
-      const changedIds = [...("unhidden_ids" in result ? result.unhidden_ids : result.hidden_ids)];
-      setQueueVersion((version) => version + 1);
-      updateSelectionAfterRemoval(changedIds);
+  const handleVisibilityChange = () => {
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+    const operation = startPeopleMutation(hidden ? "Unhide people" : "Hide people", ids,
+      async () => hidden ? await unhidePersonsBulk(ids) : await hidePersonsBulk(ids), {
+        query: listKey,
+        applied: result => "unhidden_ids" in result ? result.unhidden_ids : result.hidden_ids,
+      });
+    updateSelectionAfterRemoval(ids);
+    void operation.done.then(record => {
+      const changedIds = record.receipt?.applied.map(key => Number(key.split(":")[1])) ?? [];
       if (changedIds.length) push({
         label: `${hidden ? "Unhidden" : "Hidden"} ${changedIds.length} people`,
         undo: async () => {
-          const inverse = hidden ? await hidePersonsBulk(changedIds) : await unhidePersonsBulk(changedIds);
+          const inverse = startPeopleMutation("Restore people visibility", changedIds,
+            async () => hidden ? await hidePersonsBulk(changedIds) : await unhidePersonsBulk(changedIds), {
+              applied: result => "hidden_ids" in result ? result.hidden_ids : result.unhidden_ids,
+            });
+          const restored = await inverse.done;
           await refreshVisible();
-          if (inverse.skipped_ids.length) throw new Error(`${inverse.skipped_ids.length} people could not be restored`);
+          if (restored.state !== "committed") throw new Error("Some people could not be restored");
         },
       });
-      const action = hidden ? "Unhidden" : "Hidden";
-      const parts = [
-        `${action} ${changedIds.length} person${changedIds.length === 1 ? "" : "s"}.`,
-      ];
-      if (result.skipped_ids.length > 0) {
-        parts.push(`${result.skipped_ids.length} skipped.`);
-      }
-      setSnackbar({
-        open: true,
-        message: parts.join(" "),
-        severity: changedIds.length > 0 ? "success" : "error",
-      });
-    } catch (caught) {
-      console.error("Failed to update selected people visibility", caught);
-      setSnackbar({
-        open: true,
-        message: hidden
-          ? "Failed to unhide selected people"
-          : "Failed to hide selected people",
-        severity: "error",
-      });
-    } finally {
-      setIsChangingVisibility(false);
-    }
+    });
   };
 
-  const handleConfirmDeleteSelected = async () => {
-    const ids = Array.from(selectedIds);
-    if (ids.length === 0) {
-      setConfirmDeleteOpen(false);
-      return;
-    }
-
-    setIsDeleting(true);
-    try {
-      const result = await deletePersonsBulk(ids);
-      setQueueVersion((version) => version + 1);
-      updateSelectionAfterRemoval(result.deleted_ids);
-      const deletedCount = result.deleted_ids.length;
-      const parts: string[] = [];
-      if (deletedCount > 0) {
-        parts.push(
-          `Deleted ${deletedCount} person${deletedCount === 1 ? "" : "s"}.`,
-        );
-      }
-      if (result.skipped_ids.length > 0) {
-        parts.push(`${result.skipped_ids.length} skipped.`);
-      }
-      setSnackbar({
-        open: true,
-        message: parts.join(" ") || "No people were deleted.",
-        severity: deletedCount > 0 ? "success" : "error",
-      });
-    } catch (caught) {
-      console.error("Failed to delete selected people", caught);
-      setSnackbar({
-        open: true,
-        message: "Failed to delete selected people",
-        severity: "error",
-      });
-    } finally {
-      setIsDeleting(false);
-      setConfirmDeleteOpen(false);
-    }
+  const handleConfirmDeleteSelected = () => {
+    const ids = [...deleteIds];
+    if (!ids.length) return;
+    startPeopleMutation("Delete people", ids, () => deletePersonsBulk(ids), {
+      query: listKey, applied: result => result.deleted_ids,
+    });
+    setConfirmDeleteOpen(false);
+    updateSelectionAfterRemoval(ids);
   };
 
-  const handleMerge = async (target: PersonReadSimple | Person) => {
-    const sourceIds = Array.from(selectedIds).filter((id) => id !== target.id);
-    if (sourceIds.length === 0) return;
-
-    setIsMerging(true);
-    try {
-      const result = await mergeMultiplePersons(target.id, sourceIds);
-      setQueueVersion((version) => version + 1);
-      updateSelectionAfterRemoval(result.merged_ids);
-      setMergeOpen(false);
-      if (selectedIds.size - result.merged_ids.length < 2) {
-        clear();
-      }
-      setSnackbar({
-        open: true,
-        message: `Merged ${result.merged_ids.length} person${result.merged_ids.length === 1 ? "" : "s"}; skipped ${result.skipped_ids.length}.`,
-        severity: result.merged_ids.length > 0 ? "success" : "error",
-      });
-    } catch (caught) {
-      console.error("Failed to merge selected people", caught);
-      setSnackbar({
-        open: true,
-        message: "Failed to merge selected people",
-        severity: "error",
-      });
-    } finally {
-      setIsMerging(false);
-    }
+  const handleMerge = (target: PersonReadSimple | Person) => {
+    const sourceIds = mergePeople.map(person => person.id).filter(id => id !== target.id);
+    if (!sourceIds.length) return;
+    startPeopleMutation("Merge people", sourceIds, () => mergeMultiplePersons(target.id, sourceIds), {
+      query: listKey, resources: [target.id], applied: result => result.merged_ids,
+    });
+    setMergeOpen(false);
+    clear();
   };
 
   if (!config.ENABLE_PEOPLE) {
@@ -363,7 +292,7 @@ const clearList = useListStore(state => state.clearList);
             <Button
               variant="contained"
               size="small"
-              onClick={() => setMergeOpen(true)}
+              onClick={() => { setMergePeople([...selectedPeople]); setMergeOpen(true); }}
               disabled={!selectionMode || selectedCount < 1 || isMerging}
             >
               Merge Selected
@@ -390,7 +319,7 @@ const clearList = useListStore(state => state.clearList);
             variant="contained"
             color="error"
             size="small"
-            onClick={() => setConfirmDeleteOpen(true)}
+            onClick={() => { setDeleteIds([...selectedIds]); setConfirmDeleteOpen(true); }}
             disabled={!selectionMode || selectedCount === 0 || isDeleting}
           >
             {isDeleting ? "Deleting..." : "Delete Selected"}
@@ -419,6 +348,7 @@ const clearList = useListStore(state => state.clearList);
           <div key={person.id}>
             <PersonCard
               person={person}
+              queryKey={listKey}
               selecting={selectionMode}
               selected={selectedIds.has(person.id)}
               onSelectionClick={onItemClick}
@@ -437,7 +367,7 @@ const clearList = useListStore(state => state.clearList);
       <ConfirmDialog
         open={confirmDeleteOpen}
         title="Delete Selected People"
-        message={`Delete ${selectedCount} selected person${selectedCount === 1 ? "" : "s"}? This cannot be undone.`}
+        message={`Delete ${deleteIds.length} selected person${deleteIds.length === 1 ? "" : "s"}? This cannot be undone.`}
         confirmLabel="Delete"
         loading={isDeleting}
         onConfirm={handleConfirmDeleteSelected}
@@ -447,7 +377,7 @@ const clearList = useListStore(state => state.clearList);
       {!hidden && (
         <MergePeopleDialog
           open={mergeOpen}
-          selectedPeople={selectedPeople}
+          selectedPeople={mergePeople}
           merging={isMerging}
           onClose={() => setMergeOpen(false)}
           onConfirm={handleMerge}

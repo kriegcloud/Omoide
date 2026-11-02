@@ -1,3 +1,4 @@
+import { mutationBus } from "../stores/mutationBus";
 import { FaceGroups, IgnoredFaces } from "../components/FaceReviewViews";
 import { appliedFaceIds, startFaceReview, startLegacyFaceReview } from "../services/faceReview";
 import GalleryPage from "../components/GalleryPage";
@@ -181,15 +182,18 @@ export function AllOrphanFaces({ tabs }: { tabs: React.ReactNode }) {
   const handleConfirmAssign = async (person: Person | null) => {
     if (!person) return;
     const faceIds = [...selectedFaceIds];
-    const operation = startLegacyFaceReview("Assign faces", faceIds, "assign", { face_ids: faceIds, person_id: person.id, source: "manual" });
+    startLegacyFaceReview("Assign faces", faceIds, "assign", { face_ids: faceIds, person_id: person.id, source: "manual" }, {
+      query: listKey,
+      onResult: () => {
+        mutationBus.emit({ type: "list:invalidate", prefix: "orphan-face" });
+        mutationBus.emit({ type: "person:changed", ids: [] });
+      },
+      // The legacy response acknowledges the transaction without member IDs.
+      // Preserve manual provenance; never offer an inverse based on requested IDs.
+      receipt: (_result, operation_id) => ({ operation_id, state: "succeeded", applied: [], skipped: [], failed: [], unknown: [] }),
+    });
     setSelectedFaceIds([]);
     setAssignDialogOpen(false);
-    const record = await operation.done;
-    if (record.receipt?.applied.length) push({ label: `Assigned faces to ${person.name || `Person ${person.id}`}`, undo: async () => {
-      const ids = appliedFaceIds(record.receipt!);
-      await startLegacyFaceReview("Undo assignment", ids, "detach", { face_ids: ids }).done;
-      await refreshVisible();
-    } });
   };
 
   const ignore = (ids: number[]) => {

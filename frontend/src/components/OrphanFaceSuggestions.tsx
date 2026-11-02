@@ -1,3 +1,4 @@
+import { mutationBus } from "../stores/mutationBus";
 import { appliedFaceIds, startLegacyFaceReview } from "../services/faceReview";
 import type { AssignSuggestedFacesResult } from "../types";
 import { useHotkey } from "../hotkeys/useHotkey";
@@ -147,14 +148,18 @@ export default function OrphanFaceSuggestions({ minScore, onMinScoreChange, tabs
   const chooseAnother = async (person: Person) => {
     if (!alternativeFor) return;
     const faceId = alternativeFor.id;
-    const operation = startLegacyFaceReview("Assign face", [faceId], "assign", { face_ids: [faceId], person_id: person.id, source: "manual" });
+    startLegacyFaceReview("Assign face", [faceId], "assign", { face_ids: [faceId], person_id: person.id, source: "manual" }, {
+      query: listKey,
+      onResult: () => {
+        mutationBus.emit({ type: "list:invalidate", prefix: "orphan-face" });
+        mutationBus.emit({ type: "person:changed", ids: [] });
+      },
+      // The legacy response acknowledges the transaction without member IDs.
+      // Preserve manual provenance; never offer an inverse based on requested IDs.
+      receipt: (_result, operation_id) => ({ operation_id, state: "succeeded", applied: [], skipped: [], failed: [], unknown: [] }),
+    });
     setAlternativeFor(null);
     setSelectedFaceIds(previous => previous.filter(id => id !== faceId));
-    const record = await operation.done;
-    if (record.receipt?.applied.length) push({ label: `Assigned face to ${person.name || `Person ${person.id}`}`, undo: async () => {
-      await startLegacyFaceReview("Undo face assignment", [faceId], "detach", { face_ids: [faceId] }).done;
-      await refreshVisible();
-    } });
   };
 
   const retry = () => {

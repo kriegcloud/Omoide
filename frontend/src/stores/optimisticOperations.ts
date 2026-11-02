@@ -32,6 +32,12 @@ export interface OptimisticCommand<I, R> {
   /** For transport errors carrying a receipt in an error body. */
   errorReceipt?: (error: unknown) => unknown;
   lookup?: (id: string) => Promise<unknown>;
+  /** Atomic single-item UI intent rolls back on every error; refresh still verifies uncertain commits. */
+  rollbackOnError?: boolean;
+  onError?: (error: unknown) => void;
+  /** Legacy commands may release retained intent after authoritative consumer refresh. */
+  reconcileUnknownAfterRefresh?: boolean;
+  refreshUnknown?: () => Promise<void>;
   /** Called once per newly applied member, before overlay publication. */
   commit?: (receipt: MutationReceipt, newlyApplied: readonly string[]) => void;
   events?: (receipt: MutationReceipt, newlyApplied: readonly string[]) => readonly MutationEvent[];
@@ -86,7 +92,7 @@ let snapshot: readonly OperationRecord[] = [];
 const listeners = new Set<() => void>();
 const gates = new Map<string, { promise: Promise<void>; release: () => void }>();
 const lookups = new Map<string, () => Promise<unknown>>();
-const callbacks = new Map<string, Pick<OptimisticCommand<unknown, unknown>, "commit" | "events" | "refresh">>();
+const callbacks = new Map<string, Pick<OptimisticCommand<unknown, unknown>, "commit" | "events" | "refresh" | "refreshUnknown" | "reconcileUnknownAfterRefresh">>();
 const emitted = new Map<string, Set<string>>();
 const acknowledgements = new Map<QueryKey, number>();
 const queriesByEntity = new Map<EntityKey, Set<QueryKey>>();
@@ -94,6 +100,7 @@ const entitiesByQuery = new Map<QueryKey, Set<EntityKey>>();
 const MAX_HISTORY = 100;
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 function unresolved(record: OperationRecord) {
+  if (record.state === "reconciled") return false;
   return record.state === "applied" || record.state === "pending" || record.state === "unknown" || record.receipt?.state === "pending" || !!record.receipt?.unknown.length;
 }
 function publish() {
@@ -148,7 +155,17 @@ function settle(id: string, receipt: MutationReceipt): OperationRecord {
   if (refresh && !unresolved(result)) {
     void Promise.resolve().then(refresh).catch(error => update(id, { refreshError: message(error) }));
   }
+  if (state === "unknown") refreshUncertain(id, callbacks.get(id)!);
   return result;
+}
+function refreshUncertain(id: string, command: Pick<OptimisticCommand<unknown, unknown>, "refresh" | "refreshUnknown" | "reconcileUnknownAfterRefresh">) {
+  const refresh = command.refreshUnknown ?? command.refresh;
+  if (!refresh) return;
+  void Promise.resolve().then(refresh).then(() => {
+    if (command.reconcileUnknownAfterRefresh && records.get(id)?.state === "unknown") {
+      update(id, { state: "reconciled", patches: [] }); release(id);
+    }
+  }).catch(error => update(id, { refreshError: message(error) }));
 }
 let activeTransports = 0;
 const transportWaiters: (() => void)[] = [];
@@ -171,7 +188,7 @@ export function startOperation<I, R>(command: OptimisticCommand<I, R>): Operatio
   const dependencies = [...records.values()].filter(record => unresolved(record) && record.resources.some(key => resources.includes(key))).map(record => gates.get(record.id)?.promise).filter((gate): gate is Promise<void> => !!gate);
   let resolveGate!: () => void;
   gates.set(id, { promise: new Promise<void>(resolve => { resolveGate = resolve; }), release: () => resolveGate() });
-  callbacks.set(id, { commit: command.commit, events: command.events, refresh: command.refresh });
+  callbacks.set(id, { commit: command.commit, events: command.events, refresh: command.refresh, refreshUnknown: command.refreshUnknown, reconcileUnknownAfterRefresh: command.reconcileUnknownAfterRefresh });
   if (command.lookup) lookups.set(id, () => command.lookup!(id));
   records.set(id, { id, label: command.label, sequence: ++sequence, version: ++version, state: "applied", resources, patches });
   publish();
@@ -195,7 +212,10 @@ export function startOperation<I, R>(command: OptimisticCommand<I, R>): Operatio
         const raw = command.errorReceipt?.(error);
         if (raw !== undefined) return settle(id, parseMutationReceipt(raw, id));
       } catch { /* Invalid error receipts remain uncertain. */ }
-      if (isDefinitiveMutationError(error)) {
+      command.onError?.(error);
+      const definitive = isDefinitiveMutationError(error);
+      if (!definitive) refreshUncertain(id, command);
+      if (definitive || command.rollbackOnError) {
         const result = update(id, { state: "rejected", patches: [], error: message(error) }); release(id); return result;
       }
       const result = update(id, { state: "unknown", error: message(error) });
@@ -206,6 +226,7 @@ export function startOperation<I, R>(command: OptimisticCommand<I, R>): Operatio
   })();
   return { id, done };
 }
+export const hasOperationLookup = (id: string): boolean => lookups.has(id);
 const inFlightLookups = new Map<string, Promise<OperationRecord>>();
 export function reconcileOperation(id: string, lookup = lookups.get(id)): Promise<OperationRecord> {
   const existing = inFlightLookups.get(id);
@@ -349,4 +370,12 @@ export async function revalidateQueries(queries: readonly QueryKey[]): Promise<v
   }));
   const failed = results.find(result => result.status === "rejected");
   if (failed?.status === "rejected") throw failed.reason;
+}
+
+/** Legacy uncertainty can retire only after all targeted consumers perform a GET. */
+export async function revalidateUnknownQueries(queries: readonly QueryKey[]): Promise<void> {
+  if (!queries.length || queries.some(query => !refreshRegistrations.get(query)?.size)) {
+    throw new Error("Authoritative refresh unavailable; reopen the affected list to refresh");
+  }
+  await revalidateQueries(queries);
 }
