@@ -30,6 +30,11 @@ function optionName(element: Element, root: ParentNode): string {
   return tab ? labelFor(tab) : "Editor";
 }
 
+export function isLaidOut(element: HTMLElement): boolean {
+  const rect = element.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
 export function isVisible(element: HTMLElement): boolean {
   const rect = element.getBoundingClientRect();
   const view = element.ownerDocument.defaultView;
@@ -55,8 +60,9 @@ export function enhanceEditorControls(root: ParentNode, doc: ParentNode = root) 
     if (!element.getAttribute("aria-label")) element.setAttribute("aria-label", "Toggle tool tabs");
   });
   const menu = doc.querySelector<HTMLElement>(ZOOM_MENU);
-  // The closed menu stays mounted at opacity 0 / size 0; only a visible menu is open.
-  const open = !!menu && isVisible(menu);
+  // The closed menu stays mounted at size 0x0. Decide "open" from layout, not
+  // opacity: slow fade-ins left a visible menu marked hidden (review R10/R2-02).
+  const open = !!menu && isLaidOut(menu);
   root.querySelectorAll<HTMLElement>(ZOOM_TRIGGER).forEach(element => {
     makeControl(element, "button", element.getAttribute("title") || "Zoom");
     element.setAttribute("aria-haspopup", "menu");
@@ -120,11 +126,17 @@ export function observeEditorAccessibility(root: HTMLElement): () => void {
   const recheck = () => { for (const delay of [50, 300, 700]) { const id = view.setTimeout(() => { timers.delete(id); run(); }, delay); timers.add(id); } };
   doc.addEventListener("click", recheck, true);
   doc.addEventListener("keyup", recheck, true);
+  // Re-sync when a menu's open/close transition actually finishes.
+  const onTransitionEnd = (event: Event) => {
+    if (event.target instanceof Element && event.target.closest(ZOOM_MENU + ', [class*="SfxPopper"]')) schedule();
+  };
+  doc.addEventListener("transitionend", onTransitionEnd, true);
   return () => {
     observer.disconnect(); portals.disconnect();
     doc.removeEventListener("keydown", onKeyDown, true);
     doc.removeEventListener("click", recheck, true);
     doc.removeEventListener("keyup", recheck, true);
+    doc.removeEventListener("transitionend", onTransitionEnd, true);
     timers.forEach(id => view.clearTimeout(id));
   };
 }
