@@ -112,6 +112,7 @@ class PersonDetail(BaseModel):
 
 
 class PersonUpdate(BaseModel):
+    operation_id: str | None = None
     name: str | None = None
     profile_face_id: int | None = None
     gender: Literal["female", "male"] | None = None
@@ -190,11 +191,13 @@ class PersonPairDecisionRead(PersonPairDecisionCreate):
 
 
 class MergePersonsRequest(BaseModel):
+    operation_id: str | None = None
     source_id: int
     target_id: int
 
 
 class MergePersonsBulkRequest(BaseModel):
+    operation_id: str | None = None
     source_ids: list[int]
 
 
@@ -204,6 +207,7 @@ class MergePersonsResult(BaseModel):
 
 
 class PersonBulkDeleteRequest(BaseModel):
+    operation_id: str | None = None
     person_ids: list[int]
 
 
@@ -213,6 +217,7 @@ class PersonBulkDeleteResponse(BaseModel):
 
 
 class PersonBulkHideRequest(BaseModel):
+    operation_id: str | None = None
     person_ids: list[int]
 
 

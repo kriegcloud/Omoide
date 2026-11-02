@@ -27,6 +27,7 @@ class FaceRead(BaseModel):
 
 
 class FaceAssign(BaseModel):
+    operation_id: str | None = None
     person_id: int
     face_ids: list[int]
     source: Literal["manual", "suggestion", "undo"] = "manual"

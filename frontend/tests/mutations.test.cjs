@@ -26,7 +26,7 @@ const page=items=>({items,next_cursor:null,total:items.length});
 test('delete service notifies every cached copy only after success',async()=>{
  const {load,events}=environment();const {deleteMediaRecord}=load('services/mediaActions.ts');
  global.fetch=async()=>({ok:false,status:500});await assert.rejects(deleteMediaRecord(7));assert.equal(events.length,0);
- global.fetch=async()=>({ok:true});await deleteMediaRecord(7);assert.deepEqual(events,[{type:'media:deleted',ids:[7]}]);
+ global.fetch=async()=>({ok:true,json:async()=>({})});await deleteMediaRecord(7);assert.deepEqual(events,[{type:'media:deleted',ids:[7]}]);
 });
 test('media deletion prunes all media lists without deleting an identically numbered person',async()=>{
  const {load,bus}=environment();const {useListStore:s}=load('stores/useListStore.ts');

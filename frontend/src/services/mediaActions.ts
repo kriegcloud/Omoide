@@ -32,20 +32,22 @@ export const convertMedia = async (mediaId: number, mode: Exclude<import("../typ
   return res.json();
 };
 
-const deleteMediaRecordRequest = async (mediaId: number) => {
-  const res = await fetch(`${API}/api/media/${mediaId}`, {
+const deleteMediaRecordRequest = async (mediaId: number, operationId?: string) => {
+  const res = await fetch(`${API}/api/media/${mediaId}?operation_id=${operationId}`, {
     method: "DELETE",
   });
   if (!res.ok) throw new Error("Failed to delete media record");
   mutationBus.emit({ type: "media:deleted", ids: [mediaId] });
+  return { receipt: await lookupMediaOperation(operationId!) };
 };
 
-const deleteMediaFileRequest = async (mediaId: number) => {
-  const res = await fetch(`${API}/api/media/${mediaId}/file`, {
+const deleteMediaFileRequest = async (mediaId: number, operationId?: string) => {
+  const res = await fetch(`${API}/api/media/${mediaId}/file?operation_id=${operationId}`, {
     method: "DELETE",
   });
   if (!res.ok) throw new Error("Failed to delete media file");
   mutationBus.emit({ type: "media:deleted", ids: [mediaId] });
+  return { receipt: await lookupMediaOperation(operationId!) };
 };
 
 export const openMediaFolder = async (mediaId: number): Promise<void> => {
@@ -70,12 +72,11 @@ export const openMediaFile = async (mediaId: number): Promise<void> => {
 
 const setMediaFavoriteRequest = async (
   mediaId: number,
-  isFavorite: boolean
-): Promise<Media> => {
+  isFavorite: boolean, operationId?: string): Promise<Media> => {
   const res = await fetch(`${API}/api/media/${mediaId}/favorite`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ is_favorite: isFavorite }),
+    body: JSON.stringify({ is_favorite: isFavorite, operation_id: operationId }),
   });
   if (!res.ok) {
     // Validation/presentation guards and a missing row precede the favorite write.
@@ -89,12 +90,11 @@ const setMediaFavoriteRequest = async (
 
 const moveMediaRequest = async (
   mediaId: number,
-  destinationDir: string
-): Promise<MediaPreview> => {
+  destinationDir: string, operationId?: string): Promise<MediaPreview> => {
   const res = await fetch(`${API}/api/media/${mediaId}/move`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ destination_dir: destinationDir }),
+    body: JSON.stringify({ destination_dir: destinationDir, operation_id: operationId }),
   });
   if (!res.ok) throw await responseError(res, "Failed to move media");
   const result = await res.json();
@@ -119,12 +119,11 @@ const renameMediaRequest = async (
 
 const bulkMoveMediaRequest = async (
   mediaIds: number[],
-  destinationDir: string
-): Promise<BulkMoveResult> => {
+  destinationDir: string, operationId?: string): Promise<BulkMoveResult> => {
   const res = await fetch(`${API}/api/media/bulk-move`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ media_ids: mediaIds, destination_dir: destinationDir }),
+    body: JSON.stringify({ media_ids: mediaIds, destination_dir: destinationDir, operation_id: operationId }),
   });
   if (!res.ok) throw await responseError(res, "Failed to move selected media");
   const result = await res.json();
@@ -198,11 +197,11 @@ export interface BulkDeleteResult {
   errors: { id: number; error?: string; reason?: string }[];
 }
 
-const bulkDeleteMediaRequest = async (ids: number[], action: BulkDeleteAction): Promise<BulkDeleteResult> => {
+const bulkDeleteMediaRequest = async (ids: number[], action: BulkDeleteAction, operationId?: string): Promise<BulkDeleteResult> => {
   const res = await fetch(`${API}/api/media/bulk-delete`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ media_ids: ids, action }),
+    body: JSON.stringify({ media_ids: ids, action, operation_id: operationId }),
   });
   if (!res.ok) throw await responseError(res, "Failed to delete media");
   const result = await res.json();
@@ -219,10 +218,11 @@ function mediaOperation<A extends unknown[], R>(
 ): Promise<R> {
   let result: R;
   const id = crypto.randomUUID();
+  const durable = [deleteMediaRecordRequest, deleteMediaFileRequest, setMediaFavoriteRequest, moveMediaRequest, bulkMoveMediaRequest, bulkDeleteMediaRequest].includes(request as never);
   const handle = startOperation({
     id, label, input: args, resources: ids.map(id => entityKey("media", id)), patches,
-    request: async input => { result = await request(...input as A); return result; },
-    ...(outcome ? { receipt: (value: R) => outcome(value, id) } : {}),
+    request: async input => { result = await (request as (...args: unknown[]) => Promise<R>)(...input as A, ...(durable ? [id] : [])); return result; },
+    ...(durable ? { lookup: lookupMediaOperation, receipt: (value: R) => (value as {receipt?: unknown})?.receipt } : outcome ? { receipt: (value: R) => outcome(value, id) } : {}),
   });
   return handle.done.then(record => {
     if (record.state === "unknown" || record.state === "rejected") throw new Error(record.error ?? "Mutation outcome uncertain");
@@ -264,3 +264,9 @@ export const bulkDeleteMedia = (mediaIds: number[], action: BulkDeleteAction) =>
   },
 );
 };
+
+export async function lookupMediaOperation(id: string) {
+ const response = await fetch(`${API}/api/media/operations/${id}`);
+ if (!response.ok) throw new Error(`Media operation lookup failed: ${response.status}`);
+ return response.json();
+}

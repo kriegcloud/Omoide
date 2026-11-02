@@ -13,15 +13,18 @@ export const createTag = async (name: string): Promise<Tag> =>
     return result;
   });
 
-export const assignTag = async (ownerType: "media" | "person", ownerId: number, tagId: number) =>
-  apiFetch<void>(`/api/tags/${ownerType}/${ownerId}/${tagId}`, {
-    method: "POST",
+export const assignTag = async (ownerType: "media" | "person", ownerId: number, tagId: number, operationId?: string) => {
+  await apiFetch<void>(`/api/tags/${ownerType}/${ownerId}/${tagId}`, {
+    method: "POST", query: operationId ? {operation_id: operationId} : undefined,
     errorMessage: "Failed to assign tag",
-  }).catch(rejectValidation).then((result) => {
-    mutationBus.emit({ type: "tag:changed", ids: [tagId] });
-    mutationBus.emit({ type: "list:invalidate", prefix: "" });
-    return result;
-  });
+  }).catch(rejectValidation);
+  mutationBus.emit({ type: "tag:changed", ids: [tagId] });
+  mutationBus.emit({ type: "list:invalidate", prefix: "" });
+  return operationId ? lookupMediaTagOperation(operationId) : undefined;
+};
+
+export const lookupMediaTagOperation = (id: string) => apiFetch(`/api/media/operations/${id}`);
+
 
 /** These routes reject validation/permission/missing targets before any write.
  * Commit/transport errors (including 409/500) remain uncertain. */

@@ -5,7 +5,7 @@ import { Tag } from "../types";
 import { getTags } from "../services/tag";
 import { searchTags } from "../services/search";
 import { startOperation } from "../stores/optimisticOperations";
-import { createTag, assignTag } from "../services/tagging";
+import { createTag, assignTag, lookupMediaTagOperation } from "../services/tagging";
 
 type OwnerType = "media" | "person";
 
@@ -117,16 +117,18 @@ export default function TagAdder({
       label: `Assign tag ${finalTagName}`,
       input: { ownerType, ownerId, name: finalTagName, known },
       resources: [`${ownerType}:${ownerId}`, `tag:${finalTagName}`], patches: [],
-      request: async (input) => {
+      ...(ownerType === "media" ? {lookup: lookupMediaTagOperation} : {}),
+      request: async (input, operationId) => {
         const tag = input.known ?? await createTag(input.name);
         // Resolve the provisional identity before assignment. Failed assignment
         // never deletes the successfully created shared tag.
         pendingRef.current.set(token, tag); setPendingTags(new Map(pendingRef.current));
-        await assignTag(input.ownerType, input.ownerId, tag.id);
+        const receipt = await assignTag(input.ownerType, input.ownerId, tag.id, input.ownerType === "media" ? operationId : undefined);
         const current = latest.current;
         if (mounted.current && current.ownerId === input.ownerId && current.ownerType === input.ownerType) current.onTagAdded(tag);
-        return tag;
+        return {tag, receipt};
       },
+      ...(ownerType === "media" ? {receipt: (result: {receipt: unknown}) => result.receipt} : {}),
     });
     void operation.done.then(() => {
       pendingRef.current.delete(token); setPendingTags(new Map(pendingRef.current));

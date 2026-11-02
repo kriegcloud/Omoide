@@ -50,7 +50,7 @@ export default function PersonCard({
   const toggleFavorite = () => {
     if (favoriteBusy || config.PRESENTATION_MODE) return;
     const next = !favorite;
-    startPeopleMutation("Update person favorite", [person.id], () => setPersonFavorite(person.id, next), {
+    startPeopleMutation("Update person favorite", [person.id], (operationId) => setPersonFavorite(person.id, next, operationId), {
       patches: [{ kind: "fields", key: `person:${person.id}`, values: { is_favorite: next } }],
     });
   };

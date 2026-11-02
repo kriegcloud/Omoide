@@ -61,8 +61,7 @@ export function startFaceReview(action: "ignore" | "unignore" | "accept", faceId
   });
 }
 
-/** Legacy endpoints acknowledge a transaction but have no durable receipt lookup.
- * A lost response remains unknown in global feedback and is never replayed. */
+/** Ordinary mutations use durable receipts; remaining review endpoints retain their adapters. */
 export function startLegacyFaceReview<R>(label: string, faceIds: readonly number[], path: string, body: Record<string, unknown>, options: { method?: string; query?: string; receipt?: (result: R, id: string) => MutationReceipt; onResult?: (result: R) => void } = {}) {
   const keys = [...new Set(faceIds)].map(id => entityKey("face", id));
   const id = crypto.randomUUID();
@@ -85,7 +84,8 @@ export function startLegacyFaceReview<R>(label: string, faceIds: readonly number
       options.onResult?.(result);
       return result;
     },
-    receipt: (result: R) => options.receipt ? options.receipt(result, id) : { operation_id: id, state: "succeeded", applied: keys, skipped: [], failed: [], unknown: [] },
+    ...(["assign", "detach", "create_person"].includes(path) || path.startsWith("?") ? {lookup: lookupFaceOperation} : {}),
+    receipt: (result: R) => result && typeof result === "object" && "receipt" in result ? result.receipt : ["assign", "detach", "create_person"].includes(path) || path.startsWith("?") ? undefined : options.receipt ? options.receipt(result, id) : { operation_id: id, state: "succeeded", applied: keys, skipped: [], failed: [], unknown: [] },
     events: () => [{ type: "list:invalidate", prefix: "orphan-face" }, { type: "person:changed", ids: [] }],
   });
 }

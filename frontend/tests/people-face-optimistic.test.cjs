@@ -51,7 +51,7 @@ test('assignment dialog closes before server response and does not fabricate rea
   assert.deepEqual(log, ['close']);
   pending.resolve({ reassigned: false }); await flush(); assert.deepEqual(log, ['close', 1]);
 });
-test('legacy face acknowledgement never invents applied IDs or prior ownership', async () => {
+test('message-only face acknowledgement stays unknown without inventing ownership', async () => {
   const e = environment();
   // Load face service with the real command core and inspect committed bus events.
   const { runtime, load } = require('./datasetRuntime.cjs'); const events = [];
@@ -63,7 +63,8 @@ test('legacy face acknowledgement never invents applied IDs or prior ownership',
     const op = f.startFaceMutation('Assign faces', [1, 404], () => f.assignFace([1, 404], 8, "manual", "orphan-face"), 'source-faces', [8]);
     assert.deepEqual(e.projectList('source-faces', 'face', [{ id: 1 }, { id: 404 }]).items, []);
     const record = await op.done;
-    assert.deepEqual(record.receipt.applied, []);
+    assert.equal(record.state, "unknown");
+    assert.equal(record.receipt, undefined);
     assert.equal(events.some(x => x.type === 'face:assigned'), false);
     assert.equal(events.some(x => x.type === 'list:invalidate' && x.prefix === ''), false);
   } finally { global.fetch = original; }
@@ -163,18 +164,18 @@ test('atomic person face failures restore immediately and revalidate only uncert
           rollbackOnError: true, onError: () => { errors++; },
         });
         assert.deepEqual(e.projectList('person-faces', 'face', [{ id: 1 }]).items, []);
-        assert.equal((await op.done).state, 'rejected');
+        assert.equal((await op.done).state, [403, 404, 422].includes(status) ? 'rejected' : 'unknown');
         assert.deepEqual(e.projectList('person-faces', 'face', [{ id: 1 }]).items, [{ id: 1 }]);
         await tick();
         assert.equal(errors, 1);
         assert.equal(refreshes, [403, 404, 422].includes(status) ? 0 : 1);
-        assert.equal(e.hasOperationLookup(op.id), false);
+        assert.equal(e.hasOperationLookup(op.id), true);
       } finally { global.fetch = original; }
     }
   }
 });
 
-test('bulk unknown intent remains until authoritative refresh then releases resource locks', async () => {
+test('bulk unknown intent remains until durable lookup then releases resource locks', async () => {
   const e = environment(), { runtime, load } = require('./datasetRuntime.cjs');
   const f = load('services/faceActions.ts', runtime(), { '../stores/optimisticOperations': e });
   let finishRefresh, calls = 0;
@@ -184,8 +185,11 @@ test('bulk unknown intent remains until authoritative refresh then releases reso
   assert.deepEqual(e.projectList('faces', 'face', [{ id: 1 }, { id: 2 }]).items, []);
   const next = e.startPeopleMutation('Next', [], async () => { calls++; }, { entityResources: ['face:1'] });
   await tick(); assert.equal(calls, 0);
-  finishRefresh(); await next.done;
+  finishRefresh(); await tick();
+  assert.equal(calls, 0);
+  await e.reconcileOperation(op.id, async () => ({operation_id: op.id, state: "failed", applied: [], skipped: [], failed: [{key:"face:1",code:"rejected",message:"no write"},{key:"face:2",code:"rejected",message:"no write"}], unknown: []}));
+  await next.done;
   assert.equal(calls, 1);
-  assert.equal(e.optimisticOperations.getSnapshot().find(x => x.id === op.id).state, 'reconciled');
+  assert.equal(e.optimisticOperations.getSnapshot().find(x => x.id === op.id).state, 'rejected');
   assert.deepEqual(e.projectList('faces', 'face', [{ id: 1 }, { id: 2 }]).items, [{ id: 1 }, { id: 2 }]);
 });

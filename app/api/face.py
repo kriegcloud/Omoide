@@ -1,7 +1,7 @@
 import base64
 import binascii
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import (
     APIRouter,
@@ -38,7 +38,7 @@ from app.schemas.face import (
 from app.schemas.person import PersonMinimal
 from app.schemas.mutation_operations import FailedMutation, MutationReceipt, SkippedMutation
 from app.services.face_review import get_groups, near_matches
-from app.services.mutation_operations import lookup_operation, operation_headers
+from app.services.mutation_operations import begin_operation, lookup_operation, operation_headers
 from app.services.face_matching import (
     load_suggestion_rejections,
     load_unassigned_face_embeddings,
@@ -64,6 +64,122 @@ def _load_faces(session: Session, face_ids: list[int]) -> list[Face]:
     if missing:
         logger.warning("Skipping unknown face ids: %s", missing)
     return [by_id[fid] for fid in dict.fromkeys(face_ids) if fid in by_id]
+
+
+_FACE_ATOMIC = 'ordinary_face_operation'
+
+
+def _commit_faces(session):
+    """Receipt requests commit their catalog changes and outcome together."""
+    if _FACE_ATOMIC not in session.info:
+        safe_commit(session)
+
+
+def _run_face_operation(session, operation_id, snapshot, face_ids, mutate):
+    """Admit immutable intent before writes, then atomically publish its result.
+
+    An unfinished admitted operation is never replayed. Its unknown receipt is
+    discoverable even if the worker dies before the final commit/HTTP response.
+    """
+    try:
+        operation_id = str(UUID(operation_id))
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(400, 'operation_id must be a UUID.')
+    ids = list(dict.fromkeys(face_ids))
+    snapshot = {**snapshot, 'selected_ids': ids}
+    row = session.get(MutationOperation, operation_id)
+    if row is not None:
+        if row.snapshot != snapshot:
+            raise HTTPException(409, 'Operation ID belongs to a different request.', headers=operation_headers(operation_id))
+        if row.response is not None and row.status_code is not None:
+            if row.status_code >= 400:
+                raise HTTPException(row.status_code, row.response, headers=operation_headers(operation_id))
+            return row.response
+        raise HTTPException(409, 'Operation already exists; read its receipt.', headers=operation_headers(operation_id))
+    # Commit immutable request admission through the shared durable protocol
+    # before any catalog mutation. Then lease SQLite's writer before capturing
+    # exact ownership and checkpointing the members that may be changed.
+    begin_operation(session, operation_id, snapshot, ids)
+    session.exec(update(Face).where(Face.id.in_(ids)).values(id=Face.id))
+    session.expire_all()
+    row = session.get(MutationOperation, operation_id)
+    receipt = MutationReceipt.model_validate(row.receipt)
+    receipt.state = 'unknown'
+    faces = {face.id: face for face in _load_faces(session, ids)}
+    applied = []
+    previous = {}
+    for fid in ids:
+        face = faces.get(fid)
+        reason = None
+        if face is None:
+            reason = 'missing'
+        elif snapshot['action'] == 'ASSIGN_FACES' and face.person_id == snapshot['person_id']:
+            reason = 'already_assigned'
+        elif snapshot['action'] == 'DETACH_FACES' and face.person_id is None:
+            reason = 'already_detached'
+        if reason:
+            receipt.skipped.append(SkippedMutation(key=f'face:{fid}', reason=reason))
+        else:
+            applied.append(fid)
+            previous[f'face:{fid}'] = face.person_id
+    admitted_ownership = {fid: face.person_id for fid, face in faces.items()}
+    receipt.unknown = [f'face:{fid}' for fid in applied]
+    receipt.previous_ownership = previous
+    row.receipt = receipt.model_dump()
+    session.add(row)
+    safe_commit(session)
+    cleanups = []
+    session.info[_FACE_ATOMIC] = cleanups
+    try:
+        # Reacquire the SQLite write lease after durable admission. Ownership
+        # changes during that gap invalidate this snapshot rather than giving
+        # Undo a stale previous owner or silently applying different members.
+        session.exec(update(Face).where(Face.id.in_(ids)).values(id=Face.id))
+        session.expire_all()
+        current = {face.id: face.person_id for face in _load_faces(session, ids)}
+        # ORM objects expire on admission commit, so compare against the
+        # immutable captured values, including members originally skipped.
+        if current != admitted_ownership:
+            raise HTTPException(409, 'Face ownership changed after operation admission.')
+        response = mutate(applied)
+        if isinstance(response, BaseModel):
+            response = response.model_dump(mode='json')
+        receipt.applied = [f'face:{fid}' for fid in applied]
+        receipt.unknown = []
+        receipt.state = ('partial' if applied else 'failed') if receipt.skipped else 'succeeded'
+        receipt.response = dict(response)
+        result = {**response, 'receipt': receipt.model_dump()}
+        row = session.get(MutationOperation, operation_id)
+        row.receipt, row.response = receipt.model_dump(), result
+        row.status_code = 201 if snapshot['action'] == 'CREATE_PERSON_FROM_FACES' else 200
+        session.add(row)
+        safe_commit(session)
+    except Exception as exc:
+        session.rollback()
+        # The final commit may have succeeded before the transport raised.
+        session.expire_all()
+        saved = session.get(MutationOperation, operation_id)
+        if saved.response is None and isinstance(exc, HTTPException):
+            failed = MutationReceipt.model_validate(saved.receipt)
+            failed.state, failed.unknown = 'failed', []
+            failed.failed = [FailedMutation(key=f'face:{fid}', code=f'http_{exc.status_code}', message=str(exc.detail)) for fid in applied]
+            saved.receipt = failed.model_dump()
+            saved.response = {'message': exc.detail, 'receipt': saved.receipt}
+            saved.status_code = exc.status_code
+            session.add(saved)
+            safe_commit(session)
+        if isinstance(exc, HTTPException):
+            exc.headers = {**(exc.headers or {}), **operation_headers(operation_id)}
+            exc.detail = saved.response or {'message': exc.detail, 'receipt': saved.receipt}
+        if saved.response is not None and saved.status_code is not None and saved.status_code < 400:
+            for cleanup in cleanups:
+                cleanup()
+        raise
+    finally:
+        session.info.pop(_FACE_ATOMIC, None)
+    for cleanup in cleanups:
+        cleanup()
+    return result
 
 
 
@@ -119,7 +235,7 @@ def _assign_face(
     stamp_face_assignment(face, person.id, source)
     session.add(face)
     if original_person_id is not None:
-        old_person_can_be_deleted(session, original_person_id, reason="faces-assign")
+        old_person_can_be_deleted(session, original_person_id, reason="faces-assign", commit=_FACE_ATOMIC not in session.info)
     update_face_embedding(session, face.id, person.id)
 
 
@@ -138,6 +254,10 @@ def _assign_faces(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
+    if body.operation_id is not None:
+        return _run_face_operation(session, body.operation_id,
+            {'action': 'ASSIGN_FACES', 'person_id': body.person_id, 'source': body.source}, body.face_ids,
+            lambda ids: _assign_faces(body.model_copy(update={'operation_id': None, 'face_ids': ids}), session))
     new_person_id = body.person_id
     new_person = session.get(Person, new_person_id)
     if not new_person:
@@ -154,7 +274,7 @@ def _assign_faces(
         )
 
     refresh_persons(session, affected_person_ids)
-    safe_commit(session)
+    _commit_faces(session)
     return {"message": "Faces assigned successfully"}
 
 
@@ -205,6 +325,7 @@ def _assign_suggested_faces(
 def _detach_faces(
     face_ids: list[int] = Body(..., embed=True),
     session: Session = Depends(get_session),
+    operation_id: str | None = Body(None),
 ):
     if settings.general.presentation_mode:
         raise HTTPException(
@@ -212,6 +333,9 @@ def _detach_faces(
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
 
+    if isinstance(operation_id, str):
+        return _run_face_operation(session, operation_id, {'action': 'DETACH_FACES'}, face_ids,
+            lambda ids: _detach_faces(ids, session, operation_id=None))
     affected_person_ids: set[int] = set()
 
     for face in _load_faces(session, face_ids):
@@ -225,13 +349,13 @@ def _detach_faces(
         session.add(face)
 
         if person_id:
-            old_person_can_be_deleted(session, person_id, reason="faces-detach")
+            old_person_can_be_deleted(session, person_id, reason="faces-detach", commit=_FACE_ATOMIC not in session.info)
         update_face_embedding(
             session, face_id, -1
         )  # -1 detaches face from person in embedding table
         # update embedding of person to fix suggested faces after detach
     refresh_persons(session, affected_person_ids)
-    safe_commit(session)
+    _commit_faces(session)
     return {"message": "Faces detached successfully"}
 
 def update_face_embedding(
@@ -268,12 +392,16 @@ def update_face_embedding(
 def delete_faces(
     face_ids: list[int] = Query(..., alias="face_ids"),
     session: Session = Depends(get_session),
+    operation_id: str | None = Query(None),
 ):
     if settings.general.presentation_mode:
         raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
+    if isinstance(operation_id, str):
+        return _run_face_operation(session, operation_id, {'action': 'DELETE_FACES'}, face_ids,
+            lambda ids: delete_faces(ids, session, operation_id=None))
     _delete_face_batch(session, list(dict.fromkeys(face_ids)))
     return {"message": "Faces deleted successfully"}
 
@@ -302,16 +430,21 @@ def _delete_face_batch(session: Session, face_ids: list[int], *, only_orphans: b
         if old_person_can_be_deleted(session, person_id, reason="faces-delete", commit=False) and person is not None:
             deleted_people.append(person)
     refresh_persons(session, affected_person_ids)
-    safe_commit(session)
-    for person in deleted_people:
-        log_person_deleted(person, reason="empty-after-faces-delete")
-    for thumbnail in thumbnails:
-        try:
-            thumbnail.unlink()
-        except FileNotFoundError:
-            pass
-        except OSError as exc:
-            logger.warning("Could not remove face thumbnail %s: %s", thumbnail, exc)
+    _commit_faces(session)
+    def cleanup():
+        for person in deleted_people:
+            log_person_deleted(person, reason="empty-after-faces-delete")
+        for thumbnail in thumbnails:
+            try:
+                thumbnail.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                logger.warning("Could not remove face thumbnail %s: %s", thumbnail, exc)
+    if _FACE_ATOMIC in session.info:
+        session.info[_FACE_ATOMIC].append(cleanup)
+    else:
+        cleanup()
     return len(ids)
 
 
@@ -446,29 +579,27 @@ def get_orphans(
     "/create_person",
     summary="Create a new person from multiple faces and assign",
     name="create_person_from_faces",
-    response_model=PersonMinimal,
+    response_model=None,
     status_code=status.HTTP_201_CREATED,
 )
 def _create_person_from_faces(
     face_ids: list[int] = Body(..., embed=True),
     name: str | None = Body(None),
     session: Session = Depends(get_session),
+    operation_id: str | None = Body(None),
 ):
     if settings.general.presentation_mode:
         raise HTTPException(
             status_code=403,
             detail="Not allowed in settings.general.presentation_mode mode.",
         )
+    if isinstance(operation_id, str):
+        return _run_face_operation(session, operation_id, {'action': 'CREATE_PERSON_FROM_FACES', 'name': name}, face_ids,
+            lambda ids: _create_person_from_faces(ids, name, session, operation_id=None))
     if not face_ids:
         raise HTTPException(status_code=400, detail="No face IDs provided")
 
-    faces = []
-    for face_id in face_ids:
-        face = session.get(Face, face_id)
-        if not face:
-            logger.warning(f"Face with ID {face_id} not found, skipping.")
-            continue
-        faces.append(face)
+    faces = _load_faces(session, face_ids)
 
     if not faces:
         raise HTTPException(status_code=404, detail="No valid faces found")
@@ -493,13 +624,14 @@ def _create_person_from_faces(
         session.add(face)
         if previous_person and previous_person.id != person_id:
             previous_person_ids.add(previous_person.id)
-            old_person_can_be_deleted(session, previous_person.id, reason="face-reassign")
+            old_person_can_be_deleted(session, previous_person.id, reason="face-reassign", commit=_FACE_ATOMIC not in session.info)
         update_face_embedding(session, face.id, person_id)
     target_person_ids = set(previous_person_ids)
     target_person_ids.add(person_id)
     refresh_persons(session, target_person_ids)
-    safe_commit(session)
-    session.close()
+    _commit_faces(session)
+    if _FACE_ATOMIC not in session.info:
+        session.close()
     return PersonMinimal(id=person_id)
 
 def old_person_can_be_deleted(
@@ -524,6 +656,10 @@ def old_person_can_be_deleted(
         return True
 
     remove_person(person_id, session, reason=f"empty-after-{reason}", commit=commit)
+    if not commit and _FACE_ATOMIC in session.info and reason != 'faces-delete':
+        session.info[_FACE_ATOMIC].append(
+            lambda person=person: log_person_deleted(person, reason=f"empty-after-{reason}")
+        )
     return True
 
 
@@ -751,11 +887,12 @@ async def assign_suggested_faces(
     return _assign_suggested_faces(body, session)
 
 
-async def detach_faces(face_ids: list[int], session: Session):
-    return _detach_faces(face_ids, session)
+async def detach_faces(face_ids: list[int], session: Session, operation_id: str | None = None):
+    return _detach_faces(face_ids, session, operation_id=operation_id)
 
 
 async def create_person_from_faces(
     face_ids: list[int], name: str | None = None, session: Session = Depends(get_session),
+    operation_id: str | None = None,
 ):
-    return _create_person_from_faces(face_ids, name, session)
+    return _create_person_from_faces(face_ids, name, session, operation_id=operation_id)

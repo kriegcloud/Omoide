@@ -5,6 +5,7 @@ import { Media, Tag } from "../types";
 import { Person } from "../types";
 import { Chip, Box, Typography } from "@mui/material";
 import {
+  lookupMediaTagOperation,
   removeTagFromMedia,
   removeTagFromPerson,
 } from "../services/tagActions";
@@ -39,14 +40,18 @@ export function Tags({ media, person, onUpdate }: Readonly<TagsProps>) {
       label: `Remove tag ${tagToRemove.name}`,
       input: { target, tagId: tagToRemove.id },
       resources: [`${ownerType}:${target}`, `tag:${tagToRemove.id}`], patches: [],
-      request: async ({ target, tagId }) => {
-        if (ownerType === "media") await removeTagFromMedia(target, tagId);
+      ...(ownerType === "media" ? {lookup: lookupMediaTagOperation} : {}),
+      request: async ({ target, tagId }, operationId) => {
+        let receipt;
+        if (ownerType === "media") receipt = await removeTagFromMedia(target, tagId, operationId);
         else await removeTagFromPerson(target, tagId);
         const current = latest.current;
         if (mounted.current && current.owner?.id === target && current.ownerType === ownerType) {
           current.onUpdate({ ...current.owner, tags: (current.owner.tags ?? []).filter(t => t.id !== tagId) });
         }
+        return receipt;
       },
+      ...(ownerType === "media" ? {receipt: (result: unknown) => result} : {}),
     });
     void operation.done.then(() => {
       pendingRef.current.delete(token); setPending(new Set(pendingRef.current));

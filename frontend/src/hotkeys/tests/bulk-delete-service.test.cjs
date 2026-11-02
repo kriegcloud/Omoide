@@ -27,7 +27,9 @@ for (const action of ['DELETE_FILES', 'DELETE_RECORDS', 'BLACKLIST_RECORDS']) {
       assert.equal(url, 'https://example.invalid/api/media/bulk-delete');
       assert.equal(options.method, 'POST');
       assert.equal(options.headers['Content-Type'], 'application/json');
-      assert.deepEqual(JSON.parse(options.body), { media_ids: [11, 12, 13], action });
+      const { operation_id, ...payload } = JSON.parse(options.body);
+      assert.match(operation_id, /^[0-9a-f-]{36}$/);
+      assert.deepEqual(payload, { media_ids: [11, 12, 13], action });
       return { ok: true, json: async () => result };
     });
     assert.deepEqual(await api.bulkDeleteMedia([11, 12, 13], action), result);

@@ -189,12 +189,11 @@ export const updatePerson = async (
     name?: string;
     profile_face_id?: number;
     gender?: "female" | "male" | null;
-  }
-): Promise<Person> => {
+  }, operationId: string = crypto.randomUUID()): Promise<Person> => {
   const res = await fetch(`${API}/api/person/${personId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
+    body: JSON.stringify({ ...data, operation_id: operationId }),
   });
   if (!res.ok) throw peopleMutationError(res, "Failed to update person");
   const result = await res.json();
@@ -202,21 +201,21 @@ export const updatePerson = async (
   return result;
 };
 
-export const deletePerson = async (personId: number) => {
-  const res = await fetch(`${API}/api/person/${personId}`, {
+export const deletePerson = async (personId: number, operationId: string = crypto.randomUUID()) => {
+  const res = await fetch(`${API}/api/person/${personId}?operation_id=${operationId}`, {
     method: "DELETE",
   });
   if (!res.ok) throw new Error("Failed to delete person");
   mutationBus.emit({ type: "person:changed", ids: [personId] });
+ return res.json();
 };
 
 export const deletePersonsBulk = async (
-  personIds: number[],
-): Promise<DeletePersonsResult> => {
+  personIds: number[], operationId: string = crypto.randomUUID()): Promise<DeletePersonsResult> => {
   const res = await fetch(`${API}/api/person/bulk-delete`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ person_ids: personIds }),
+    body: JSON.stringify({ person_ids: personIds, operation_id: operationId }),
   });
   if (!res.ok) throw peopleMutationError(res, "Failed to delete selected people");
   const result = await res.json();
@@ -224,8 +223,8 @@ export const deletePersonsBulk = async (
   return result;
 };
 
-export const hidePerson = async (personId: number): Promise<Person> => {
-  const res = await fetch(`${API}/api/person/${personId}/hide`, {
+export const hidePerson = async (personId: number, operationId: string = crypto.randomUUID()): Promise<Person> => {
+  const res = await fetch(`${API}/api/person/${personId}/hide?operation_id=${operationId}`, {
     method: "POST",
   });
   if (!res.ok) throw peopleMutationError(res, "Failed to hide person");
@@ -234,8 +233,8 @@ export const hidePerson = async (personId: number): Promise<Person> => {
   return result;
 };
 
-export const unhidePerson = async (personId: number): Promise<Person> => {
-  const res = await fetch(`${API}/api/person/${personId}/unhide`, {
+export const unhidePerson = async (personId: number, operationId: string = crypto.randomUUID()): Promise<Person> => {
+  const res = await fetch(`${API}/api/person/${personId}/unhide?operation_id=${operationId}`, {
     method: "POST",
   });
   if (!res.ok) throw peopleMutationError(res, "Failed to unhide person");
@@ -245,12 +244,11 @@ export const unhidePerson = async (personId: number): Promise<Person> => {
 };
 
 export const hidePersonsBulk = async (
-  personIds: number[],
-): Promise<HidePersonsResult> => {
+  personIds: number[], operationId: string = crypto.randomUUID()): Promise<HidePersonsResult> => {
   const res = await fetch(`${API}/api/person/bulk-hide`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ person_ids: personIds }),
+    body: JSON.stringify({ person_ids: personIds, operation_id: operationId }),
   });
   if (!res.ok) throw peopleMutationError(res, "Failed to hide selected people");
   const result = await res.json();
@@ -259,12 +257,11 @@ export const hidePersonsBulk = async (
 };
 
 export const unhidePersonsBulk = async (
-  personIds: number[],
-): Promise<UnhidePersonsResult> => {
+  personIds: number[], operationId: string = crypto.randomUUID()): Promise<UnhidePersonsResult> => {
   const res = await fetch(`${API}/api/person/bulk-unhide`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ person_ids: personIds }),
+    body: JSON.stringify({ person_ids: personIds, operation_id: operationId }),
   });
   if (!res.ok) throw peopleMutationError(res, "Failed to unhide selected people");
   const result = await res.json();
@@ -310,24 +307,24 @@ export const deletePairDecision = async (id: number): Promise<void> => {
   mutationBus.emit({ type: "person:changed", ids: [] });
 };
 
-export const mergePersons = async (sourceId: number, targetId: number) => {
+export const mergePersons = async (sourceId: number, targetId: number, operationId: string = crypto.randomUUID()) => {
   const res = await fetch(`${API}/api/person/merge`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source_id: sourceId, target_id: targetId }),
+    body: JSON.stringify({ source_id: sourceId, target_id: targetId, operation_id: operationId }),
   });
   if (!res.ok) throw peopleMutationError(res, "Failed to merge persons");
   mutationBus.emit({ type: "person:changed", ids: [sourceId, targetId] });
+ return res.json();
 };
 
 export const mergeMultiplePersons = async (
   targetId: number,
-  sourceIds: number[]
-): Promise<MergeResult> => {
+  sourceIds: number[], operationId: string = crypto.randomUUID()): Promise<MergeResult> => {
   const res = await fetch(`${API}/api/person/${targetId}/merge-multiple`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source_ids: sourceIds }),
+    body: JSON.stringify({ source_ids: sourceIds, operation_id: operationId }),
   });
   if (!res.ok) throw peopleMutationError(res, "Failed to merge selected persons");
   const result = await res.json();
@@ -336,9 +333,8 @@ export const mergeMultiplePersons = async (
 };
 
 export const autoMergeSimilarPersons = async (
-  personId: number
-): Promise<MergeResult> => {
-  const res = await fetch(`${API}/api/person/${personId}/merge-similar`, {
+  personId: number, operationId: string = crypto.randomUUID()): Promise<MergeResult> => {
+  const res = await fetch(`${API}/api/person/${personId}/merge-similar?operation_id=${operationId}`, {
     method: "POST",
   });
   if (!res.ok) throw new Error("Failed to auto-merge similar persons");
@@ -489,12 +485,12 @@ export const detachMediaFromPerson = async (
   return result;
 };
 
-export const setProfileFace = async (faceId: number, personId: number) => {
-  return updatePerson(personId, { profile_face_id: faceId });
+export const setProfileFace = async (faceId: number, personId: number, operationId: string = crypto.randomUUID()) => {
+  return updatePerson(personId, { profile_face_id: faceId }, operationId);
 };
 
-export const autoSelectProfileFace = async (personId: number): Promise<Person> => {
-  const res = await fetch(`${API}/api/person/${personId}/profile_face/auto`, {
+export const autoSelectProfileFace = async (personId: number, operationId: string = crypto.randomUUID()): Promise<Person> => {
+  const res = await fetch(`${API}/api/person/${personId}/profile_face/auto?operation_id=${operationId}`, {
     method: "POST",
   });
   if (!res.ok) {
@@ -522,16 +518,17 @@ export const addMediaAppearanceToPerson = async (
   return result;
 };
 
-export const setPersonFavorite = async (personId: number, isFavorite: boolean): Promise<void> => {
- const response = await fetch(`${API}/api/person/${personId}/favorite`, {method: "PATCH", headers: {"Content-Type": "application/json"}, body: JSON.stringify({is_favorite: isFavorite})});
+export const setPersonFavorite = async (personId: number, isFavorite: boolean, operationId: string = crypto.randomUUID()): Promise<void> => {
+ const response = await fetch(`${API}/api/person/${personId}/favorite`, {method: "PATCH", headers: {"Content-Type": "application/json"}, body: JSON.stringify({is_favorite: isFavorite, operation_id: operationId})});
  if (!response.ok) throw peopleMutationError(response, "Failed to update favorite");
  mutationBus.emit({type: "person:changed", ids: [personId]});
+ return response.json();
 };
 
-/** One operation owns each pending intent. Legacy transport failures remain unknown;
- * these endpoints have no durable operation lookup and must never be replayed. */
-export function startPeopleMutation<R>(label: string, personIds: readonly number[], request: () => Promise<R>, options: {
+/** One operation owns each intent; uncertain writes recover through a read-only lookup. */
+export function startPeopleMutation<R>(label: string, personIds: readonly number[], request: (operationId: string) => Promise<R>, options: {
   query?: string;
+  durable?: boolean;
   resources?: readonly number[];
   entityResources?: readonly EntityKey[];
   applied?: (result: R) => readonly number[];
@@ -542,15 +539,17 @@ export function startPeopleMutation<R>(label: string, personIds: readonly number
 } = {}) {
   const ids = [...new Set(personIds)];
   const keys = ids.map(id => `person:${id}` as const);
-  const operationId = crypto.randomUUID();
+  const operationId: string = crypto.randomUUID();
   return startOperation({
     id: operationId, label, input: { ids },
     resources: [...keys, ...(options.resources ?? []).map(id => `person:${id}` as const), ...(options.entityResources ?? [])],
     patches: options.patches ?? keys.map(key => options.query
       ? { kind: "remove" as const, key, query: options.query }
       : { kind: "derived" as const, key, field: "mutation" }),
-    request,
+    request: () => request(operationId),
+    ...(options.durable === false ? {} : { lookup: lookupPersonOperation }),
     receipt: result => {
+      if (result && typeof result === "object" && "receipt" in result) return result.receipt;
       const applied = new Set(options.applied ? options.applied(result) : ids);
       if ([...applied].some(id => !ids.includes(id))) throw new Error("Unexpected person in mutation result");
       const skipped = ids.filter(id => !applied.has(id)).map(id => ({ key: `person:${id}`, reason: "not_applied" }));
@@ -558,8 +557,14 @@ export function startPeopleMutation<R>(label: string, personIds: readonly number
         applied: [...applied].map(id => `person:${id}`), skipped, failed: [], unknown: [] };
     },
     responsePatches: options.responsePatches,
-    reconcileUnknownAfterRefresh: true,
+    reconcileUnknownAfterRefresh: options.durable === false,
     refresh: options.refresh ?? (() => revalidateQueries(affectedQueries(keys))),
     refreshUnknown: options.refreshUnknown ?? (() => revalidateUnknownQueries([...affectedQueries([...keys, ...(options.resources ?? []).map(id => `person:${id}` as const), ...(options.entityResources ?? [])]), ...(options.query ? [options.query] : [])])),
   });
+}
+
+export async function lookupPersonOperation(id: string) {
+ const response = await fetch(`${API}/api/person/operations/${id}`);
+ if (!response.ok) throw new Error(`Person operation lookup failed: ${response.status}`);
+ return response.json();
 }

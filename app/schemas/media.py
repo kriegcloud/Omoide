@@ -1,4 +1,6 @@
 from datetime import datetime
+from uuid import UUID
+from app.schemas.mutation_operations import MutationReceipt
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field as PydanticField
@@ -12,6 +14,7 @@ from app.schemas.tag import TagSimple
 
 
 class MediaRead(SQLModel):
+    receipt: MutationReceipt | None = None
     id: int
     path: str
     filename: str
@@ -36,6 +39,7 @@ class MediaRead(SQLModel):
 
 
 class MediaPreview(SQLModel):
+    receipt: MutationReceipt | None = None
     id: int
     filename: str
     duration: float | None
@@ -52,6 +56,7 @@ class MediaPreview(SQLModel):
 
 
 class MediaBulkDeleteRequest(BaseModel):
+    operation_id: UUID | None = None
     media_ids: list[int] = PydanticField(min_length=1)
     action: Literal["DELETE_FILES", "DELETE_RECORDS", "BLACKLIST_RECORDS"]
 
@@ -62,6 +67,7 @@ class MediaDeleteError(BaseModel):
 
 
 class MediaBulkDeleteResponse(BaseModel):
+    receipt: MutationReceipt | None = None
     removed: int
     processed_ids: list[int]
     skipped_ids: list[int]
@@ -156,10 +162,12 @@ class GeoUpdate(SQLModel):
 
 
 class FavoriteUpdate(SQLModel):
+    operation_id: UUID | None = None
     is_favorite: bool
 
 
 class MediaMoveRequest(BaseModel):
+    operation_id: UUID | None = None
     destination_dir: str
 
 
@@ -168,6 +176,7 @@ class MediaRenameRequest(BaseModel):
 
 
 class MediaBulkMoveRequest(BaseModel):
+    operation_id: UUID | None = None
     media_ids: list[int]
     destination_dir: str
 
@@ -178,6 +187,7 @@ class MediaBulkMoveSkipped(BaseModel):
 
 
 class MediaBulkMoveResponse(BaseModel):
+    receipt: MutationReceipt | None = None
     moved_ids: list[int]
     skipped: list[MediaBulkMoveSkipped]
 

@@ -67,7 +67,7 @@ export default function AssignMediaToPersonDialog({
       }
       actualSkipped = skippedCount;
       return { skippedCount };
-    }, { resources: source === undefined ? [] : [source], entityResources: ids.map(id => `media:${id}` as const), refresh: async () => {
+    }, { durable: false, resources: source === undefined ? [] : [source], entityResources: ids.map(id => `media:${id}` as const), refresh: async () => {
       if (revision === generation.current) onAssigned(person, actualSkipped);
     }, applied: result => result.skippedCount < ids.length ? [person.id] : [] });
     onClose();
@@ -77,7 +77,7 @@ export default function AssignMediaToPersonDialog({
         undo: async () => {
           const inverse = startPeopleMutation("Undo media assignment", [person.id],
             () => detachMediaFromPersonBulk(person.id, addedIds), {
-              entityResources: addedIds.map(id => `media:${id}` as const),
+              durable: false, entityResources: addedIds.map(id => `media:${id}` as const),
               applied: result => result.skipped_ids.length ? [] : [person.id],
             });
           const restored = await inverse.done;

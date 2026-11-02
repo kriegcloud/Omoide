@@ -16,7 +16,17 @@ function environment(fetcher){
    if(id.endsWith('/mutationBus'))return {mutationBus:{emit:e=>events.push(e)}};
    if(id.startsWith('.'))return load(path.relative(path.resolve(__dirname,'../src'),path.resolve(path.dirname(file),id+'.ts')));
    return require(id);
-  },module,module.exports,fetcher);return module.exports;
+  },module,module.exports,async (url, options) => {
+    const response = await fetcher(url, options);
+    if (!response.ok || !options) return response;
+    const id = options.body ? JSON.parse(options.body).operation_id : new URL(url, 'http://test').searchParams.get('operation_id');
+    if (!id || !response.json) return response;
+    const body = await response.json();
+    const applied = (body.processed_ids ?? body.moved_ids ?? [body.id]).filter(Number.isInteger).map(id => `media:${id}`);
+    const failed = (body.errors ?? []).map(item => ({key:`media:${item.id}`,code:'failed',message:item.error ?? 'failed'}));
+    const skipped = (body.skipped_ids ?? []).filter(id => !failed.some(item => item.key === `media:${id}`)).map(id => ({key:`media:${id}`,reason:'missing'}));
+    return { ...response, json: async () => ({ ...body, receipt: {operation_id:id,state:failed.length || skipped.length ? 'partial' : 'succeeded',applied,skipped,failed,unknown:[]} }) };
+  });return module.exports;
  }
  return {api:load('services/mediaActions.ts'),core:load('stores/optimisticOperations.ts'),events};
 }

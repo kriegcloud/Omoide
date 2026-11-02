@@ -37,6 +37,8 @@ import {
 } from "../types";
 import {
   startFaceMutation,
+  restoreFaceOwnership,
+  runFaceCommand,
   assignFace,
   createPersonFromFaces,
   deleteFace,
@@ -487,21 +489,31 @@ export const usePersonDetailPage = () => {
   const handleAssignWrapper = async (faceIds: number[], personId: number) => {
     if (!id) return;
     const ids = [...faceIds];
-    startFaceMutation("Assign faces", ids, () => assignFace(ids, personId, "manual", "orphan-face"), detectedFacesListKey, [Number(id), personId], faceFailureOptions(ids));
+    const operation = startFaceMutation("Assign faces", ids, (operationId) => assignFace(ids, personId, "manual", "orphan-face", operationId), detectedFacesListKey, [Number(id), personId], faceFailureOptions(ids));
+    void operation.done.then(record => {
+      if (record.receipt?.applied.length && record.receipt.previous_ownership) push({
+        label: "Changed face ownership", undo: async () => { await restoreFaceOwnership(record.receipt!); await refreshVisible(); },
+      });
+    });
     // Let the controller attach transport handlers without waiting for the response.
     await Promise.resolve();
   };
 
   const handleDeleteWrapper = async (faceIds: number[]) => {
     const ids = [...faceIds];
-    startFaceMutation("Delete faces", ids, () => deleteFace(ids, "orphan-face"), detectedFacesListKey, id ? [Number(id)] : [], faceFailureOptions(ids));
+    startFaceMutation("Delete faces", ids, (operationId) => deleteFace(ids, "orphan-face", operationId), detectedFacesListKey, id ? [Number(id)] : [], faceFailureOptions(ids));
     // Let the controller attach transport handlers without waiting for the response.
     await Promise.resolve();
   };
 
   const handleDetachWrapper = async (faceIds: number[]) => {
     const ids = [...faceIds];
-    startFaceMutation("Detach faces", ids, () => detachFace(ids, "orphan-face"), detectedFacesListKey, id ? [Number(id)] : [], faceFailureOptions(ids));
+    const operation = startFaceMutation("Detach faces", ids, (operationId) => detachFace(ids, "orphan-face", operationId), detectedFacesListKey, id ? [Number(id)] : [], faceFailureOptions(ids));
+    void operation.done.then(record => {
+      if (record.receipt?.applied.length && record.receipt.previous_ownership) push({
+        label: "Changed face ownership", undo: async () => { await restoreFaceOwnership(record.receipt!); await refreshVisible(); },
+      });
+    });
     // Let the controller attach transport handlers without waiting for the response.
     await Promise.resolve();
   };
@@ -543,8 +555,8 @@ export const usePersonDetailPage = () => {
     name?: string,
   ): Promise<Person> => {
     try {
-      const newPerson = await createPersonFromFaces(faceIds, name);
-        setSuggestedFaces((prev) => prev.filter((f) => !faceIds.includes(f.id)));
+      const newPerson = await runFaceCommand("Create person", faceIds, operationId => createPersonFromFaces(faceIds, name, operationId));
+        setSuggestedFaces((prev) => prev.filter((f) => !((newPerson as Person & {receipt?: {applied: string[]}}).receipt?.applied ?? []).includes(`face:${f.id}`)));
         await Promise.all([
           refreshDetectedFaces(),
           loadDetail(),
@@ -656,7 +668,7 @@ export const usePersonDetailPage = () => {
   const handleAutoSelectProfileFace = useCallback(async () => {
     if (!id) return;
     const personId = Number(id);
-    startPeopleMutation("Select profile photo", [personId], () => requestAutoSelectProfileFace(personId), {
+    startPeopleMutation("Select profile photo", [personId], (operationId) => requestAutoSelectProfileFace(personId, operationId), {
       patches: [{ kind: "derived", key: `person:${personId}`, field: "profile_face" }],
       responsePatches: updated => [{ kind: "fields", key: `person:${personId}`, values: { profile_face: updated.profile_face, profile_face_id: updated.profile_face_id } }],
     });
@@ -666,7 +678,7 @@ export const usePersonDetailPage = () => {
     if (!id || !person) return;
     const personId = Number(id), isHidden = Boolean(person.hidden_at);
     startPeopleMutation(isHidden ? "Unhide person" : "Hide person", [personId],
-      () => isHidden ? unhidePerson(personId) : hidePerson(personId), {
+      (operationId) => isHidden ? unhidePerson(personId, operationId) : hidePerson(personId, operationId), {
         patches: [{ kind: "fields", key: `person:${personId}`, values: { hidden_at: isHidden ? null : new Date().toISOString() } }],
         responsePatches: updated => [{ kind: "fields", key: `person:${personId}`, values: { hidden_at: updated.hidden_at } }],
       });
@@ -674,7 +686,7 @@ export const usePersonDetailPage = () => {
 
   const handleProfileAssignmentWrapper = async (faceId: number, personId: number) => {
     const face = [...storedDetectedFacesList, ...suggestedFaces].find(face => face.id === faceId);
-    startPeopleMutation("Set profile photo", [personId], () => setProfileFace(faceId, personId), {
+    startPeopleMutation("Set profile photo", [personId], (operationId) => setProfileFace(faceId, personId, operationId), {
       patches: [{ kind: "fields", key: `person:${personId}`, values: { profile_face_id: faceId, ...(face ? { profile_face: face } : {}) } }],
       responsePatches: updated => [{ kind: "fields", key: `person:${personId}`, values: { profile_face: updated.profile_face, profile_face_id: updated.profile_face_id } }],
     });
@@ -746,7 +758,7 @@ export const usePersonDetailPage = () => {
 
     const sourceId = Number(id);
     const targetId = mergeTarget.id;
-    startPeopleMutation("Merge people", [sourceId], () => mergePersons(sourceId, targetId), { resources: [targetId] });
+    startPeopleMutation("Merge people", [sourceId], (operationId) => mergePersons(sourceId, targetId, operationId), { resources: [targetId] });
     setMergeTarget(null);
     setMergeOpen(false);
     navigate(`/person/${targetId}`, { replace: true, state: { forceRefresh: true } });

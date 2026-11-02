@@ -1,3 +1,4 @@
+from ._operations import person_operation, person_failure, person_attempt
 from .extensions import (
     PersonSocialLink,
     SocialLinkRead,
@@ -147,6 +148,12 @@ def list_persons(
     return CursorPage(next_cursor=next_cursor, items=items)
 
 
+@router.get("/operations/{operation_id}")
+def get_person_operation(operation_id: str, session: Session = Depends(get_session)):
+    from app.services.mutation_operations import lookup_operation
+    return lookup_operation(session, operation_id)
+
+
 @router.get("/{person_id}", response_model=PersonDetail)
 def get_person(person_id: int, session: Session = Depends(get_session)):
     person = session.get(Person, person_id)
@@ -201,6 +208,7 @@ def get_person(person_id: int, session: Session = Depends(get_session)):
     response_model=Person,
     summary="Update a person's details",
 )
+@person_operation("person.update")
 def update_person(
     person_id: int,
     data: PersonUpdate,
@@ -209,7 +217,7 @@ def update_person(
     person = session.get(Person, person_id)
     if not person:
         raise HTTPException(404, "Person not found")
-    updates = data.model_dump(exclude_unset=True)
+    updates = data.model_dump(exclude_unset=True, exclude={"operation_id"})
     if "profile_face_id" in updates:
         validate_profile_face(session, person_id, updates["profile_face_id"])
     if "gender" in updates:
@@ -230,6 +238,7 @@ def update_person(
 
 
 @router.patch("/{person_id}/favorite", response_model=PersonRead)
+@person_operation("person.favorite")
 def update_person_favorite(
     person_id: int,
     data: FavoriteUpdate,
@@ -249,9 +258,11 @@ def update_person_favorite(
     "/{person_id}/profile_face/auto",
     response_model=PersonDetail,
 )
+@person_operation("person.profile_auto")
 def auto_profile_face(
     person_id: int,
     session: Session = Depends(get_session),
+    operation_id: str | None = None,
 ):
     person = session.get(Person, person_id)
     if not person:
@@ -267,6 +278,7 @@ def auto_profile_face(
     response_model=PersonBulkDeleteResponse,
     summary="Delete multiple persons and their related data",
 )
+@person_operation("person.delete_bulk")
 def delete_persons_bulk(
     payload: PersonBulkDeleteRequest,
     session: Session = Depends(get_session),
@@ -280,6 +292,7 @@ def delete_persons_bulk(
             continue
         seen.add(person_id)
 
+        person_attempt(session, person_id)
         try:
             _ensure_person_has_no_datasets(session, person_id)
             result = remove_person(person_id, session, reason="bulk-delete")
@@ -291,14 +304,16 @@ def delete_persons_bulk(
             if exc.status_code == status.HTTP_403_FORBIDDEN:
                 raise
             session.rollback()
+            person_failure(session, person_id, exc)
             skipped_ids.append(person_id)
             logger.warning(
                 "Skipping deletion of person %s due to API error: %s",
                 person_id,
                 exc.detail,
             )
-        except Exception:  # pragma: no cover - defensive
+        except Exception as exc:  # pragma: no cover - defensive
             session.rollback()
+            person_failure(session, person_id, exc)
             skipped_ids.append(person_id)
             logger.exception("Unexpected error while deleting person %s", person_id)
 
@@ -313,6 +328,7 @@ def delete_persons_bulk(
     summary="Delete a person and all their faces",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-def delete_person(person_id: int, session: Session = Depends(get_session)):
+@person_operation("person.delete")
+def delete_person(person_id: int, session: Session = Depends(get_session), operation_id: str | None = None):
     _ensure_person_has_no_datasets(session, person_id)
     return remove_person(person_id, session, reason="delete")

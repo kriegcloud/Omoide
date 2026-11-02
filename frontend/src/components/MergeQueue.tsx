@@ -182,7 +182,7 @@ export default function MergeQueue({ onMerged, refreshVersion }: MergeQueueProps
     if (!merge || config.PRESENTATION_MODE) return;
     const snapshot = merge;
     const operation = startPeopleMutation("Merge people", [snapshot.source.id],
-      () => mergePersons(snapshot.source.id, snapshot.target.id), { resources: [snapshot.target.id],
+      (operationId) => mergePersons(snapshot.source.id, snapshot.target.id, operationId), { resources: [snapshot.target.id],
         patches: [{ kind: "remove", key: `person:${snapshot.source.id}` }],
         refreshUnknown: () => refresh(true),
       });

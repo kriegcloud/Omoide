@@ -21,3 +21,5 @@ class MutationReceipt(BaseModel):
     skipped: list[SkippedMutation] = Field(default_factory=list)
     failed: list[FailedMutation] = Field(default_factory=list)
     unknown: list[str] = Field(default_factory=list)
+    previous_ownership: dict[str, int | None] = Field(default_factory=dict)
+    response: dict | None = None

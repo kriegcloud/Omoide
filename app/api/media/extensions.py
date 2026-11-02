@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 import os
 import subprocess
 import sys
@@ -83,7 +84,16 @@ from app.utils import (
     update_exif_gps,
 )
 
+from app.api.media._operations import execute, skip, checkpoint
+from app.schemas.mutation_operations import MutationReceipt
+from app.services.mutation_operations import lookup_operation
+
 router = APIRouter()
+
+
+@router.get("/operations/{operation_id}", response_model=MutationReceipt)
+def get_mutation_operation(operation_id: str, session: Session = Depends(get_session)):
+    return lookup_operation(session, operation_id)
 
 
 def _require_media_mutations_allowed() -> None:
@@ -236,10 +246,19 @@ def create_folder(
 @router.post("/bulk-delete", response_model=MediaBulkDeleteResponse)
 def bulk_delete_media(body: MediaBulkDeleteRequest, session: Session = Depends(get_session)):
     _require_media_mutations_allowed()
-    return resolve_media_action(
-        session, action=body.action, media_ids=body.media_ids,
-        select_all=False, base_filter=True, filter_ids=False, allow_empty=True,
-    )
+    def apply(operation):
+        result = resolve_media_action(
+            session, action=body.action, media_ids=body.media_ids,
+            select_all=False, base_filter=True, filter_ids=False, allow_empty=True,
+        )
+        errors = {item['id'] for item in result['errors']}
+        for media_id in result['skipped_ids']:
+            if media_id not in errors:
+                skip(operation, media_id, 'not_selected')
+        return result
+    return execute(session, body.operation_id,
+                   {'family': 'media_bulk_delete', **body.model_dump(mode='json', exclude={'operation_id'})},
+                   body.media_ids, apply)
 
 
 @router.post("/bulk-move", response_model=MediaBulkMoveResponse)
@@ -248,6 +267,12 @@ def bulk_move_media(
     session: Session = Depends(get_session),
 ):
     _require_media_mutations_allowed()
+    return execute(session, body.operation_id,
+                   {'family': 'media_bulk_move', **body.model_dump(mode='json', exclude={'operation_id'})},
+                   body.media_ids, lambda operation: _bulk_move_media(body, session, operation))
+
+
+def _bulk_move_media(body, session, operation=None):
     moved_ids: list[int] = []
     skipped: list[MediaBulkMoveSkipped] = []
     from app.services.media_files import rollback_media_moves
@@ -258,8 +283,11 @@ def bulk_move_media(
             media = session.get(Media, media_id)
             if media is None:
                 skipped.append(MediaBulkMoveSkipped(id=media_id, reason="Media not found"))
+                skip(operation, media_id, 'not_found')
                 continue
             source = Path(media.path).expanduser().resolve()
+            if operation is not None:
+                operation.start_member(media_id)
             try:
                 target = _move_media(media, body.destination_dir)
             except (
@@ -269,15 +297,24 @@ def bulk_move_media(
                 ReadOnlyMediaRootError,
             ) as exc:
                 skipped.append(MediaBulkMoveSkipped(id=media_id, reason=str(exc)))
+                skip(operation, media_id, str(exc))
                 continue
             moves.append((source, target))
             media.path = os.fspath(target)
             session.add(media)
             moved_ids.append(media_id)
+            if operation is not None:
+                checkpoint(operation, media_id)
+                safe_commit(session)
+                moves.clear()
         safe_commit(session)
     except Exception:
         session.rollback()
-        rollback_media_moves(moves)
+        session.expire_all()
+        # A database commit may succeed before its transport reports failure.
+        # Never reverse a file whose durable catalog checkpoint was committed.
+        if operation is None or f'media:{media_id}' not in lookup_operation(session, operation.id).applied:
+            rollback_media_moves(moves)
         raise
     return MediaBulkMoveResponse(moved_ids=moved_ids, skipped=skipped)
 
@@ -289,6 +326,19 @@ def move_media(
     session: Session = Depends(get_session),
 ):
     _require_media_mutations_allowed()
+    return execute(session, body.operation_id,
+                   {'family': 'media_move', 'media_id': media_id, 'destination_dir': body.destination_dir},
+                   [media_id], lambda operation: _move_one_media(media_id, body, session, operation))
+
+
+def _move_one_media(media_id, body, session, operation=None):
+    if operation is not None:
+        operation.start_member(media_id)
+    with (operation.member(media_id) if operation is not None else nullcontext()):
+        return _move_one_media_impl(media_id, body, session, operation)
+
+
+def _move_one_media_impl(media_id, body, session, operation):
     media = session.get(Media, media_id)
     if media is None:
         raise HTTPException(status_code=404, detail="Media not found")
@@ -305,15 +355,18 @@ def move_media(
     media.path = os.fspath(target)
     session.add(media)
     try:
+        checkpoint(operation, media_id)
         safe_commit(session)
     except Exception:
         from app.services.media_files import rollback_media_moves
 
         session.rollback()
-        rollback_media_moves([(source, target)])
+        session.expire_all()
+        if operation is None or f'media:{media_id}' not in lookup_operation(session, operation.id).applied:
+            rollback_media_moves([(source, target)])
         raise
     session.refresh(media)
-    return media
+    return MediaPreview.model_validate(media) if operation is not None else media
 
 
 @router.post("/{media_id}/rename", response_model=MediaPreview)

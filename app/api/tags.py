@@ -1,3 +1,7 @@
+from contextlib import nullcontext
+from uuid import UUID
+from fastapi import Response
+from app.api.media._operations import execute, checkpoint, headers
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import delete
@@ -144,21 +148,52 @@ def get_tag(tag_id: int, session: Session = Depends(get_session)):
 # Assign / remove on Media
 @router.post("/media/{media_id}/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
 def add_tag_to_media(
-    media_id: int, tag_id: int, session: Session = Depends(get_session)
+    media_id: int, tag_id: int, session: Session = Depends(get_session),
+    operation_id: UUID | None = None, response: Response = None,
 ):
-    attach_tag_to_media(media_id, tag_id, session)
+    def apply(operation):
+        if operation is not None:
+            operation.start_member(media_id)
+        with (operation.member(media_id) if operation is not None else nullcontext()):
+            # attach_tag_to_media commits internally; bind its final checkpoint
+            # to that same catalog transaction, including already-present tags.
+            if operation is not None:
+                if not session.get(Media, media_id):
+                    raise HTTPException(404, "Media not found")
+                if not session.get(Tag, tag_id):
+                    raise HTTPException(404, "Tag not found")
+                session.exec(insert(MediaTagLink).values(media_id=media_id, tag_id=tag_id)
+                             .on_conflict_do_nothing(index_elements=['media_id', 'tag_id']))
+                checkpoint(operation, media_id)
+                safe_commit(session)
+            else:
+                attach_tag_to_media(media_id, tag_id, session)
+        return {}
+    execute(session, operation_id, {'family': 'media_tag_add', 'media_id': media_id, 'tag_id': tag_id}, [media_id], apply)
+    if operation_id is not None and response is not None:
+        response.headers.update(headers(operation_id))
 
 
 @router.delete("/media/{media_id}/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_tag_from_media(
-    media_id: int, tag_id: int, session: Session = Depends(get_session)
+    media_id: int, tag_id: int, session: Session = Depends(get_session),
+    operation_id: UUID | None = None, response: Response = None,
 ):
-    session.exec(
-        delete(MediaTagLink).where(
-            MediaTagLink.media_id == media_id, MediaTagLink.tag_id == tag_id
-        )
-    )
-    safe_commit(session)
+    def apply(operation):
+        if operation is not None:
+            operation.start_member(media_id)
+        with (operation.member(media_id) if operation is not None else nullcontext()):
+            session.exec(
+                delete(MediaTagLink).where(
+                    MediaTagLink.media_id == media_id, MediaTagLink.tag_id == tag_id
+                )
+            )
+            checkpoint(operation, media_id)
+            safe_commit(session)
+        return {}
+    execute(session, operation_id, {'family': 'media_tag_remove', 'media_id': media_id, 'tag_id': tag_id}, [media_id], apply)
+    if operation_id is not None and response is not None:
+        response.headers.update(headers(operation_id))
 
 
 @router.delete("/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)

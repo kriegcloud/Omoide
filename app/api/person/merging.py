@@ -1,3 +1,4 @@
+from ._operations import person_operation, person_attempt
 from .extensions import (
     PersonPairDecision,
     select,
@@ -27,6 +28,7 @@ router = APIRouter()
 @router.post(
     "/merge", summary="Merge one person into another", status_code=status.HTTP_200_OK
 )
+@person_operation("person.merge")
 def merge_persons(body: MergePersonsRequest, session: Session = Depends(get_session)):
     merged = merge_person_into(session, body.source_id, body.target_id)
     return merged
@@ -37,6 +39,7 @@ def merge_persons(body: MergePersonsRequest, session: Session = Depends(get_sess
     response_model=MergePersonsResult,
     summary="Merge multiple persons into the specified person",
 )
+@person_operation("person.merge_bulk")
 def merge_multiple_persons(
     person_id: int,
     request: MergePersonsBulkRequest,
@@ -52,6 +55,7 @@ def merge_multiple_persons(
         if source_id == person_id:
             skipped_ids.append(source_id)
             continue
+        person_attempt(session, source_id)
         try:
             merge_person_into(session, source_id, person_id)
             merged_ids.append(source_id)
@@ -148,18 +152,21 @@ def get_similarities(person_id: int, session: Session = Depends(get_session)):
     response_model=MergePersonsResult,
     summary="Automatically merge similar persons that exceed the merge threshold",
 )
-def auto_merge_similar_persons(person_id: int, session: Session = Depends(get_session)):
+@person_operation("person.merge_similar")
+def auto_merge_similar_persons(person_id: int, session: Session = Depends(get_session), operation_id: str | None = None):
     threshold = float(
         getattr(settings.face_recognition, "person_merge_percent_similarity", 75.0)
     )
-    similar_people = get_similarities(person_id, session)
-    candidate_ids = [
-        similar.id
-        for similar in similar_people
-        if similar.id is not None
-        and similar.similarity is not None
-        and float(similar.similarity) >= threshold
-    ]
+    candidate_ids = session.info.get("person_merge_candidates")
+    if candidate_ids is None:
+        similar_people = get_similarities(person_id, session)
+        candidate_ids = [
+            similar.id
+            for similar in similar_people
+            if similar.id is not None
+            and similar.similarity is not None
+            and float(similar.similarity) >= threshold
+        ]
 
     merged_ids: list[int] = []
     skipped_ids: list[int] = []
@@ -183,6 +190,7 @@ def auto_merge_similar_persons(person_id: int, session: Session = Depends(get_se
         if blocked is not None:
             skipped_ids.append(source_id)
             continue
+        person_attempt(session, source_id)
         try:
             merge_person_into(session, source_id, person_id)
             merged_ids.append(source_id)

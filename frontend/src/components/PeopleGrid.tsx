@@ -186,7 +186,7 @@ const loadMore = useListStore(state => state.loadMore);
     const ids = [...selectedIds];
     if (!ids.length) return;
     const operation = startPeopleMutation(hidden ? "Unhide people" : "Hide people", ids,
-      async () => hidden ? await unhidePersonsBulk(ids) : await hidePersonsBulk(ids), {
+      async (operationId) => hidden ? await unhidePersonsBulk(ids, operationId) : await hidePersonsBulk(ids, operationId), {
         query: listKey,
         applied: result => "unhidden_ids" in result ? result.unhidden_ids : result.hidden_ids,
       });
@@ -197,7 +197,7 @@ const loadMore = useListStore(state => state.loadMore);
         label: `${hidden ? "Unhidden" : "Hidden"} ${changedIds.length} people`,
         undo: async () => {
           const inverse = startPeopleMutation("Restore people visibility", changedIds,
-            async () => hidden ? await hidePersonsBulk(changedIds) : await unhidePersonsBulk(changedIds), {
+            async (operationId) => hidden ? await hidePersonsBulk(changedIds, operationId) : await unhidePersonsBulk(changedIds, operationId), {
               applied: result => "hidden_ids" in result ? result.hidden_ids : result.unhidden_ids,
             });
           const restored = await inverse.done;
@@ -211,7 +211,7 @@ const loadMore = useListStore(state => state.loadMore);
   const handleConfirmDeleteSelected = () => {
     const ids = [...deleteIds];
     if (!ids.length) return;
-    startPeopleMutation("Delete people", ids, () => deletePersonsBulk(ids), {
+    startPeopleMutation("Delete people", ids, (operationId) => deletePersonsBulk(ids, operationId), {
       query: listKey, applied: result => result.deleted_ids,
     });
     setConfirmDeleteOpen(false);
@@ -221,7 +221,7 @@ const loadMore = useListStore(state => state.loadMore);
   const handleMerge = (target: PersonReadSimple | Person) => {
     const sourceIds = mergePeople.map(person => person.id).filter(id => id !== target.id);
     if (!sourceIds.length) return;
-    startPeopleMutation("Merge people", sourceIds, () => mergeMultiplePersons(target.id, sourceIds), {
+    startPeopleMutation("Merge people", sourceIds, (operationId) => mergeMultiplePersons(target.id, sourceIds, operationId), {
       query: listKey, resources: [target.id], applied: result => result.merged_ids,
     });
     setMergeOpen(false);

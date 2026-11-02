@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { PeopleSection } from "./PeopleSection";
 import {
+  runFaceCommand,
   assignFace,
   createPersonFromFaces,
   deleteFace,
@@ -31,25 +32,26 @@ export function PeopleTabContent({
   }, [initialPersons, initialOrphans]);
 
   const handleDeleteFace = async (faceIds: number[]) => {
-    await deleteFace(faceIds);
-    setOrphans((prev) => prev.filter((f) => !faceIds.includes(f.id)));
+    const result = await runFaceCommand("Delete faces", faceIds, id => deleteFace(faceIds, "", id));
+    setOrphans((prev) => prev.filter((f) => !(result.receipt?.applied ?? []).includes(`face:${f.id}`)));
     onDataChanged();
   };
 
   const handleAssignFace = async (faceIds: number[], personId: number) => {
-    await assignFace(faceIds, personId);
-    setOrphans((prev) => prev.filter((f) => !faceIds.includes(f.id)));
+    const result = await runFaceCommand("Assign faces", faceIds, id => assignFace(faceIds, personId, "manual", "", id));
+    setOrphans((prev) => prev.filter((f) => !(result.receipt?.applied ?? []).includes(`face:${f.id}`)));
     onDataChanged();
   };
 
   const handleDetachFace = async (faceIds: number[]) => {
-    await detachFace(faceIds);
+    await runFaceCommand("Detach faces", faceIds, id => detachFace(faceIds, "", id));
     onDataChanged();
   };
 
   const handleCreateFace = async (faceIds: number[], name?: string) => {
-    const newPerson = await createPersonFromFaces(faceIds, name);
-    setOrphans((prev) => prev.filter((f) => !faceIds.includes(f.id)));
+    const newPerson = await runFaceCommand("Create person", faceIds, id => createPersonFromFaces(faceIds, name, id));
+    const result = newPerson as Person & { receipt?: { applied: string[] } };
+    setOrphans((prev) => prev.filter((f) => !(result.receipt?.applied ?? []).includes(`face:${f.id}`)));
     onDataChanged();
     return newPerson;
   };

@@ -2,15 +2,17 @@ import { DefinitiveMutationError } from "../stores/optimisticOperations";
 import { mutationBus } from "../stores/mutationBus";
 import { apiFetch } from "./api";
 
-export const removeTagFromMedia = async (mediaId: number, tagId: number) =>
-  apiFetch<void>(`/api/tags/media/${mediaId}/${tagId}`, {
-    method: "DELETE",
+export const removeTagFromMedia = async (mediaId: number, tagId: number, operationId?: string) => {
+  await apiFetch<void>(`/api/tags/media/${mediaId}/${tagId}`, {
+    method: "DELETE", query: operationId ? {operation_id: operationId} : undefined,
     errorMessage: "Failed to remove tag from media",
-  }).catch(rejectValidation).then((result) => {
-    mutationBus.emit({ type: "tag:changed", ids: [tagId] });
-    mutationBus.emit({ type: "list:invalidate", prefix: "" });
-    return result;
-  });
+  }).catch(rejectValidation);
+  mutationBus.emit({ type: "tag:changed", ids: [tagId] });
+  mutationBus.emit({ type: "list:invalidate", prefix: "" });
+  return operationId ? lookupMediaTagOperation(operationId) : undefined;
+};
+
+export const lookupMediaTagOperation = (id: string) => apiFetch(`/api/media/operations/${id}`);
 
 export const removeTagFromPerson = async (personId: number, tagId: number) =>
   apiFetch<void>(`/api/tags/person/${personId}/${tagId}`, {

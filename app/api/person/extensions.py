@@ -1,3 +1,4 @@
+from ._operations import person_operation
 from ._validation import validate_profile_face
 
 from collections import deque
@@ -642,10 +643,12 @@ def get_social_link_suggestions(
 
 
 @router.post("/{person_id}/profile_face", response_model=Person)
+@person_operation("person.profile")
 def set_profile_face(
     person_id: int,
     face_id: int | None = None,
     session: Session = Depends(get_session),
+    operation_id: str | None = None,
 ):
     if settings.general.presentation_mode:
         raise HTTPException(
@@ -864,6 +867,7 @@ def _set_person_hidden(
 
 
 @router.post("/bulk-hide", response_model=PersonBulkHideResponse)
+@person_operation("person.hide_bulk")
 def hide_persons_bulk(
     payload: PersonBulkHideRequest,
     session: Session = Depends(get_session),
@@ -889,6 +893,7 @@ def hide_persons_bulk(
 
 
 @router.post("/bulk-unhide", response_model=PersonBulkUnhideResponse)
+@person_operation("person.unhide_bulk")
 def unhide_persons_bulk(
     payload: PersonBulkHideRequest,
     session: Session = Depends(get_session),
@@ -917,12 +922,14 @@ def unhide_persons_bulk(
 
 
 @router.post("/{person_id}/hide", response_model=PersonDetail)
-def hide_person(person_id: int, session: Session = Depends(get_session)):
+@person_operation("person.hide")
+def hide_person(person_id: int, session: Session = Depends(get_session), operation_id: str | None = None):
     return _set_person_hidden(person_id, hidden=True, session=session)
 
 
 @router.post("/{person_id}/unhide", response_model=PersonDetail)
-def unhide_person(person_id: int, session: Session = Depends(get_session)):
+@person_operation("person.unhide")
+def unhide_person(person_id: int, session: Session = Depends(get_session), operation_id: str | None = None):
     return _set_person_hidden(person_id, hidden=False, session=session)
 
 

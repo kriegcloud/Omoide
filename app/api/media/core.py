@@ -2,7 +2,12 @@ from .extensions import (
     exclude_missing,
 )
 
+from contextlib import nullcontext
 from pathlib import Path
+from uuid import UUID
+from fastapi import Response
+from app.api.media._operations import execute, checkpoint, headers
+from app.services.mutation_operations import mutation_member
 
 from fastapi import (
     APIRouter,
@@ -117,8 +122,15 @@ def get_media(media_id: int, session: Session = Depends(get_session)):
     summary="Permanently delete the media file & its thumbnail from disk",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-def delete_media_file(media_id: int, session: Session = Depends(get_session)):
-    delete_file(session, media_id)
+def delete_media_file(media_id: int, session: Session = Depends(get_session),
+                      operation_id: UUID | None = None, response: Response = None):
+    def apply(operation):
+        with mutation_member(session, media_id):
+            delete_file(session, media_id)
+        return {}
+    execute(session, operation_id, {'family': 'media_delete_file', 'media_id': media_id}, [media_id], apply)
+    if operation_id is not None and response is not None:
+        response.headers.update(headers(operation_id))
 
 
 @router.delete(
@@ -129,8 +141,15 @@ def delete_media_file(media_id: int, session: Session = Depends(get_session)):
 def delete_media_record(
     media_id: int,
     session: Session = Depends(get_session),
+    operation_id: UUID | None = None, response: Response = None,
 ):
-    delete_record(media_id, session)
+    def apply(operation):
+        with mutation_member(session, media_id):
+            delete_record(media_id, session)
+        return {}
+    execute(session, operation_id, {'family': 'media_delete_record', 'media_id': media_id}, [media_id], apply)
+    if operation_id is not None and response is not None:
+        response.headers.update(headers(operation_id))
 
 
 @router.get("/{media_id}/get-similar", response_model=list[MediaPreview])
@@ -235,11 +254,19 @@ def update_favorite(
     data: FavoriteUpdate,
     session: Session = Depends(get_session),
 ):
-    media = session.get(Media, media_id)
-    if not media:
-        raise HTTPException(404, "Media not found")
-    media.is_favorite = data.is_favorite
-    session.add(media)
-    safe_commit(session)
-    session.refresh(media)
-    return media
+    def apply(operation):
+        if operation is not None:
+            operation.start_member(media_id)
+        with (operation.member(media_id) if operation is not None else nullcontext()):
+            media = session.get(Media, media_id)
+            if not media:
+                raise HTTPException(404, "Media not found")
+            media.is_favorite = data.is_favorite
+            session.add(media)
+            checkpoint(operation, media_id)
+            safe_commit(session)
+            session.refresh(media)
+        return MediaRead.model_validate(media) if operation is not None else media
+    return execute(session, data.operation_id,
+                   {'family': 'media_favorite', 'media_id': media_id, 'is_favorite': data.is_favorite},
+                   [media_id], apply)

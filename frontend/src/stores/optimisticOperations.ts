@@ -10,6 +10,8 @@ export interface MutationReceipt {
   skipped: { key: string; reason: string }[];
   failed: { key: string; code: string; message: string }[];
   unknown: string[];
+  previous_ownership?: Record<string, number | null>;
+  response?: Record<string, unknown> | null;
 }
 export type OperationState = "applied" | "pending" | "committed" | "partially_committed" | "rejected" | "unknown" | "reconciled";
 type PatchTarget = { key: EntityKey; query?: QueryKey; baseVersion?: number };
@@ -86,7 +88,7 @@ export function parseMutationReceipt(value: unknown, expectedId?: string): Mutat
   if (new Set(keys).size !== keys.length) throw new Error("Overlapping mutation receipt members");
   if (value.state === "succeeded" && (unknown.length || skipped.length || failed.length)) throw new Error("Inconsistent success receipt");
   if (value.state === "failed" && (applied.length || unknown.length)) throw new Error("Inconsistent rejection receipt");
-  return structuredClone({ operation_id: value.operation_id, state: value.state, applied, skipped, failed, unknown }) as MutationReceipt;
+  return structuredClone({ operation_id: value.operation_id, state: value.state, applied, skipped, failed, unknown, ...(object(value.previous_ownership) ? { previous_ownership: value.previous_ownership } : {}), ...(object(value.response) ? { response: value.response } : {}) }) as MutationReceipt;
 }
 
 let version = 0, sequence = 0;
@@ -220,10 +222,10 @@ export function startOperation<I, R>(command: OptimisticCommand<I, R>): Operatio
       command.onError?.(error);
       const definitive = isDefinitiveMutationError(error);
       if (!definitive) refreshUncertain(id, command);
-      if (definitive || command.rollbackOnError) {
+      if (definitive) {
         const result = update(id, { state: "rejected", patches: [], error: message(error) }); release(id); return result;
       }
-      const result = update(id, { state: "unknown", error: message(error) });
+      const result = update(id, { state: "unknown", error: message(error), ...(command.rollbackOnError ? {patches: []} : {}) });
       // Lookup is read-only. Never replay an uncertain mutation.
       if (command.lookup) void reconcileOperation(id).catch(() => {});
       return result;
