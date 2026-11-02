@@ -1,7 +1,6 @@
-import React, { Children, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { Children, isValidElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box } from "@mui/material";
-import Masonry from "react-masonry-css";
-import { galleryFit, masonryPositions } from "./galleryLayout";
+import { assignColumns, galleryFit, masonryPositions } from "./galleryLayout";
 import { useHotkeys } from "../hotkeys/useHotkey";
 import { nextGridIndex } from "../hotkeys/GridKeyboardNavigation";
 
@@ -43,8 +42,27 @@ export default function Gallery({ children, virtualItems, scrollRef, onEndReache
     window.addEventListener("resize", measure);
     return () => { observer.disconnect(); window.removeEventListener("resize", measure); };
   }, [host, isVirtual, viewportRef]);
-  const childCount = Children.toArray(children).length;
+  const childItems = Children.toArray(children);
+  const childCount = childItems.length;
   const { columns, maxWidth } = galleryFit(size.width, childCount, minTileWidth);
+  const childKeys = childItems.map((child, index) => isValidElement(child) && child.key != null ? String(child.key) : `#${index}`);
+  const keySignature = childKeys.join("\u0000");
+  const [placement, setPlacement] = useState<{ columns: number; map: Map<string, number> } | null>(null);
+  const placementMap = useMemo(
+    () => assignColumns(childKeys, columns, placement?.columns === columns ? placement.map : null),
+    // childKeys is derived from keySignature; placement is read only as the prior layout.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [keySignature, columns],
+  );
+  useEffect(() => {
+    if (placement?.map !== placementMap) setPlacement({ columns, map: placementMap });
+  }, [placementMap, columns, placement]);
+  const columnChildren = useMemo(() => {
+    const lists: React.ReactNode[][] = Array.from({ length: Math.max(1, columns) }, () => []);
+    childItems.forEach((child, index) => lists[placementMap.get(childKeys[index]) ?? index % lists.length].push(child));
+    return lists;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [children, placementMap, columns]);
   const virtualLayout = useMemo(() => masonryPositions(size.width, virtualItems?.map(item => item.aspectRatio) ?? []), [size.width, virtualItems]);
   const viewportHeight = Math.min(size.height, Math.max(1, virtualLayout.height));
   useEffect(() => {
@@ -92,9 +110,9 @@ export default function Gallery({ children, virtualItems, scrollRef, onEndReache
         </Box>
       ) : (
         <Box sx={{ maxWidth: maxWidth ?? "none" }}>
-          <Masonry breakpointCols={columns} className="gallery-masonry" columnClassName="gallery-column">
-            {children}
-          </Masonry>
+          <div className="gallery-masonry">
+            {columnChildren.map((column, index) => <div key={index} className="gallery-column">{column}</div>)}
+          </div>
         </Box>
       )}
     </Box>

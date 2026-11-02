@@ -65,6 +65,10 @@ export const getTheme = (mode: ThemeMode) => {
             scrollbarColor: 'transparent transparent',
             scrollbarGutter: 'stable',
           },
+          // The gutter above is always reserved, so a modal's scroll lock no longer
+          // changes the content width. MUI still pads body by the scrollbar width,
+          // which would shift every gallery column; cancel that compensation.
+          'html body': { paddingRight: '0 !important' },
           '*:hover, *:focus-within, html:hover, html:focus-within, body:hover, body:focus-within': {
             scrollbarColor: `${alpha(themeParam.palette.text.primary, 0.25)} transparent`,
           },
@@ -123,6 +127,10 @@ export const getTheme = (mode: ThemeMode) => {
         },
       },
       MuiDialog: { styleOverrides: { paper: { borderRadius: 6 } } },
+      // Menus and popovers are transient; locking page scroll for them only
+      // produced layout shift across the grid behind them.
+      MuiMenu: { defaultProps: { disableScrollLock: true } },
+      MuiPopover: { defaultProps: { disableScrollLock: true } },
       MuiAppBar: { styleOverrides: { colorPrimary: {
         backgroundColor: p.background.paper, color: p.text.primary,
         borderBottom: `1px solid ${p.divider}`, boxShadow: "none",

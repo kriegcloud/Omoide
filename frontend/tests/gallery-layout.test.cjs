@@ -71,3 +71,31 @@ test('Gallery constrains short masonry lists through galleryFit', () => {
   const code = fs.readFileSync(path.join(__dirname, '../src/components/Gallery.tsx'), 'utf8');
   assert.match(code, /galleryFit\(/);
 });
+
+test('deleting a tile only moves tiles below it in the same column (no grid reshuffle)', () => {
+  const { assignColumns } = load();
+  const keys = Array.from({ length: 20 }, (_, i) => `m${i}`);
+  const first = assignColumns(keys, 4, null);
+  const after = assignColumns(keys.filter(k => k !== 'm5'), 4, first);
+  for (const [key, column] of after) assert.equal(column, first.get(key), `${key} stayed in its column`);
+});
+
+test('new tiles fill the shortest column and a column change re-deals', () => {
+  const { assignColumns } = load();
+  const first = assignColumns(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'], 4, null);
+  const removed = assignColumns(['a', 'c', 'd', 'e', 'f', 'g', 'h'], 4, first);
+  const added = assignColumns(['a', 'c', 'd', 'e', 'f', 'g', 'h', 'i'], 4, removed);
+  assert.equal(added.get('i'), first.get('b'), 'the gap left by b is filled first');
+  const resized = assignColumns(['a', 'c', 'd', 'e', 'f', 'g', 'h', 'i'], 3, null);
+  assert.deepEqual([...resized.values()], [0, 1, 2, 0, 1, 2, 0, 1]);
+});
+
+test('heavy drift rebalances instead of leaving one column nearly empty', () => {
+  const { assignColumns } = load();
+  const keys = Array.from({ length: 24 }, (_, i) => `k${i}`);
+  const first = assignColumns(keys, 3, null);
+  const drained = keys.filter(k => first.get(k) !== 0 || k === 'k0');
+  const next = assignColumns(drained, 3, first);
+  const sizes = [0, 0, 0]; for (const c of next.values()) sizes[c]++;
+  assert.ok(Math.max(...sizes) - Math.min(...sizes) <= 1, `balanced: ${sizes}`);
+});
