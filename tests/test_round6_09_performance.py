@@ -22,6 +22,7 @@ from app.database import _attach_engine_listeners
 from app.models import Face, Media, Person
 
 face_api = importlib.import_module("app.api.face")
+face_review = importlib.import_module("app.services.face_review")
 search_api = importlib.import_module("app.api.search")
 
 
@@ -193,12 +194,12 @@ class OrphanSuggestionsPerformanceTests(unittest.TestCase):
                   vector.tobytes()) for index, vector in enumerate(vectors)],
             )
 
-    def test_profile_30000_faces_loads_prototypes_once_and_batches_scoring(self):
+    def test_profile_30000_faces_loads_assigned_index_once_and_batches_scoring(self):
         with Session(self.engine) as session:
             profiler = cProfile.Profile()
             with (
-                patch.object(face_api, "load_prototype_index", wraps=face_api.load_prototype_index) as load,
-                patch.object(face_api, "score_faces", wraps=face_api.score_faces) as score,
+                patch.object(face_review, "load_assigned_index", wraps=face_review.load_assigned_index) as load,
+                patch.object(face_review, "score_faces", wraps=face_review.score_faces) as score,
             ):
                 profiler.enable()
                 result = face_api.get_orphan_face_suggestions(
