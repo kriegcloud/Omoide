@@ -19,6 +19,7 @@ function selectionBar(deleteMedia = async () => ({ removed: 1, processed_ids: [1
   const selection = {
     selectedIds: new Set([101, 102]), loadedCount: 2, hasMore: false, listKey: 'original-list',
     clear: () => { clears++; selection.selectedIds = new Set(); },
+    setSelected: (ids) => { selection.selectedIds = new Set(ids); },
   };
   const instance = harness('frontend/src/components/SelectionActionBar.tsx', {
     'react-router-dom': { useLocation: () => ({ pathname: '/blur' }), matchPath: () => null },
@@ -52,7 +53,8 @@ for (const [label, action] of [
     await confirmation(bar.render()).props.onConfirm();
     assert.deepEqual(bar.calls, [{ ids: [101, 102], action }]);
     assert.deepEqual(bar.removed, [], 'service events reconcile processed ids across all caches; the bar must not patch one cache again');
-    assert.equal(bar.clears(), 1);
+    assert.equal(bar.clears(), 0, 'a selection changed after the dialog opened is not the confirmed one and stays');
+    assert.deepEqual([...bar.selection.selectedIds], [202]);
     const finished = bar.render();
     assert.equal(confirmation(finished).props.open, false);
     assert.equal(find(finished, 'Alert').props.children, 'Deleted 1; 1 skipped');
@@ -70,15 +72,15 @@ test('bulk deletion reports partial failures while retaining unprocessed ids in 
   assert.deepEqual(bar.removed, [], 'partial-result cache reconciliation belongs to the service bus');
 });
 
-test('failed bulk-delete request preserves selection and confirmation for retry', async () => {
+test('failed bulk-delete request restores the selection for retry and reports the error', async () => {
+  // Confirmation dismisses immediately (audit P07); on failure the selection comes back.
   const bar = selectionBar(async () => { throw new Error('Delete unavailable'); });
   button(bar.render(), 'Remove records…').props.onClick();
   await confirmation(bar.render()).props.onConfirm();
   const failed = bar.render();
-  assert.equal(bar.clears(), 0);
+  assert.deepEqual([...bar.selection.selectedIds].sort(), [101, 102]);
   assert.deepEqual(bar.removed, []);
-  assert.equal(confirmation(failed).props.open, true);
-  assert.equal(confirmation(failed).props.loading, false);
+  assert.equal(confirmation(failed).props.open, false);
   assert.equal(find(failed, 'Alert').props.children, 'Delete unavailable');
   assert.equal(find(failed, 'Alert').props.severity, 'error');
 });

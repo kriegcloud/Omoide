@@ -3,7 +3,7 @@ import { selectionBindings } from "../hotkeys/keymap";
 import ConfirmDialog from "./ConfirmDialog";
 import { resolveConfirmCopy } from "./BulkResolveToolbar";
 import { useUndo } from "../context/UndoContext";
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   Button,
   Chip,
@@ -39,7 +39,10 @@ import { describeEditOps } from "../utils/editorOps";
 import RepairDialog from "./RepairDialog";
 
 export const SelectionActionBar: React.FC = () => {
-  const { selectedIds, clear, loadedCount, hasMore, listKey } = useSelection();
+  const { selectedIds, clear, setSelected, loadedCount, hasMore, listKey } = useSelection();
+  // Live view of the selection for async completions; the render closure goes stale.
+  const liveSelection = useRef(selectedIds);
+  liveSelection.current = selectedIds;
   const { push, refreshVisible } = useUndo();
   const removeItems = useListStore(state => state.removeItems);
   const lastEditOps = useLastEditStore((state) => state.ops);
@@ -78,11 +81,17 @@ export const SelectionActionBar: React.FC = () => {
     const target = pendingDelete;
     setPendingDelete(null);
     // Clear only the confirmation's selection, never a new selection made in flight.
-    if (selectedIds.size === target.ids.length && target.ids.every(id => selectedIds.has(id))) clear();
+    const cleared = selectedIds.size === target.ids.length && target.ids.every(id => selectedIds.has(id));
+    if (cleared) clear();
     try {
       const result = await bulkDeleteMedia(target.ids, target.action);
       setSnackbar({ open: true, message: `Deleted ${result.removed}${result.skipped_ids.length ? `; ${result.skipped_ids.length} skipped` : ""}${result.errors.length ? `; ${result.errors.length} failed` : ""}`, severity: result.errors.length ? "error" : "success" });
-    } catch { /* Global operation feedback retains uncertain/error outcomes. */ }
+    } catch (error) {
+      // Give the selection back for a retry unless the user has started a new one.
+      const live = liveSelection.current;
+      if (cleared && (live.size === 0 || live === selectedIds)) setSelected?.(target.ids);
+      setSnackbar({ open: true, message: error instanceof Error ? error.message : "Delete failed", severity: "error" });
+    }
   };
   useHotkeys(selectionBindings, (event) => {
     if (event.key === "Delete") requestDelete(event.shiftKey ? "DELETE_RECORDS" : "DELETE_FILES");
