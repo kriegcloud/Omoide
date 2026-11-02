@@ -28,7 +28,10 @@ from app.utils import vector_to_blob
 from scripts.migrate_face_embeddings import _backup_database, _pad_for_detection, _rebuild_people
 
 
-def reembed(client):
+def reembed(client, *, keep_unresolved=False, dry_run=None):
+    """Re-embed faces. keep_unresolved retains the old vector (same model, near-identical
+    space) for faces whose thumbnail cannot be re-detected; dry_run saves staged vectors
+    to an .npz and writes nothing."""
     health = client.health()
     if health.get('mirrorTta') is not True or health.get('model') != ADA_FACE_MODEL_NAME:
         raise RuntimeError('Re-embedding requires the AdaFace service with mirror TTA enabled')
@@ -61,7 +64,14 @@ def reembed(client):
         except (OSError, ValueError, RuntimeError) as error:
             unresolved.append(face_id)
             print(f'Face {face_id}: unresolved ({error})')
-    if unresolved:
+    print(f'Staged {len(staged)} faces; unresolved {len(unresolved)}')
+    if dry_run is not None:
+        np.savez(dry_run, face_ids=np.array([row[0] for row in staged], dtype=np.int64),
+                 vectors=np.stack([np.frombuffer(row[2], dtype=np.float32) for row in staged]) if staged else np.empty((0, 512), np.float32),
+                 norms=np.array([row[3] for row in staged], dtype=np.float32),
+                 unresolved=np.array(unresolved, dtype=np.int64))
+        return {'rewritten': 0, 'kept': len(unresolved), 'staged': len(staged)}
+    if unresolved and not keep_unresolved:
         raise RuntimeError(f'{len(unresolved)} unresolved faces; no vectors changed. Repair thumbnails/service and rerun.')
     print(f'Integrity-checked backup: {_backup_database()}')
     with Session(engine) as session:
@@ -77,17 +87,22 @@ def reembed(client):
             session.exec(text('UPDATE face SET embedding_norm=:norm WHERE id=:id').bindparams(norm=norm,id=face_id))
         # This existing helper commits only after all centroids are rebuilt.
         _rebuild_people(session)
-    print(f'Re-embedded {len(staged)} faces; assignments retained; person centroids rebuilt.')
+    print(f'Re-embedded {len(staged)} faces; kept {len(unresolved)} old vectors; assignments retained; person centroids rebuilt.')
+    return {'rewritten': len(staged), 'kept': len(unresolved), 'staged': len(staged)}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--dry-run', type=Path, metavar='NPZ', help='stage only; save vectors to NPZ')
+    parser.add_argument('--keep-unresolved', action='store_true',
+                        help='keep the old vector for faces whose thumbnail cannot be re-detected')
     args = parser.parse_args()
-    if not args.apply:
-        parser.error('--apply is required; quiesce matching/extraction tasks first')
+    if not args.apply and args.dry_run is None:
+        parser.error('--apply (quiesce matching/extraction tasks first) or --dry-run is required')
     reembed(AdaFaceSocketAnalysis(settings.face_recognition.inference_socket_path,
-                                 settings.face_recognition.inference_timeout_seconds))
+                                 settings.face_recognition.inference_timeout_seconds),
+            keep_unresolved=args.keep_unresolved, dry_run=args.dry_run)
 
 
 if __name__ == '__main__':

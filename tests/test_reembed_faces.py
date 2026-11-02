@@ -65,3 +65,29 @@ class ReembedTests(unittest.TestCase):
         self.client.health = lambda: {'mirrorTta':False}
         with self.assertRaisesRegex(RuntimeError, 'mirror'):
             self.module.reembed(self.client)
+
+    def test_keep_unresolved_retains_old_vector_and_rewrites_the_rest(self):
+        with Session(self.engine) as session:
+            media = session.exec(text('SELECT id FROM media')).scalar_one()
+            session.add(Face(media_id=media, person_id=1, bbox=[0,0,20,20], thumbnail_path='missing.jpg', assignment_source='manual'))
+            session.commit()
+            session.exec(text("INSERT INTO face_embeddings VALUES (2,1,:old)").bindparams(old=np.full(512, 2, dtype=np.float32).tobytes()))
+            session.commit()
+        summary = self.module.reembed(self.client, keep_unresolved=True)
+        self.assertEqual((summary['rewritten'], summary['kept']), (1, 1))
+        with Session(self.engine) as session:
+            kept = session.exec(text('SELECT embedding FROM face_embeddings WHERE face_id=2')).scalar_one()
+            self.assertEqual(kept, np.full(512, 2, dtype=np.float32).tobytes())
+            self.assertIsNone(session.get(Face, 2).embedding_norm)
+            self.assertEqual(session.get(Face, 1).embedding_norm, 15.)
+
+    def test_dry_run_writes_nothing_and_saves_staged_vectors(self):
+        out = self.root / 'staged.npz'
+        summary = self.module.reembed(self.client, dry_run=out)
+        self.assertEqual(summary['rewritten'], 0)
+        data = np.load(out)
+        self.assertEqual(list(data['face_ids']), [1])
+        self.assertEqual(data['vectors'].shape, (1, 512))
+        with Session(self.engine) as session:
+            self.assertIsNone(session.get(Face, 1).embedding_norm)
+            self.assertEqual(session.exec(text('SELECT embedding FROM face_embeddings')).scalar_one(), np.ones(512, dtype=np.float32).tobytes())
