@@ -17,7 +17,7 @@ export class ListRevision {
   private updated = new Map<number, { revision: number; item: MediaPatch }>();
   remove(ids: Iterable<number>) {
     const revision = ++this.revision;
-    for (const id of ids) if (!this.removed.has(id)) this.removed.set(id, revision);
+    for (const id of ids) this.removed.set(id, revision);
   }
   patch(items: MediaPatch[]) {
     const revision = ++this.revision;

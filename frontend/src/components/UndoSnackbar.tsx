@@ -1,3 +1,4 @@
+import { waitForOperation } from "../stores/optimisticOperations";
 import { useRef, useState } from "react";
 import { Alert, Button, CircularProgress, Snackbar } from "@mui/material";
 import { useUndo, type UndoableAction } from "../context/UndoContext";
@@ -11,7 +12,8 @@ function UndoMessage({ action, dismiss }: { action: UndoableAction; dismiss: () 
     running.current = true;
     setStatus("busy");
     try {
-      await action.undo();
+      const receipt = action.operationId ? await waitForOperation(action.operationId) : undefined;
+      await action.undo(receipt);
       setStatus("done");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Undo failed");

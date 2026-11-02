@@ -36,3 +36,7 @@ export async function runOptimistic<Snapshot, Result>({ apply, request, rollback
   const snapshot = apply();
   try { return await request(); } catch (error) { rollback(snapshot); throw error; }
 }
+
+/** Command API is opt-in; legacy runOptimistic callers retain their contract. */
+export { startOperation as runOptimisticCommand } from "./optimisticOperations";
+export type { OptimisticCommand, OperationHandle, MutationReceipt } from "./optimisticOperations";

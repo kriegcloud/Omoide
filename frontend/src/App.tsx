@@ -8,6 +8,7 @@ import { UndoProvider } from "./context/UndoContext";
 import { SelectionProvider } from "./context/SelectionContext";
 import { ScrollToTop } from "./components/ScrollToTop";
 import { HotkeyProvider } from "./hotkeys/HotkeyProvider";
+import { MutationFeedback } from "./components/MutationFeedback";
 import { AppRoutes } from "./routes";
 
 export default function App() {
@@ -24,6 +25,7 @@ export default function App() {
               <HotkeyProvider>
                 <ScrollToTop />
                 <AppRoutes />
+                <MutationFeedback />
               </HotkeyProvider>
             </Router>
           </SelectionProvider>

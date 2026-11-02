@@ -1,3 +1,5 @@
+import { acknowledgeQuery, operationVersion, optimisticOperations, projectList, registerQueryEntities, registerQueryRefresh } from "../stores/optimisticOperations";
+import { entityKey, type EntityKind } from "../stores/queryKeys";
 import { mutationBus } from "../stores/mutationBus";
 import { ListRevision, mergeUnique } from "../stores/listReconciliation";
 import { useUndoRefresh } from "../context/UndoContext";
@@ -28,8 +30,13 @@ export interface CursorListResult<T> {
 
 export function useCursorList<T extends { id: number }>(
   fetcher: (cursor: string | null) => Promise<CursorListPage<T>>,
-  refreshKey = 0
+  refreshKey = 0,
+  optimistic?: { queryKey: string; entityKind: EntityKind }
 ): CursorListResult<T> {
+  const query = optimistic?.queryKey;
+  const kind = optimistic?.entityKind;
+  const [, notifyOperations] = useState(0);
+  useEffect(() => query ? optimisticOperations.subscribe(() => notifyOperations(value => value + 1)) : undefined, [query]);
   const [items, setItems] = useState<T[]>([]);
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -56,6 +63,7 @@ export function useCursorList<T extends { id: number }>(
       }
       const generation = generationRef.current;
       const started = revision.current.revision;
+      const operationsStarted = query ? operationVersion() : 0;
       const removedAtStart = removalSequence.current;
       const additionalAtStart = additionalRemovals.current;
       inFlightRef.current = true;
@@ -64,6 +72,7 @@ export function useCursorList<T extends { id: number }>(
       try {
         const page = await fetcher(cursor);
         if (generation !== generationRef.current) return;
+        if (!append && query) acknowledgeQuery(query, operationsStarted);
         const incoming = revision.current.reconcile(page.items, started, !append);
         setItems((prev) => (append ? mergeUnique(prev, incoming) : incoming));
         const removedDuringRequest = new Set([...countedRemovals.current].filter(([, sequence]) => sequence > removedAtStart).map(([id]) => id));
@@ -85,8 +94,10 @@ export function useCursorList<T extends { id: number }>(
         }
       }
     },
-    [fetcher]
+    [fetcher, query]
   );
+
+  useEffect(() => query ? registerQueryRefresh(query, () => fetchPage(null, false, true)) : undefined, [query, fetchPage]);
 
   useEffect(() => {
     fetchPage(null, false);
@@ -116,8 +127,8 @@ export function useCursorList<T extends { id: number }>(
   }, []);
 
   const selectVisible = useCallback(() => {
-    setSelectedIds(new Set(items.map((item) => item.id)));
-  }, [items]);
+    setSelectedIds(new Set((query && kind ? projectList(query, kind, items).items : items).map((item) => item.id)));
+  }, [items, query, kind]);
 
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
@@ -125,11 +136,12 @@ export function useCursorList<T extends { id: number }>(
     (ids: Iterable<number>, removedCount?: number) => {
       const idSet = ids instanceof Set ? ids : new Set(ids);
       const sequence = ++removalSequence.current;
-      for (const id of idSet) countedRemovals.current.set(id, sequence);
+      const newlyRemoved = [...idSet].filter(id => !countedRemovals.current.has(id));
+      for (const id of newlyRemoved) countedRemovals.current.set(id, sequence);
       additionalRemovals.current += Math.max(0, (removedCount ?? idSet.size) - idSet.size);
       revision.current.remove(idSet);
       setItems((prev) => prev.filter((item) => !idSet.has(item.id)));
-      setTotal((prev) => Math.max(0, prev - (removedCount ?? idSet.size)));
+      setTotal((prev) => Math.max(0, prev - newlyRemoved.length - Math.max(0, (removedCount ?? idSet.size) - idSet.size)));
       setSelectedIds((prev) => {
         const next = new Set(prev);
         idSet.forEach((id) => next.delete(id));
@@ -160,9 +172,11 @@ export function useCursorList<T extends { id: number }>(
   const refreshId = useId();
   useUndoRefresh(`cursor-list:${refreshId}`, () => fetchPage(null, false, true));
 
+  useEffect(() => query && kind ? registerQueryEntities(query, items.map(item => entityKey(kind, item.id))) : undefined, [items, query, kind]);
+  const projected = query && kind ? projectList(query, kind, items, total) : { items, total };
   return {
-    items,
-    total,
+    items: projected.items,
+    total: projected.total ?? total,
     hasMore,
     isLoading,
     error,

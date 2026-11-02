@@ -1,8 +1,9 @@
+import { acknowledgeQuery, operationVersion, optimisticOperations, projectList, registerQueryEntities, registerQueryRefresh } from "../stores/optimisticOperations";
 import { mutationBus } from "../stores/mutationBus";
 import { ListRevision, mergeUnique } from "../stores/listReconciliation";
 import ListState from "./ListState";
 import { useUndoRefresh } from "../context/UndoContext";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Masonry from "react-masonry-css";
 import { Box, CircularProgress } from "@mui/material";
 import { useInView } from "react-intersection-observer";
@@ -24,8 +25,11 @@ interface Props {
   listKey: string;
   fetcher: (cursor: string | null, signal: AbortSignal) => Promise<CursorPage<Media>>;
   empty?: React.ReactNode;
-  /** Bumping this value clears and refetches the list. */
+  /** Bumping this value revalidates while retaining the current list. */
   refreshToken?: unknown;
+  optimistic?: boolean;
+  /** Lane K can provide a windowed renderer without taking ownership of this adapter. */
+  renderItems?: (items: Media[], onItemClick: ReturnType<typeof useGridSelection<number>>["onItemClick"]) => React.ReactNode;
   onItemsChange?: (items: Media[]) => void;
 }
 
@@ -36,9 +40,17 @@ export function CursorMediaGrid({
   empty,
   refreshToken,
   onItemsChange,
+  optimistic = false,
+  renderItems,
 }: Props) {
   const { ref: loaderRef, inView } = useInView({ threshold: 0.5 });
+  const [operationsRevision, notifyOperations] = useState(0);
+  useEffect(() => optimistic ? optimisticOperations.subscribe(() => notifyOperations(value => value + 1)) : undefined, [optimistic]);
   const [items, setItems] = useState<Media[]>([]);
+  const visibleItems = useMemo(() => {
+    void operationsRevision;
+    return optimistic ? projectList(listKey, "media", items).items : items;
+  }, [optimistic, listKey, items, operationsRevision]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
@@ -51,7 +63,7 @@ export function CursorMediaGrid({
   const { isSelecting, selectedIds, setSelected, beginSelecting, clear } = useSelection();
   const { marqueeRect, onItemClick } = useGridSelection<number>({
     listKey,
-    loadedCount: items.length,
+    loadedCount: visibleItems.length,
     hasMore,
     containerRef: gridRef,
     itemSelector: "[data-selectable-id]",
@@ -69,12 +81,14 @@ export function CursorMediaGrid({
       if (inFlightRef.current) return;
       const seq = ++requestSeq.current;
       const started = revision.current.revision;
+      const operationsStarted = optimistic ? operationVersion() : 0;
       inFlightRef.current = true;
       setIsLoading(true);
       setError(null);
       try {
         const page = await fetcher(fromCursor, controller.current.signal);
         if (seq !== requestSeq.current) return;
+        if (replace && optimistic) acknowledgeQuery(listKey, operationsStarted);
         const incoming = revision.current.reconcile(page.items, started, replace);
         setItems((prev) => replace ? incoming : mergeUnique(prev, incoming));
         setCursor(page.next_cursor);
@@ -91,7 +105,7 @@ export function CursorMediaGrid({
         }
       }
     },
-    [fetcher]
+    [fetcher, optimistic, listKey]
   );
 
   useUndoRefresh(`cursor:${listKey}`, async () => {
@@ -100,6 +114,13 @@ export function CursorMediaGrid({
     await loadPage(null, true, true);
   });
 
+  useEffect(() => optimistic ? registerQueryRefresh(listKey, async () => {
+    requestSeq.current += 1;
+    inFlightRef.current = false;
+    await loadPage(null, true, true);
+  }) : undefined, [optimistic, listKey, loadPage]);
+
+  const previousKey = useRef(listKey);
   useEffect(() => {
     controller.current.abort();
     controller.current = new AbortController();
@@ -107,7 +128,11 @@ export function CursorMediaGrid({
     // start immediately even if the previous list is still resolving.
     requestSeq.current += 1;
     inFlightRef.current = false;
-    setItems([]);
+    if (previousKey.current !== listKey) {
+      setItems([]);
+      revision.current = new ListRevision();
+      previousKey.current = listKey;
+    }
     setCursor(null);
     setHasMore(true);
     void loadPage(null, true);
@@ -120,7 +145,7 @@ export function CursorMediaGrid({
     }
   }, [inView, hasMore, isLoading, error, cursor, loadPage]);
 
-  useEffect(() => { onItemsChange?.(items); }, [items, onItemsChange]);
+  useEffect(() => { onItemsChange?.(visibleItems); }, [visibleItems, onItemsChange]);
   useEffect(() => mutationBus.subscribe(event => {
     if (event.type === "media:deleted") {
       revision.current.remove(event.ids);
@@ -137,16 +162,18 @@ export function CursorMediaGrid({
     }
   }), [listKey, loadPage]);
 
+  useEffect(() => optimistic ? registerQueryEntities(listKey, items.map(item => `media:${item.id}` as const)) : undefined, [optimistic, listKey, items]);
+
   return (
     <Box ref={gridRef} sx={{ position: "relative" }}>
-      <ListState loading={isLoading && items.length === 0} error={error} empty={!isLoading && items.length === 0} action={empty} onRetry={() => { void loadPage(cursor, items.length === 0); }} />
-      {items.length > 0 && (
+      <ListState loading={isLoading && visibleItems.length === 0} error={error} empty={!isLoading && visibleItems.length === 0} action={empty} onRetry={() => { void loadPage(cursor, visibleItems.length === 0); }} />
+      {visibleItems.length > 0 && (renderItems ? renderItems(visibleItems, onItemClick) : (
         <Masonry
           breakpointCols={breakpointColumnsObj}
           className="my-masonry-grid"
           columnClassName="my-masonry-grid_column"
         >
-          {items.map((media) => (
+          {visibleItems.map((media) => (
             <div key={media.id}>
               <MediaCard
                 media={media}
@@ -156,7 +183,7 @@ export function CursorMediaGrid({
             </div>
           ))}
         </Masonry>
-      )}
+      ))}
       {isLoading && (
         <Box textAlign="center" py={3}>
           <CircularProgress />

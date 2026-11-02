@@ -1,6 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { mutationBus, type MediaPatch } from "./mutationBus";
-import { ListRevision, mergeUnique } from "./listReconciliation";
+import { ListRevision, listItemId, mergeUnique } from "./listReconciliation";
+import { acknowledgeQuery, isQueryPending, operationVersion, optimisticOperations, projectList, projectEntity, registerQueryEntities, registerQueryRefresh, unregisterQuery } from "./optimisticOperations";
+import { entityKey, queryEntityKind, type EntityKind, type EntityKey } from "./queryKeys";
 import { create } from "zustand";
 export type PageResponse<T> = import("../types").CursorPage<T> & {total?: number};
 import { CursorPage } from "../types";
@@ -21,10 +23,22 @@ function membership<T>(key: string, items: T[]): T[] {
 }
 
 
-export async function refreshCachedList(listKey: string) {
+const cachedRefreshes = new Map<string, Promise<void>>();
+export function refreshCachedList(listKey: string): Promise<void> {
+  const pending = cachedRefreshes.get(listKey);
+  if (pending) return pending;
+  const request = performCachedRefresh(listKey).finally(() => cachedRefreshes.delete(listKey));
+  cachedRefreshes.set(listKey, request);
+  return request;
+}
+async function performCachedRefresh(listKey: string) {
   const fetcher = initialFetchers.get(listKey);
   if (!fetcher) return; // Some cards belong to a page-owned cursor list.
-  useListStore.getState().clearList(listKey);
+  generations.set(listKey, (generations.get(listKey) ?? 0) + 1);
+  useListStore.setState(state => {
+    const list = state.lists[listKey];
+    return list ? { lists: { ...state.lists, [listKey]: { ...list, stale: true, isLoading: false } } } : state;
+  });
   await useListStore.getState().fetchInitial(listKey, fetcher);
   const error = useListStore.getState().lists[listKey]?.error;
   if (error) throw new Error(`List refresh failed: ${error}`);
@@ -39,6 +53,7 @@ export interface ListState<T> {
   error: string | null;
   total?: number;
   stale?: boolean;
+  loaded?: boolean;
 }
 
 // The state for the entire store, holding multiple lists
@@ -90,12 +105,13 @@ export const useListStore = create<ListStoreState>((set, get) => ({
     initialFetchers.set(listKey, fetcher);
     const generation = generations.get(listKey) ?? 0;
     const revision = journal(listKey).revision;
+    const operationsStarted = operationVersion();
     const existingList = get().lists[listKey];
     // Do not fetch if the list is already loading or if it already has content.
     // A new search will have a new listKey, so this check will allow the fetch.
     if (
       existingList?.isLoading ||
-      (existingList && !existingList.stale && existingList.items.length > 0)
+      (existingList && !existingList.stale && existingList.loaded)
     ) {
       return;
     }
@@ -103,7 +119,7 @@ export const useListStore = create<ListStoreState>((set, get) => ({
     set((state) => ({
       lists: {
         ...state.lists,
-        [listKey]: { ...defaultListState, isLoading: true },
+        [listKey]: { ...defaultListState, ...existingList, isLoading: true, error: null },
       },
     }));
 
@@ -111,11 +127,13 @@ export const useListStore = create<ListStoreState>((set, get) => ({
       const response = await fetcher();
       if ((generations.get(listKey) ?? 0) !== generation) return;
       const items = membership(listKey, journal(listKey).reconcile(response.items, revision, true));
+      acknowledgeQuery(listKey, operationsStarted);
       set((state) => ({
         lists: {
           ...state.lists,
           [listKey]: {
             items,
+            loaded: true,
             total: "total" in response ? Math.max(0, Number(response.total) - response.items.length + items.length) : undefined,
             nextCursor: response.next_cursor,
             hasMore: response.next_cursor !== null,
@@ -132,8 +150,9 @@ export const useListStore = create<ListStoreState>((set, get) => ({
           ...state.lists,
           [listKey]: {
             ...defaultListState,
+            ...get().lists[listKey],
+            stale: true,
             isLoading: false,
-            hasMore: false,
             error: error instanceof Error ? error.message : String(error),
           },
         },
@@ -326,11 +345,11 @@ mutationBus.subscribe(event => {
   const state = useListStore.getState();
   if (event.type === "list:invalidate") {
     // Clear unmounted variants; refresh a mounted consumer through its subscription.
-    state.clearListsByPrefix(event.prefix);
+    invalidateCachedLists(event.prefix);
     return;
   }
   if (event.type === "person:created" || event.type === "person:changed") {
-    state.clearListsByPrefix("people-grid");
+    invalidateCachedLists("people-grid");
     return;
   }
   if (event.type === "duplicates:resolved") {
@@ -343,10 +362,10 @@ mutationBus.subscribe(event => {
     }
     return;
   }
-  if (event.type === "face:detached") { state.clearListsByPrefix("orphan-faces"); return; }
+  if (event.type === "face:detached") { invalidateCachedLists("orphan-faces"); return; }
   if (!["media:deleted", "media:updated", "media:moved"].includes(event.type)) return;
   if (event.type === "media:deleted") {
-    for (const key of Object.keys(state.lists)) if (sceneList(key)) state.clearList(key);
+    for (const key of Object.keys(state.lists)) if (sceneList(key)) invalidateCachedLists(key);
   }
   const removed = new Set(event.type === "media:deleted" ? event.ids : []);
   const patches = new Map((event.type === "media:updated" || event.type === "media:moved" ? event.items : []).map(item => [item.id, item]));
@@ -364,12 +383,13 @@ mutationBus.subscribe(event => {
   useListStore.setState({ lists });
   if (event.type === "media:moved") {
     // Folder membership is server-owned. All variants may include a folder predicate.
-    for (const key of Object.keys(lists)) if (mediaList(key)) state.clearList(key);
+    for (const key of Object.keys(lists)) if (mediaList(key)) invalidateCachedLists(key);
   }
 });
 
 /** Only mounted lists refetch on invalidation; other cached variants stay cleared. */
 export function useListInvalidation(listKey: string) {
+  useEffect(() => pinCachedList(listKey), [listKey]);
   useEffect(() => mutationBus.subscribe(event => {
     const shouldRefresh = (event.type === "list:invalidate" && listKey.startsWith(event.prefix)) ||
       (event.type === "media:moved" && mediaList(listKey)) ||
@@ -381,4 +401,67 @@ export function useListInvalidation(listKey: string) {
       if (fetcher) void useListStore.getState().fetchInitial(listKey, fetcher);
     });
   }), [listKey]);
+}
+
+/** Invalidating preserves rows while an interested mounted view revalidates. */
+export function invalidateCachedLists(prefix: string) {
+  for (const key of Object.keys(useListStore.getState().lists)) if (key.startsWith(prefix)) {
+    generations.set(key, (generations.get(key) ?? 0) + 1);
+  }
+  useListStore.setState(state => ({ lists: Object.fromEntries(Object.entries(state.lists).map(([key, list]) =>
+    [key, key.startsWith(prefix) ? { ...list, stale: true, isLoading: false } : list])) }));
+}
+
+/** Explicit adapter; base cache stays authoritative for legacy service callers. */
+export function useOptimisticCachedList<T>(listKey: string, kind: EntityKind | undefined = queryEntityKind(listKey)): ListState<T> | undefined {
+  const base = useListStore(state => readCachedList<T>(state, listKey));
+  const operations = useSyncExternalStore(optimisticOperations.subscribe, optimisticOperations.getSnapshot, optimisticOperations.getSnapshot);
+  useEffect(() => pinCachedList(listKey), [listKey]);
+  useEffect(() => registerQueryRefresh(listKey, () => refreshCachedList(listKey)), [listKey]);
+  useEffect(() => {
+    if (!kind || !base) return;
+    return registerQueryEntities(listKey, base.items.flatMap(item => {
+      const id = listItemId(item); return id === undefined ? [] : [entityKey(kind, id)];
+    }));
+  }, [listKey, kind, base]);
+  return useMemo(() => {
+    // operation snapshot is a dependency even when base has not changed.
+    void operations;
+    if (!base) return undefined;
+    return { ...base, ...projectList(listKey, kind, base.items, base.total) };
+  }, [base, operations, listKey, kind]);
+}
+const activeLists = new Map<string, number>();
+const lastUsed = new Map<string, number>();
+export function pinCachedList(key: string): () => void {
+  activeLists.set(key, (activeLists.get(key) ?? 0) + 1);
+  lastUsed.set(key, Date.now());
+  return () => {
+    const count = (activeLists.get(key) ?? 1) - 1;
+    if (count) activeLists.set(key, count); else activeLists.delete(key);
+  };
+}
+/** Evict only inactive/unpinned queries and all their associated metadata. */
+export function evictCachedLists(limit = 80): string[] {
+  const lists = { ...useListStore.getState().lists };
+  const candidates = Object.keys(lists).filter(key => !activeLists.has(key) && !isQueryPending(key))
+    .sort((a, b) => (lastUsed.get(a) ?? 0) - (lastUsed.get(b) ?? 0));
+  const removed: string[] = [];
+  while (Object.keys(lists).length > limit && candidates.length) {
+    const key = candidates.shift()!;
+    if (lists[key].isLoading) continue;
+    delete lists[key]; initialFetchers.delete(key); revisions.delete(key); generations.delete(key); lastUsed.delete(key); unregisterQuery(key);
+    removed.push(key);
+  }
+  if (removed.length) useListStore.setState({ lists });
+  return removed;
+}
+
+/** Detail adapter shares the same overlays and lifetime as every list adapter. */
+export function useOptimisticEntity<T>(key: EntityKey, base: T, query = "detail"): T | null {
+  const operations = useSyncExternalStore(optimisticOperations.subscribe, optimisticOperations.getSnapshot, optimisticOperations.getSnapshot);
+  return useMemo(() => {
+    void operations;
+    return projectEntity(key, base, query);
+  }, [key, base, query, operations]);
 }

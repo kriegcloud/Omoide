@@ -1,10 +1,13 @@
+import type { MutationReceipt } from "../stores/optimisticOperations";
 import { mutationBus, type MutationType } from "../stores/mutationBus";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 export interface UndoableAction {
   id: string;
   label: string;
-  undo: () => Promise<void>;
+  undo: (receipt?: MutationReceipt) => Promise<void>;
+  /** Opt-in: delay inverse until original has authoritative successful members. */
+  operationId?: string;
   ttlMs?: number;
 }
 
