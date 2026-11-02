@@ -13,6 +13,11 @@ Type=simple
 WorkingDirectory=/home/elpresidank/ai/ComfyUI
 Environment=ROCM_PATH=/opt/rocm
 Environment=PYTHONUNBUFFERED=1
+# The Majoor assets manager points ComfyUI's output directory at ComfyUI/temp,
+# and upstream ComfyUI deletes temp on start and quit unless this is set
+# (local guard in app/assets/lifecycle.py, same as ~/ai/bin/comfy-start).
+# Without it, starting this unit wipes every saved output.
+Environment=COMFY_KEEP_TEMP=1
 # Same arguments comfy-cli used interactively; the server stays loopback-only.
 ExecStart=/home/elpresidank/ai/ComfyUI/.venv/bin/python main.py --listen 127.0.0.1 --port 8188 --enable-manager
 Restart=on-failure
