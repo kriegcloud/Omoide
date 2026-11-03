@@ -30,10 +30,15 @@ export function useDuplicateGroupFocus(ids: number[], listKey: string, scrollToI
     }
   }, [ids, listKey, focusedId]);
 
+  // Only a focus move scrolls. Cursor pages, prunes and refreshes change `ids`
+  // too; scrolling on those yanked the window back to a focused group the user
+  // had scrolled away from, every time another page loaded.
+  const idsRef = useRef(ids);
+  idsRef.current = ids;
   useLayoutEffect(() => {
-    const index = focusedId === null ? -1 : ids.indexOf(focusedId);
+    const index = focusedId === null ? -1 : idsRef.current.indexOf(focusedId);
     if (index >= 0) scrollToIndex(index);
-  }, [focusedId, ids, scrollToIndex]);
+  }, [focusedId, scrollToIndex]);
 
   const move = (direction: number) => {
     awaitingNext.current = null;

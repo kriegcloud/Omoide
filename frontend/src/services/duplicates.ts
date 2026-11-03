@@ -1,6 +1,6 @@
 import { mutationBus } from "../stores/mutationBus";
 import { API } from "../config";
-import { DuplicatePage, Task, DuplicateStats } from "../types";
+import { DuplicatePage, Task, DuplicateStats, DuplicateGroup } from "../types";
 
 export const getDuplicates = async (
   cursor: string | null = null,
@@ -23,6 +23,35 @@ export const getDuplicates = async (
     throw new Error("Failed to fetch duplicates");
   }
   return response.json();
+};
+
+/** `limit` cap of GET /api/duplicates (app/api/duplicates.py). */
+const MAX_DUPLICATE_PAGE = 50;
+
+/**
+ * A first page covering at least `depth` groups (and at least `pageSize`).
+ * Registered as the list's initial fetcher, so an authoritative re-read keeps
+ * every page the user already scrolled through; a 10-group re-read collapsed
+ * the list and threw the window back up the page.
+ */
+export const getDuplicatesThrough = async (
+  depth: number,
+  sortBy: "count" | "size" = "count",
+  mediaType?: "image" | "video",
+  pageSize: number = 10,
+  minCount: number = 2,
+  folder?: string | null,
+): Promise<DuplicatePage> => {
+  const target = Math.max(pageSize, depth);
+  const items: DuplicateGroup[] = [];
+  let cursor: string | null = null;
+  do {
+    const page = await getDuplicates(cursor, sortBy, mediaType, Math.min(MAX_DUPLICATE_PAGE, target - items.length), minCount, folder);
+    items.push(...page.items);
+    cursor = page.next_cursor;
+    if (!page.items.length) break;
+  } while (cursor !== null && items.length < target);
+  return { items, next_cursor: cursor };
 };
 
 export const getDuplicateStats = async (folder?: string | null): Promise<DuplicateStats> => {

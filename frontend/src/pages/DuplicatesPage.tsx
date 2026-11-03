@@ -1,7 +1,7 @@
 import GalleryPage from "../components/GalleryPage";
 import { useMutationRefresh, useUndoRefresh } from "../context/UndoContext";
 import ListStateView from "../components/ListState";
-import { useListInvalidation } from "../stores/useListStore";
+import { refreshCachedList, useListInvalidation } from "../stores/useListStore";
 import React, {
   useCallback,
   useEffect,
@@ -25,8 +25,8 @@ import {
   Snackbar,
 } from "@mui/material";
 import { useListStore, defaultListState, type ListState } from "../stores/useListStore";
-import { getDuplicates, getDuplicateStats, resolveDuplicates } from "../services/duplicates";
-import { createDuplicateResolver, pruneDuplicateGroups, type DuplicateResolveSnapshot } from "../services/duplicateResolver";
+import { getDuplicates, getDuplicatesThrough, getDuplicateStats, resolveDuplicates } from "../services/duplicates";
+import { createDuplicateResolver, duplicateListNeedsRefresh, pruneDuplicateGroups, type DuplicateResolveSnapshot } from "../services/duplicateResolver";
 import { mutationBus } from "../stores/mutationBus";
 import { DuplicateGroup } from "../components/DuplicateGroup";
 import type { DuplicateGroup as GroupType, DuplicateStats } from "../types";
@@ -168,7 +168,7 @@ const clearList = useListStore(state => state.clearList);
     onExitSelection: clear,
     allowPlainDragOnItems: false,
   });
-  useListInvalidation(listKey);
+  useListInvalidation(listKey, duplicateListNeedsRefresh);
   const refreshKey = useTaskCompletionVersion(["find_duplicates", "generate_hashes"]);
   const { activeTasks } = useTaskEvents();
   const duplicateTask = activeTasks.find(
@@ -190,13 +190,19 @@ const clearList = useListStore(state => state.clearList);
   const headerOffsetRef = useRef(headerOffset);
   headerOffsetRef.current = headerOffset;
 
+  // The registered initial fetcher is what refreshCachedList re-runs, so size it
+  // to the loaded depth (10 for a fresh list) rather than one 10-group page.
+  const firstPage = useCallback(() => getDuplicatesThrough(
+    useListStore.getState().lists[listKey]?.items.length ?? 0, sortBy, mt, 10, minCount, folder,
+  ), [listKey, sortBy, mt, minCount, folder]);
+
   useEffect(() => {
     clearList(listKey);
-    fetchInitial(listKey, () => getDuplicates(null, sortBy, mt, 10, minCount, folder));
+    fetchInitial(listKey, firstPage);
     setRowHeights(new Map());
     const element = gridRef.current;
     if (element) window.scrollTo({ top: Math.max(0, element.getBoundingClientRect().top + window.scrollY - headerOffsetRef.current), behavior: "instant" });
-  }, [fetchInitial, listKey, clearList, refreshKey, sortBy, mt, minCount, folder]);
+  }, [fetchInitial, listKey, clearList, refreshKey, firstPage]);
 
   // Match other galleries: prefetch when the end is within 1.5 window heights.
   useEffect(() => {
@@ -289,18 +295,16 @@ const clearList = useListStore(state => state.clearList);
   // page state is read through a ref so the resolver is created once.
   const [resolvingCount, setResolvingCount] = useState(0);
   const [resolveError, setResolveError] = useState<string | null>(null);
-  const resolverState = useRef({ handleGroupResolved, listKey, sortBy, mt, minCount, folder });
-  resolverState.current = { handleGroupResolved, listKey, sortBy, mt, minCount, folder };
+  const resolverState = useRef({ handleGroupResolved, listKey });
+  resolverState.current = { handleGroupResolved, listKey };
   const resolver = useMemo(() => createDuplicateResolver({
     resolve: resolveDuplicates,
     removeGroup: (snapshot) => resolverState.current.handleGroupResolved(snapshot.groupId),
     onSettled: () => setStatsVersion((previous) => previous + 1),
     onError: (snapshot, error) => setResolveError(`Group ${snapshot.groupId} was not resolved: ${error.message}`),
+    // Re-read survivors in place (same depth); clearing collapsed the list to page 1.
     refresh: () => {
-      const current = resolverState.current;
-      useListStore.getState().clearList(current.listKey);
-      void useListStore.getState().fetchInitial(current.listKey, () =>
-        getDuplicates(null, current.sortBy, current.mt, 10, current.minCount, current.folder));
+      void refreshCachedList(resolverState.current.listKey).catch(error => console.error("Duplicate refresh failed", error));
       setStatsVersion((previous) => previous + 1);
     },
     onPendingChange: setResolvingCount,
@@ -323,7 +327,7 @@ const clearList = useListStore(state => state.clearList);
 
   const handleRetryLoad = () => {
     clearList(listKey);
-    fetchInitial(listKey, () => getDuplicates(null, sortBy, mt, 10, minCount, folder));
+    fetchInitial(listKey, firstPage);
   };
 
   const formatNumber = (value: number) => value.toLocaleString();
@@ -476,7 +480,9 @@ const clearList = useListStore(state => state.clearList);
         ))}
         <MarqueeSelectionBox container={gridRef.current} rect={marqueeRect} />
       </Box>
-      <Box ref={sentinelRef} sx={{ minHeight: hasMore ? LOADER_HEIGHT : 1 }}>
+      {/* Not a browser scroll anchor: anchoring to it dragged the window down
+          with every appended page, which loaded the next page, to the end. */}
+      <Box ref={sentinelRef} sx={{ minHeight: hasMore ? LOADER_HEIGHT : 1, overflowAnchor: "none" }}>
         {isLoading ? <ListStateView loading /> : !listError && !hasMore && groups.length === 0 ? (
           <ListStateView empty emptyMessage="No duplicates found." />
         ) : null}

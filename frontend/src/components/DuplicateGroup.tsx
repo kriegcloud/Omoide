@@ -90,12 +90,22 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
   };
 
   const groupRef = React.useRef<HTMLDivElement>(null);
+  const focusEffectRan = React.useRef(false);
   React.useEffect(() => {
+    // false on mount: the virtual list remounts a focused row whenever it re-enters
+    // the overscan (the page's scrollToIndex already placed rows reached with j/k).
+    const moved = focusEffectRan.current;
+    focusEffectRan.current = true;
     if (!focused) return;
-    // Run after dialog unmount/restore-focus and after react-window mounts a row.
+    // Run after dialog unmount/restore-focus and after the virtual list mounts a row.
     const frame = requestAnimationFrame(() => {
-      groupRef.current?.focus({ preventScroll: true });
-      groupRef.current?.scrollIntoView({ block: "nearest", behavior: "instant" });
+      const node = groupRef.current;
+      if (!node) return;
+      const active = document.activeElement;
+      // A remount must not pull the window to the row or take focus from another control.
+      if (!moved && active instanceof HTMLElement && active !== document.body && active.dataset.duplicateGroup === undefined) return;
+      node.focus({ preventScroll: true });
+      if (moved) node.scrollIntoView({ block: "nearest", behavior: "instant" });
     });
     return () => cancelAnimationFrame(frame);
   }, [focused]);
@@ -114,7 +124,7 @@ export const DuplicateGroup: React.FC<DuplicateGroupProps> = ({
     when: event => event.target === groupRef.current });
 
   return (
-    <Paper ref={groupRef} tabIndex={-1} onFocus={event => { if (event.target === event.currentTarget) onFocusGroup(); }}
+    <Paper ref={groupRef} tabIndex={-1} data-duplicate-group="" onFocus={event => { if (event.target === event.currentTarget) onFocusGroup(); }}
       aria-label={`Group ${group.group_id}, ${group.items.length} items`} variant="outlined"
       sx={{ outline: focused ? "2px solid" : undefined, outlineColor: "primary.main", outlineOffset: 0 }}>
       <Box

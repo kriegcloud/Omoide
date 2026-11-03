@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react";
-import { mutationBus, type MediaPatch } from "./mutationBus";
+import { mutationBus, type MediaPatch, type MutationEvent } from "./mutationBus";
 import { ListRevision, listItemId, mergeUnique } from "./listReconciliation";
 import { acknowledgeQuery, isQueryPending, operationVersion, optimisticOperations, projectList, projectEntity, registerQueryEntities, registerQueryRefresh, unregisterQuery } from "./optimisticOperations";
 import { entityKey, queryEntityKind, type EntityKind, type EntityKey } from "./queryKeys";
@@ -414,15 +414,17 @@ mutationBus.subscribe(event => {
   if (event.type !== "list:invalidate") invalidateCachedLists("", false);
 });
 
-/** Only mounted lists refetch on invalidation; other cached variants stay cleared. */
-export function useListInvalidation(listKey: string) {
+const always = () => true;
+/** Only mounted lists refetch on invalidation; other cached variants stay cleared.
+ * `needsRefresh` (a stable function) skips events the view already reconciled. */
+export function useListInvalidation(listKey: string, needsRefresh: (event: MutationEvent) => boolean = always) {
   useEffect(() => pinCachedList(listKey), [listKey]);
   useEffect(() => mutationBus.subscribe(event => {
-    const shouldRefresh = event.type !== "list:invalidate" || listKey.startsWith(event.prefix);
+    const shouldRefresh = (event.type !== "list:invalidate" || listKey.startsWith(event.prefix)) && needsRefresh(event);
     if (shouldRefresh) queueMicrotask(() => {
       void refreshCachedList(listKey).catch(error => console.error("Mutation refresh failed", error));
     });
-  }), [listKey]);
+  }), [listKey, needsRefresh]);
 }
 
 /** Invalidating preserves rows while an interested mounted view revalidates. */

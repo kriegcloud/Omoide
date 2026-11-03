@@ -7,6 +7,17 @@
  * a destructive resolve can partially commit (some members deleted) before it
  * fails — the server is the only source of truth for what survived.
  */
+import type { MutationEvent } from "../stores/mutationBus";
+
+/**
+ * Resolves and media deletions are already applied to the loaded groups (the group
+ * leaves, deleted members are pruned). Re-reading on them only cost a round trip
+ * and, before depth-preserving refreshes, reset the list to its first page.
+ */
+export function duplicateListNeedsRefresh(event: MutationEvent): boolean {
+  return event.type !== "duplicates:resolved" && event.type !== "media:deleted";
+}
+
 export type DuplicateResolveAction =
   | "DELETE_FILES"
   | "DELETE_RECORDS"

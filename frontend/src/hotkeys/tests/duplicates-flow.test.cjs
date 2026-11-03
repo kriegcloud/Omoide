@@ -45,6 +45,20 @@ test('removal advances to the next surviving group and cursor arrivals continue 
   assert.equal(h.render().focusedId, null);
 });
 
+test('page loads, prunes and refreshes do not pull the window back to a focused group', () => {
+  const h = focusHarness(); h.render(); h.press('j');
+  assert.deepEqual(h.scrolls, [0]);
+  // The user scrolls away from group 10; cursor pages and removals elsewhere change ids.
+  h.ids([10, 20, 30, 40, 50]); h.render();
+  h.ids([10, 30, 40, 50]); h.render();
+  h.ids([10, 30, 40, 50, 60, 70]); h.render();
+  assert.deepEqual(h.scrolls, [0], 'only a focus move may scroll the window');
+  // A real focus move still scrolls: removing the focused group advances to the next one.
+  h.ids([30, 40, 50, 60, 70]);
+  assert.equal(h.render().focusedId, 30);
+  assert.deepEqual(h.scrolls, [0, 0]);
+});
+
 test('focused Enter opens confirmation only and snapshots group, selected master, and membership', async () => {
   const rt = runtime(), keys = [], calls = [];
   const { DuplicateGroup } = load('components/DuplicateGroup.tsx', rt, {
