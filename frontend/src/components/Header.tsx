@@ -179,13 +179,14 @@ export function Header() {
         aria-label="open drawer"
         edge="start"
         onClick={() => setIsDrawerOpen(true)}
-        sx={{ mr: 2, display: { md: "none" } }}
+        sx={{ mr: { xs: 0, sm: 2 }, display: { md: "none" } }}
       >
         <MenuIcon />
       </IconButton>
 
       {/* Logo (Mobile Only - Desktop uses Sidebar) */}
-      <Box sx={{ display: { xs: "block", md: "none" }, flexGrow: 1 }}>
+      {/* minWidth 0 lets the logo shrink so the 420px shell never overflows. */}
+      <Box sx={{ display: { xs: "block", md: "none" }, flexGrow: 1, minWidth: 0, overflow: "hidden" }}>
         <Link to="/" style={{ textDecoration: "none" }}>
           <BrandLogo />
         </Link>
@@ -196,9 +197,9 @@ export function Header() {
         {renderSearchInputs()}
       </Box>
 
-      <Box sx={{ flexGrow: { xs: 0, md: 1 } }} />
+      <Box sx={{ flexGrow: 1, display: { xs: "none", md: "block" } }} />
       
-      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+      <Box sx={{ display: "flex", alignItems: "center", gap: { xs: 0, sm: 1 }, flexShrink: 0 }}>
         <Box sx={{ display: { xs: "none", md: "flex" } }}>
           <ThemeToggleButton />
         </Box>

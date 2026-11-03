@@ -90,8 +90,9 @@ export function PersonHero({
 
         {/* Person Details and Actions */}
         <Grid size={{ xs: 12, sm: 8, md: 9 }}>
-          <Stack direction="row" spacing={1.5} alignItems="center">
-            <Typography variant="h3" component="h1" fontWeight="bold">
+          {/* Wraps instead of overflowing narrow screens (420px shell sweep). */}
+          <Stack direction="row" spacing={1.5} useFlexGap alignItems="center" sx={{ flexWrap: "wrap", minWidth: 0 }}>
+            <Typography variant="h3" component="h1" fontWeight="bold" sx={{ fontSize: "clamp(1.75rem, 7vw, 3rem)", overflowWrap: "anywhere", minWidth: 0 }}>
               {person.name || "Unnamed Person"}
             </Typography>
             {config.PRESENTATION_MODE ? favorite && <FavoriteIcon aria-label="Favorite" color="error" /> :
