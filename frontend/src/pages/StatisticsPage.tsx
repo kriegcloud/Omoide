@@ -229,6 +229,10 @@ export default function StatisticsPage() {
             <LegendChip color={series.videos} label="Videos" />
           </Box>
         </Box>
+        {/* Bars and year labels scroll together on narrow screens (420px sweep):
+            the labels row used to overflow the page while only the bars scrolled. */}
+        <Box sx={{ overflowX: "auto" }}>
+        <Box sx={{ minWidth: "min-content" }}>
         <Box
           sx={{
             display: "flex",
@@ -236,7 +240,6 @@ export default function StatisticsPage() {
             gap: "6px",
             height: CHART_HEIGHT + 40,
             borderBottom: `1px solid ${ink.baseline}`,
-            overflowX: "auto",
             pb: 0,
           }}
         >
@@ -313,6 +316,8 @@ export default function StatisticsPage() {
               {y.year}
             </Typography>
           ))}
+        </Box>
+        </Box>
         </Box>
       </Paper>
 
