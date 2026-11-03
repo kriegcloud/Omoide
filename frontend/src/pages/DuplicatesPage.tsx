@@ -11,6 +11,7 @@ import React, {
   useState,
 } from "react";
 import { useWindowVirtualRows } from "../hooks/useWindowVirtualRows";
+import { useObservedHeight } from "../hooks/useObservedHeight";
 import { infiniteScrollObserver } from "../hooks/infiniteScroll";
 import {
   Typography,
@@ -53,7 +54,7 @@ interface GroupRowData {
   onSelectionClick: React.ComponentProps<typeof DuplicateGroup>["onSelectionClick"];
   onSelectGroup: (group: GroupType, checked: boolean) => void;
   onResolveRequested: (snapshot: DuplicateResolveSnapshot) => void;
-  measureRow: (index: number, groupId: number, height: number) => void;
+  measureRow: (groupId: number, height: number) => void;
   headerOffset: number;
   measurementKey: number;
 }
@@ -62,17 +63,14 @@ function GroupRow({ index, style, data }: { index: number; style: React.CSSPrope
   const rowRef = useRef<HTMLDivElement>(null);
   const group = data.groups[index];
   const { measureRow, measurementKey } = data;
-
-  useLayoutEffect(() => {
-    const element = rowRef.current;
-    if (!element || !group) return;
-    // Measure natural content, not the absolutely positioned row's assigned height.
-    const measure = () => measureRow(index, group.group_id, Math.ceil(element.getBoundingClientRect().height));
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [index, group, measureRow, measurementKey]);
+  const groupId = group?.group_id;
+  // Measure natural content, not the absolutely positioned row's assigned height.
+  // Observer-only: on mount the nested Gallery still has its 1 px placeholder
+  // layout, and caching that height made rows fight the scroll anchor.
+  const onHeight = useCallback((height: number) => {
+    if (groupId !== undefined) measureRow(groupId, height);
+  }, [groupId, measureRow]);
+  useObservedHeight(rowRef, onHeight, measurementKey);
 
   return (
     <div style={style}>
@@ -236,7 +234,7 @@ const clearList = useListStore(state => state.clearList);
     return () => { observer.disconnect(); window.removeEventListener("resize", measure); };
   }, []);
 
-  const measureRow = useCallback((_index: number, groupId: number, height: number) => {
+  const measureRow = useCallback((groupId: number, height: number) => {
     if (height <= 0) return;
     setRowHeights(previous => previous.get(groupId) === height ? previous : new Map(previous).set(groupId, height));
   }, []);
