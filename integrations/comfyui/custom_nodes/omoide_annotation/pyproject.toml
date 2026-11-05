@@ -5,9 +5,9 @@ description = "Pinned, provenance-preserving ComfyUI annotation nodes for Omoide
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-  "numpy==2.5.2",
-  "onnxruntime==1.29.0",
-  "pillow==12.3.0",
+  "numpy==2.5.4",
+  "onnxruntime==1.31.1",
+  "pillow==13.0.0",
   "typing-extensions==4.16.0",
 ]
 
